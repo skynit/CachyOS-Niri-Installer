@@ -20,6 +20,30 @@ Kitty；DMS 负责主面板、启动器、通知、锁屏和动态主题，Quick
 
 不要在 CachyOS Live ISO 中运行。
 
+## 获取 CachyOS 安装镜像
+
+基础系统尚未安装时，可从 CachyOS 官方 CDN 下载桌面版 ISO。仓库不保存镜像文件：
+
+```bash
+curl --fail --location --continue-at - \
+  --output cachyos-desktop-linux-260809.iso \
+  https://cdn77.cachyos.org/ISO/desktop/260809/cachyos-desktop-linux-260809.iso
+```
+
+校验下载结果：
+
+```bash
+echo '959f6577f45e25ee9fd8c220fd221b08e4ea79412c7315c0f922dd6d86d5e33c  cachyos-desktop-linux-260809.iso' \
+  | sha256sum --check
+```
+
+- SHA-256：`959f6577f45e25ee9fd8c220fd221b08e4ea79412c7315c0f922dd6d86d5e33c`
+- 官方校验文件：<https://cdn77.cachyos.org/ISO/desktop/260809/cachyos-desktop-linux-260809.iso.sha256>
+- 官方签名：<https://cdn77.cachyos.org/ISO/desktop/260809/cachyos-desktop-linux-260809.iso.sig>
+- 签名密钥指纹：`882D CFE4 8E20 51D4 8E25 62AB F3B6 0748 8DB3 5A47`
+
+使用该镜像完成 CachyOS 基础安装并进入已安装的系统后，再运行本项目的安装脚本。
+
 ## 安装
 
 先查看完整执行计划，不修改系统：
