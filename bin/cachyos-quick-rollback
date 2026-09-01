@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+if [[ "${CACHYOS_QUICK_ROLLBACK_TERMINAL:-0}" != 1 ]]; then
+    command -v kitty >/dev/null 2>&1 || {
+        notify-send "Snapper 回滚失败" "找不到 Kitty。" -u critical 2>/dev/null || true
+        exit 1
+    }
+    exec kitty --class cachyos-quick-rollback --title "Snapper 快速回滚" \
+        -e env CACHYOS_QUICK_ROLLBACK_TERMINAL=1 "$0"
+fi
+
+for command_name in findmnt snapper fzf cachyos-rollback; do
+    command -v "$command_name" >/dev/null 2>&1 || {
+        printf '缺少命令: %s\n' "$command_name" >&2
+        printf '按 Enter 关闭窗口。'
+        read -r
+        exit 1
+    }
+done
+[[ "$(findmnt -no FSTYPE / 2>/dev/null || true)" == btrfs ]] || {
+    printf '根文件系统不是 Btrfs，不能执行 Snapper 回滚。\n'
+    read -r
+    exit 1
+}
+[[ -e /etc/snapper/configs/root ]] || {
+    printf '缺少 Snapper root 配置：/etc/snapper/configs/root\n'
+    read -r
+    exit 1
+}
+
+sudo -v
+snapshots="$(sudo snapper -c root --csvout --no-headers --separator $'\t' \
+    list --disable-used-space --columns number,date,description)"
+
+choices="$({
+    while IFS=$'\t' read -r number date description; do
+        snapshot_id="${number//[^0-9]/}"
+        [[ "$snapshot_id" =~ ^[1-9][0-9]*$ ]] || continue
+        printf '%s\t%s\t%s\n' "$snapshot_id" "$date" "$description"
+    done <<< "$snapshots"
+})"
+[[ -n "$choices" ]] || {
+    printf '没有可回滚的 Snapper 快照。\n'
+    read -r
+    exit 1
+}
+
+selection="$(printf '%s\n' "$choices" | fzf --delimiter=$'\t' --with-nth=1,2,3 \
+    --header="选择要回滚的快照，Esc 取消" --layout=reverse --prompt="Snapshot> ")" || exit 0
+
+snapshot_id="${selection%%$'\t'*}"
+[[ "$snapshot_id" =~ ^[1-9][0-9]*$ ]] || {
+    printf '无法识别快照编号。\n' >&2
+    read -r
+    exit 1
+}
+
+printf '将回滚到快照 %s。输入 YES 确认: ' "$snapshot_id"
+read -r confirmation
+[[ "$confirmation" == YES ]] || exit 0
+
+cachyos-rollback "$snapshot_id"
+printf '\n按 Enter 关闭窗口。'
+read -r

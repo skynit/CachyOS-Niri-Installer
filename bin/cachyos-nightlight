@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+state_dir="${XDG_RUNTIME_DIR:-$HOME/.cache}/cachyos-nightlight"
+pid_file="$state_dir/pid"
+mkdir -p -- "$state_dir"
+
+if [[ -s "$pid_file" ]] && kill -0 "$(<"$pid_file")" 2>/dev/null; then
+    kill "$(<"$pid_file")"
+    rm -f -- "$pid_file"
+    exit 0
+fi
+
+latitude="${CACHYOS_LATITUDE:-31.2304}"
+longitude="${CACHYOS_LONGITUDE:-121.4737}"
+nohup wlsunset -l "$latitude" -L "$longitude" -T 6500 -t 3500 >"$state_dir/wlsunset.log" 2>&1 &
+printf '%s\n' "$!" > "$pid_file"

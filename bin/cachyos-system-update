@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+sudo pacman -Syu
+paru -Sua
+flatpak update -y

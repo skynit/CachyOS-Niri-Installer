@@ -1,0 +1,61 @@
+* {
+    border: none;
+    border-radius: 0;
+    font-family: "Noto Sans CJK SC", sans-serif;
+    font-size: 13px;
+    min-height: 0;
+}
+
+window#waybar {
+    background: rgba(24, 27, 31, 0.94);
+    color: #f3f5f7;
+}
+
+#workspaces button,
+#window,
+#clock,
+#tray,
+#cpu,
+#memory,
+#pulseaudio,
+#network,
+#bluetooth,
+#battery,
+#idle_inhibitor,
+#custom-record,
+#custom-updates,
+#custom-nightlight,
+#custom-ddc {
+    padding: 0 10px;
+}
+
+#workspaces button.focused,
+#workspaces button.active {
+    background: #4f9da6;
+    color: #ffffff;
+}
+
+#battery.warning {
+    color: #ffd166;
+}
+
+#battery.critical {
+    color: #ff6b6b;
+}
+
+#custom-record.recording {
+    background: #b3261e;
+    color: #ffffff;
+}
+
+#custom-updates.pending {
+    color: #ffd166;
+}
+
+#custom-nightlight.enabled {
+    color: #ffb74d;
+}
+
+#custom-ddc.unavailable {
+    color: #8d9399;
+}

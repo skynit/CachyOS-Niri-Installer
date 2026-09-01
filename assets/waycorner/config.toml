@@ -1,0 +1,11 @@
+[overview]
+enter_command = ["niri", "msg", "action", "toggle-overview"]
+locations = ["bottom_left"]
+size = 10
+timeout_ms = 350
+
+[power]
+enter_command = ["dms", "ipc", "call", "powermenu", "toggle"]
+locations = ["bottom_right"]
+size = 10
+timeout_ms = 500

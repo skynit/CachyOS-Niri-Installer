@@ -1,0 +1,56 @@
+{
+  "policies": {
+    "DisableAppUpdate": true,
+    "DisableFirefoxStudies": true,
+    "DisablePocket": true,
+    "DisableTelemetry": true,
+    "DontCheckDefaultBrowser": true,
+    "ExtensionSettings": {
+      "uBlock0@raymondhill.net": {
+        "installation_mode": "force_installed",
+        "install_url": "https://addons.mozilla.org/firefox/downloads/latest/ublock-origin/latest.xpi"
+      }
+    },
+    "FirefoxHome": {
+      "Highlights": false,
+      "Pocket": false,
+      "Snippets": false,
+      "SponsoredPocket": false,
+      "SponsoredTopSites": false
+    },
+    "Preferences": {
+      "browser.compactmode.show": {
+        "Value": true,
+        "Status": "default"
+      },
+      "browser.tabs.warnOnClose": {
+        "Value": false,
+        "Status": "default"
+      },
+      "media.ffmpeg.vaapi.enabled": {
+        "Value": true,
+        "Status": "default"
+      },
+      "layout.css.color-mix.enabled": {
+        "Value": true,
+        "Status": "default"
+      },
+      "sidebar.revamp": {
+        "Value": true,
+        "Status": "default"
+      },
+      "sidebar.verticalTabs": {
+        "Value": true,
+        "Status": "default"
+      },
+      "svg.context-properties.content.enabled": {
+        "Value": true,
+        "Status": "default"
+      },
+      "toolkit.legacyUserProfileCustomizations.stylesheets": {
+        "Value": true,
+        "Status": "default"
+      }
+    }
+  }
+}

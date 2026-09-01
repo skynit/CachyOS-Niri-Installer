@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+[[ $# -eq 1 ]] || { printf 'Usage: %s FILE\n' "${0##*/}" >&2; exit 2; }
+exec kitty --hold sh -c 'mediainfo -- "$1"' sh "$1"

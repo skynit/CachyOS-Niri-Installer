@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+mapfile -t orphaned < <(pacman -Qtdq 2>/dev/null || true)
+if ((${#orphaned[@]} > 0)); then
+    sudo pacman -Rns --noconfirm -- "${orphaned[@]}"
+fi
+sudo paccache -r
+sudo journalctl --vacuum-time=14d
+flatpak uninstall --unused -y

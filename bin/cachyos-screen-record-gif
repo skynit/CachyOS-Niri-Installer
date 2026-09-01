@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+state_dir="${XDG_RUNTIME_DIR:-$HOME/.cache}/cachyos-screen-record-gif"
+pid_file="$state_dir/pid"
+video_file_record="$state_dir/video-path"
+gif_file_record="$state_dir/gif-path"
+output_dir="$HOME/Videos/ScreenRecords"
+mkdir -p -- "$state_dir" "$output_dir"
+
+if [[ -s "$pid_file" ]]; then
+    recorder_pid="$(<"$pid_file")"
+    video_file="$(<"$video_file_record")"
+    gif_file="$(<"$gif_file_record")"
+    if kill -0 "$recorder_pid" 2>/dev/null; then
+        kill -INT "$recorder_pid"
+        while kill -0 "$recorder_pid" 2>/dev/null; do sleep 0.2; done
+    fi
+    ffmpeg -hide_banner -loglevel warning -y -i "$video_file" \
+        -vf "fps=15,scale='min(1280,iw)':-2:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse" \
+        "$gif_file"
+    rm -f -- "$pid_file" "$video_file_record" "$gif_file_record" "$video_file"
+    exit 0
+fi
+
+geometry="$(slurp)" || exit 0
+timestamp="$(date +%Y%m%d-%H%M%S)"
+video_file="$state_dir/recording-$timestamp.mkv"
+gif_file="$output_dir/recording-$timestamp.gif"
+nohup wf-recorder -g "$geometry" -f "$video_file" >"$state_dir/wf-recorder.log" 2>&1 &
+printf '%s\n' "$!" > "$pid_file"
+printf '%s\n' "$video_file" > "$video_file_record"
+printf '%s\n' "$gif_file" > "$gif_file_record"

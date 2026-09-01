@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+[[ $# -ge 1 ]] || { printf 'Usage: %s PACKAGE [COMMAND ...]\n' "${0##*/}" >&2; exit 2; }
+
+package_name="$1"
+shift
+pacman -Q "$package_name" >/dev/null
+
+if (($# == 0)); then
+    executable="$(pacman -Ql "$package_name" | awk '$2 ~ /\/usr\/bin\// { print $2; exit }')"
+    [[ -n "$executable" ]] || { printf 'No executable found for %s\n' "$package_name" >&2; exit 1; }
+    set -- "$executable"
+fi
+
+state_dir="$HOME/.local/state/cachyos-removals"
+trace_dir="$(mktemp -d)"
+manifest="$state_dir/$package_name.paths"
+trap 'rm -rf -- "$trace_dir"' EXIT
+mkdir -p -- "$state_dir"
+
+printf 'Tracking HOME file access for: %q' "$1"
+printf ' %q' "${@:2}"
+printf '\nClose the application normally to finish tracking.\n'
+strace -ff -e trace=file -o "$trace_dir/trace" -- "$@" || true
+grep -hEo "\"$HOME/[^\"]+\"" "$trace_dir"/trace* 2>/dev/null | tr -d '"' | sort -u > "$manifest" || true
+printf 'Tracked paths: %s\n' "$manifest"

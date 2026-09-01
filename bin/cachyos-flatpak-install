@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+mapfile -t applications < <(flatpak remote-ls --app --columns=application,name flathub | fzf --multi --prompt='Install Flatpak> ' | cut -f1)
+((${#applications[@]} > 0)) || exit 0
+flatpak install -y flathub "${applications[@]}"

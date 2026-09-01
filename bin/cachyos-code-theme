@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+extension="/usr/share/quickshell/dms/matugen/dms-theme.vsix"
+[[ -s "$extension" ]] || { printf '%s\n' 'DMS Code theme extension is missing.' >&2; exit 1; }
+code --install-extension "$extension" --force
+
+settings_dir="$HOME/.config/Code/User"
+settings_file="$settings_dir/settings.json"
+temporary_file="$(mktemp)"
+trap 'rm -f -- "$temporary_file"' EXIT
+mkdir -p -- "$settings_dir"
+
+if [[ -s "$settings_file" ]] && jq empty "$settings_file" >/dev/null 2>&1; then
+    jq '. + {"workbench.colorTheme": "Dynamic Base16 DankShell", "window.autoDetectColorScheme": false}' "$settings_file" > "$temporary_file"
+else
+    jq -n '{"workbench.colorTheme": "Dynamic Base16 DankShell", "window.autoDetectColorScheme": false}' > "$temporary_file"
+fi
+install -m 0644 "$temporary_file" "$settings_file"

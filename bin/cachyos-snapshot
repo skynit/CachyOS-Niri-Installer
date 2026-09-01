@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+if [[ ! -t 0 || ! -t 1 ]]; then
+    if [[ "${CACHYOS_SNAPSHOT_TERMINAL:-0}" != 1 ]]; then
+        command -v kitty >/dev/null 2>&1 || {
+            notify-send "Snapper 快照失败" "找不到 Kitty，无法请求 sudo 密码。" -u critical 2>/dev/null || true
+            exit 1
+        }
+        exec kitty --class cachyos-snapshot --title "创建 Snapper 快照" \
+            -e env CACHYOS_SNAPSHOT_TERMINAL=1 "$0" "$@"
+    fi
+fi
+
+description="${*:-manual snapshot}"
+[[ "$(findmnt -no FSTYPE / 2>/dev/null || true)" == btrfs ]] || {
+    printf 'Root filesystem is not Btrfs.\n' >&2
+    exit 1
+}
+[[ -e /etc/snapper/configs/root ]] || {
+    printf 'Snapper root configuration is missing.\n' >&2
+    exit 1
+}
+command -v snapper >/dev/null 2>&1 || { printf 'snapper is not installed.\n' >&2; exit 1; }
+
+sudo snapper -c root create --description "$description" --print-number
+if [[ "${CACHYOS_SNAPSHOT_TERMINAL:-0}" == 1 ]]; then
+    printf '\n按 Enter 关闭窗口。'
+    read -r
+fi

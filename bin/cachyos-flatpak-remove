@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+mapfile -t applications < <(flatpak list --app --columns=application,name | fzf --multi --prompt='Remove Flatpak> ' | cut -f1)
+((${#applications[@]} > 0)) || exit 0
+flatpak uninstall -y "${applications[@]}"

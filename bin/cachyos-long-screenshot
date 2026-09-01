@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+pages="${1:-5}"
+[[ "$pages" =~ ^[1-9][0-9]*$ ]] || { printf 'Usage: %s [PAGE_COUNT]\n' "${0##*/}" >&2; exit 2; }
+
+output_dir="$HOME/Pictures/Screenshots"
+work_dir="$(mktemp -d)"
+output_file="$output_dir/long-$(date +%Y%m%d-%H%M%S).png"
+trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p -- "$output_dir"
+
+geometry="$(slurp)" || exit 0
+for ((page = 1; page <= pages; page++)); do
+    grim -g "$geometry" "$work_dir/$(printf '%04d' "$page").png"
+    if ((page < pages)); then
+        wtype -P Next -p Next
+        sleep 0.8
+    fi
+done
+
+python - "$work_dir" "$output_file" <<'PY'
+import pathlib
+import sys
+
+import numpy as np
+from PIL import Image
+
+work_dir = pathlib.Path(sys.argv[1])
+output_file = pathlib.Path(sys.argv[2])
+frames = [Image.open(path).convert("RGB") for path in sorted(work_dir.glob("*.png"))]
+if not frames:
+    raise SystemExit("no screenshots captured")
+
+canvas = np.asarray(frames[0])
+for frame_image in frames[1:]:
+    frame = np.asarray(frame_image)
+    if frame.shape[1:] != canvas.shape[1:]:
+        raise SystemExit("captured pages have incompatible widths or color formats")
+
+    limit = min(canvas.shape[0], frame.shape[0])
+    direct_score = float(
+        np.mean(
+            np.abs(
+                canvas[-limit::4, ::6].astype(np.int16)
+                - frame[:limit:4, ::6].astype(np.int16)
+            )
+        )
+    )
+    if direct_score < 2.0:
+        break
+
+    minimum = max(24, limit // 20)
+    maximum = max(minimum, int(limit * 0.95))
+    best_overlap = 0
+    best_score = float("inf")
+    coarse_step = max(1, limit // 120)
+    for overlap in range(minimum, maximum + 1, coarse_step):
+        previous = canvas[-overlap::4, ::6].astype(np.int16)
+        incoming = frame[:overlap:4, ::6].astype(np.int16)
+        score = float(np.mean(np.abs(previous - incoming)))
+        if score < best_score:
+            best_score = score
+            best_overlap = overlap
+
+    refine_start = max(minimum, best_overlap - coarse_step)
+    refine_end = min(maximum, best_overlap + coarse_step)
+    for overlap in range(refine_start, refine_end + 1):
+        previous = canvas[-overlap::4, ::6].astype(np.int16)
+        incoming = frame[:overlap:4, ::6].astype(np.int16)
+        score = float(np.mean(np.abs(previous - incoming)))
+        if score < best_score:
+            best_score = score
+            best_overlap = overlap
+
+    if best_score > 28:
+        best_overlap = 0
+    canvas = np.concatenate((canvas, frame[best_overlap:]), axis=0)
+
+Image.fromarray(canvas).save(output_file, optimize=True)
+PY
+printf '%s\n' "$output_file"

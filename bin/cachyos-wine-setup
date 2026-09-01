@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+export WINEPREFIX="${WINEPREFIX:-$HOME/.wine}"
+export WINEDEBUG=-all
+wineboot --init
+winetricks -q corefonts cjkfonts fontsmooth=rgb
+wineboot --update

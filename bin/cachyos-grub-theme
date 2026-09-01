@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+command -v grub-mkconfig >/dev/null 2>&1 || { printf '%s\n' 'GRUB is not installed.' >&2; exit 1; }
+[[ -r /etc/default/grub ]] || { printf '%s\n' '/etc/default/grub is unavailable.' >&2; exit 1; }
+
+disable_label='Disable custom GRUB theme'
+theme="$(
+    {
+        printf '%s\n' "$disable_label"
+        find /usr/share/grub/themes -mindepth 2 -maxdepth 2 -type f -name theme.txt -print 2>/dev/null | sort
+    } | fzf --prompt='GRUB theme> '
+)" || exit 0
+temporary_file="$(mktemp)"
+trap 'rm -f -- "$temporary_file"' EXIT
+awk -v theme="$theme" -v disable_label="$disable_label" '
+    BEGIN { changed = 0 }
+    /^GRUB_THEME=/ {
+        if (theme != disable_label) print "GRUB_THEME=\"" theme "\""
+        changed = 1
+        next
+    }
+    { print }
+    END { if (!changed && theme != disable_label) print "GRUB_THEME=\"" theme "\"" }
+' /etc/default/grub > "$temporary_file"
+
+sudo install -m 0644 /etc/default/grub "/etc/default/grub.backup-$(date +%Y%m%d-%H%M%S)"
+sudo install -o root -g root -m 0644 "$temporary_file" /etc/default/grub
+sudo grub-mkconfig -o /boot/grub/grub.cfg

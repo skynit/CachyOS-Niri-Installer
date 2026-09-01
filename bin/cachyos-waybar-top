@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+pkill -x waybar 2>/dev/null || true
+exec waybar --config "$HOME/.config/waybar/top.jsonc" --style "$HOME/.config/waybar/style.css"

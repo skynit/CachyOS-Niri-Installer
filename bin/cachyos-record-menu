@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+choice="$(printf '%s\n' \
+    'Record area with audio' \
+    'Record area as GIF' \
+    'Stop active recording' \
+    'Open OBS Studio' \
+    'Open recordings folder' | fuzzel --dmenu --prompt='Recording: ')" || exit 0
+
+case "$choice" in
+    'Record area with audio') cachyos-screen-record ;;
+    'Record area as GIF') cachyos-screen-record-gif ;;
+    'Stop active recording')
+        [[ ! -s "${XDG_RUNTIME_DIR:-$HOME/.cache}/cachyos-screen-record/pid" ]] || cachyos-screen-record
+        [[ ! -s "${XDG_RUNTIME_DIR:-$HOME/.cache}/cachyos-screen-record-gif/pid" ]] || cachyos-screen-record-gif
+        ;;
+    'Open OBS Studio') obs ;;
+    'Open recordings folder') thunar "$HOME/Videos/ScreenRecords" ;;
+esac

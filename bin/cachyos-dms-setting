@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+[[ $# -eq 2 ]] || { printf 'Usage: %s KEY JSON_VALUE\n' "${0##*/}" >&2; exit 2; }
+jq -e . >/dev/null <<< "$2"
+
+settings_dir="$HOME/.config/DankMaterialShell"
+settings_file="$settings_dir/settings.json"
+temporary_file="$(mktemp)"
+trap 'rm -f -- "$temporary_file"' EXIT
+mkdir -p -- "$settings_dir"
+
+if [[ -s "$settings_file" ]]; then
+    jq --arg key "$1" --argjson value "$2" '.[$key] = $value' "$settings_file" > "$temporary_file"
+else
+    jq -n --arg key "$1" --argjson value "$2" '{($key): $value}' > "$temporary_file"
+fi
+install -m 0600 "$temporary_file" "$settings_file"

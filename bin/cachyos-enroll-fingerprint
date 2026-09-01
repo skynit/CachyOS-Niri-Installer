@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+printf '%s\n' 'Follow the prompts and touch the fingerprint reader repeatedly.'
+fprintd-enroll "$USER"
+fprintd-list "$USER"
+cachyos-dms-setting enableFprint true
+dms auth sync --yes
+printf '%s\n' 'DMS fingerprint unlock is enabled. Test it before relying on it.'

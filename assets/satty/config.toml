@@ -1,0 +1,6 @@
+[general]
+fullscreen = true
+early-exit = true
+initial-tool = "brush"
+copy-command = "wl-copy"
+output-filename = "~/Pictures/Screenshots/satty-%Y%m%d-%H%M%S.png"

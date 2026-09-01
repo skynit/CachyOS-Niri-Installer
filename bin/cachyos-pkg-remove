@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+mapfile -t packages < <(pacman -Qq | fzf --multi --prompt='Remove packages> ')
+((${#packages[@]} > 0)) || exit 0
+sudo pacman -Rns -- "${packages[@]}"

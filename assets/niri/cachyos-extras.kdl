@@ -1,0 +1,45 @@
+include optional=true "dms/wpblur.kdl"
+
+overview {
+    backdrop-color "#0b0f14"
+}
+
+layer-rule {
+    match namespace="^dms:blurwallpaper$"
+    place-within-backdrop true
+    opacity 0.62
+}
+
+spawn-at-startup "awww-daemon"
+spawn-at-startup "waypaper" "--restore"
+spawn-at-startup "niri-sidebar" "listen"
+spawn-at-startup "niriusd"
+spawn-at-startup "waycorner"
+spawn-at-startup "cachyos-post-login-setup"
+
+binds {
+    Mod+Ctrl+F2 hotkey-overlay-title="Waybar top" { spawn "cachyos-waybar-top"; }
+    Mod+Ctrl+F3 hotkey-overlay-title="Waybar bottom" { spawn "cachyos-waybar-bottom"; }
+    Mod+Ctrl+F4 hotkey-overlay-title="Toggle Waybar" { spawn "cachyos-waybar-toggle"; }
+    Mod+Ctrl+F9 hotkey-overlay-title="Record screen" { spawn "cachyos-screen-record"; }
+    Mod+Shift+F9 hotkey-overlay-title="Record GIF" { spawn "cachyos-screen-record-gif"; }
+    Mod+Ctrl+F10 hotkey-overlay-title="Waypaper" { spawn "waypaper"; }
+    Mod+Ctrl+F11 hotkey-overlay-title="Edit screenshot" { spawn "cachyos-screenshot-edit"; }
+    Mod+Ctrl+Shift+F11 hotkey-overlay-title="Long screenshot" { spawn "cachyos-long-screenshot"; }
+    Mod+Ctrl+F12 hotkey-overlay-title="Lock screen" { spawn "dms" "ipc" "call" "lock" "lock"; }
+    Mod+Shift+F12 hotkey-overlay-title="Lock and turn displays off" { spawn "dms" "ipc" "call" "lock" "lockAndOutputsOff"; }
+    Mod+Alt+F5 hotkey-overlay-title="Toggle sidebar window" { spawn "niri-sidebar" "toggle-window"; }
+    Mod+Alt+Shift+F5 hotkey-overlay-title="Toggle sidebar visibility" { spawn "niri-sidebar" "toggle-visibility"; }
+    Mod+Alt+Ctrl+F5 hotkey-overlay-title="Flip sidebar" { spawn "niri-sidebar" "flip"; }
+    Mod+Alt+F6 hotkey-overlay-title="Toggle window follow mode" { spawn "nirius" "toggle-follow-mode"; }
+    Mod+Alt+F7 hotkey-overlay-title="Screen magnifier" { spawn "woomer"; }
+    Mod+Alt+F8 hotkey-overlay-title="Overview" { toggle-overview; }
+    Mod+Alt+1 hotkey-overlay-title="Focus Firefox" { spawn "nirius" "focus-or-spawn" "--app-id" "firefox" "firefox"; }
+    Mod+Alt+2 hotkey-overlay-title="Focus Kitty" { spawn "nirius" "focus-or-spawn" "--app-id" "kitty" "kitty"; }
+}
+
+window-rule {
+    match is-floating=true
+    min-width 100
+    min-height 100
+}

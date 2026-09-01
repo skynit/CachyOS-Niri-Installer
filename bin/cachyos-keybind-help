@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+exec kitty --class cachyos-keybind-help --title "Niri keybind search" sh -lc '
+    dms keybinds show niri |
+        jq -r '\''
+            .binds | to_entries[] as $group |
+            $group.value[] |
+            [(.key // ""), (.desc // ""), (.action // ""), $group.key] |
+            @tsv
+        '\'' |
+        fzf --delimiter="\t" \
+            --header=$'\''快捷键\t说明\t动作\t分组（输入任意文字模糊搜索，Esc 退出）'\'' \
+            --layout=reverse --no-sort --prompt="Keybinds> " --bind="esc:abort"
+'

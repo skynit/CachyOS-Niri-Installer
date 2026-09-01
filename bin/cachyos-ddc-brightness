@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+case "${1:-status}" in
+    up) ddcutil setvcp 10 + 5 >/dev/null 2>&1 || true ;;
+    down) ddcutil setvcp 10 - 5 >/dev/null 2>&1 || true ;;
+    status) ;;
+    *) printf 'Usage: %s [status|up|down]\n' "${0##*/}" >&2; exit 2 ;;
+esac
+
+brightness="$(ddcutil getvcp 10 --brief 2>/dev/null | awk '/VCP 10/ { for (i=1; i<=NF; i++) if ($i == "C") { print $(i+1); exit } }')"
+if [[ -n "$brightness" ]]; then
+    printf '{"text":"EXT %s%%","class":"available","tooltip":"External monitor brightness"}\n' "$brightness"
+else
+    printf '%s\n' '{"text":"EXT --","class":"unavailable","tooltip":"No DDC/CI monitor detected"}'
+fi

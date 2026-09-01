@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+mapfile -t packages < <(pacman -Slq | sort -u | fzf --multi --prompt='Install packages> ')
+((${#packages[@]} > 0)) || exit 0
+paru -S --needed -- "${packages[@]}"

@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+repo_count="$(checkupdates 2>/dev/null | wc -l)"
+aur_count="$(paru -Qua 2>/dev/null | wc -l)"
+total=$((repo_count + aur_count))
+class="updated"
+((total > 0)) && class="pending"
+printf '{"text":"UPD %d","class":"%s","tooltip":"Repository: %d, AUR: %d"}\n' "$total" "$class" "$repo_count" "$aur_count"

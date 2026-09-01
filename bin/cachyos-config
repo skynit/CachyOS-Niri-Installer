@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+readonly SHARE_DIR="${CACHYOS_DESKTOP_SHARE_DIR:-/usr/local/share/cachyos-desktop}"
+readonly ASSET_DIR="$SHARE_DIR/assets"
+readonly MANIFEST="$SHARE_DIR/config-manifest.tsv"
+readonly STATE_DIR="${CACHYOS_DESKTOP_STATE_DIR:-$HOME/.local/state/cachyos-desktop}"
+readonly PROTECTED_FILE="$STATE_DIR/protected-configs.txt"
+
+usage() {
+    printf 'Usage: %s status|update|migrate|protect PATH|unprotect PATH\n' "${0##*/}"
+}
+
+relative_home_path() {
+    local absolute
+    absolute="$(realpath -m "$1")"
+    [[ "$absolute" == "$HOME/"* ]] || { printf '%s is outside HOME\n' "$1" >&2; return 1; }
+    printf '%s\n' "${absolute#"$HOME/"}"
+}
+
+is_protected() {
+    [[ -s "$PROTECTED_FILE" ]] && grep -Fxq "$1" "$PROTECTED_FILE"
+}
+
+update_configs() {
+    local source_path target_path
+    while IFS=$'\t' read -r source_path target_path; do
+        [[ -n "$source_path" && -n "$target_path" ]] || continue
+        if is_protected "$target_path"; then
+            printf 'protected  %s\n' "$target_path"
+            continue
+        fi
+        install -D -m 0644 "$ASSET_DIR/$source_path" "$HOME/$target_path"
+        printf 'updated    %s\n' "$target_path"
+    done < "$MANIFEST"
+}
+
+show_status() {
+    local source_path target_path state
+    while IFS=$'\t' read -r source_path target_path; do
+        [[ -n "$source_path" && -n "$target_path" ]] || continue
+        if is_protected "$target_path"; then
+            state=protected
+        elif [[ ! -e "$HOME/$target_path" ]]; then
+            state=missing
+        elif cmp -s "$ASSET_DIR/$source_path" "$HOME/$target_path"; then
+            state=current
+        else
+            state=modified
+        fi
+        printf '%-10s %s\n' "$state" "$target_path"
+    done < "$MANIFEST"
+}
+
+mkdir -p -- "$STATE_DIR"
+touch "$PROTECTED_FILE"
+[[ -r "$MANIFEST" ]] || { printf 'Configuration manifest is missing: %s\n' "$MANIFEST" >&2; exit 1; }
+
+case "${1:-}" in
+    status) show_status ;;
+    update) update_configs ;;
+    migrate)
+        backup_dir="$STATE_DIR/migration-$(date +%Y%m%d-%H%M%S)"
+        mkdir -p -- "$backup_dir"
+        while IFS=$'\t' read -r _ target_path; do
+            [[ -e "$HOME/$target_path" ]] || continue
+            install -D -m 0644 "$HOME/$target_path" "$backup_dir/$target_path"
+        done < "$MANIFEST"
+        update_configs
+        printf 'Migration backup: %s\n' "$backup_dir"
+        ;;
+    protect)
+        [[ $# -eq 2 ]] || { usage >&2; exit 2; }
+        target_path="$(relative_home_path "$2")"
+        grep -Fxq "$target_path" "$PROTECTED_FILE" || printf '%s\n' "$target_path" >> "$PROTECTED_FILE"
+        sort -u -o "$PROTECTED_FILE" "$PROTECTED_FILE"
+        ;;
+    unprotect)
+        [[ $# -eq 2 ]] || { usage >&2; exit 2; }
+        target_path="$(relative_home_path "$2")"
+        temporary_file="$(mktemp)"
+        grep -Fxv "$target_path" "$PROTECTED_FILE" > "$temporary_file" || true
+        install -m 0600 "$temporary_file" "$PROTECTED_FILE"
+        rm -f -- "$temporary_file"
+        ;;
+    *) usage >&2; exit 2 ;;
+esac

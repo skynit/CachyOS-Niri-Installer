@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+package_name="${1:-}"
+if [[ -z "$package_name" ]]; then
+    package_name="$(pacman -Qq | fzf --prompt='Remove tracked package> ')" || exit 0
+fi
+pacman -Q "$package_name" >/dev/null
+
+manifest="$HOME/.local/state/cachyos-removals/$package_name.paths"
+candidate_file="$(mktemp)"
+trap 'rm -f -- "$candidate_file"' EXIT
+[[ ! -s "$manifest" ]] || grep -F "$HOME/" "$manifest" >> "$candidate_file"
+find "$HOME/.config" "$HOME/.cache" "$HOME/.local/share" -maxdepth 3 -iname "*$package_name*" -print 2>/dev/null >> "$candidate_file" || true
+sort -u -o "$candidate_file" "$candidate_file"
+
+sudo pacman -Rns -- "$package_name"
+[[ -s "$candidate_file" ]] || exit 0
+mapfile -t selected < <(fzf --multi --prompt='Delete selected HOME leftovers> ' < "$candidate_file")
+for path in "${selected[@]}"; do
+    [[ "$path" == "$HOME/"* ]] || continue
+    rm -rf -- "$path"
+done

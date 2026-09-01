@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+[[ $# -eq 1 && -f "$1" ]] || { printf 'Usage: %s IMAGE\n' "${0##*/}" >&2; exit 2; }
+magick "$1" "${1%.*}.png"

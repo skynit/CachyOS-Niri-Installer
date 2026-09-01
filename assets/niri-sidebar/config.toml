@@ -1,0 +1,16 @@
+[geometry]
+width = 420
+height = 340
+gap = 10
+
+[margins]
+top = 44
+right = 10
+left = 10
+bottom = 10
+
+[interaction]
+position = "right"
+peek = 8
+focus_peek = 48
+sticky = true

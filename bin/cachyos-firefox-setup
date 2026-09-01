@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+readonly THEME_VERSION="v2.0.0"
+readonly THEME_SHA256="08ed43d1c1940d43a3cc80e5fa3d914c1987e1571b5f0fd37e31af7ccfba2123"
+readonly THEME_URL="https://github.com/edelvarden/material-fox-updated/releases/download/$THEME_VERSION/chrome.zip"
+
+work_dir="$(mktemp -d)"
+trap 'rm -rf -- "$work_dir"' EXIT
+
+if ! find "$HOME/.mozilla/firefox" -maxdepth 1 -type d -name '*.default-release' -print -quit 2>/dev/null | grep -q .; then
+    timeout 20 firefox --headless --no-remote --screenshot "$work_dir/blank.png" about:blank >/dev/null 2>&1 || true
+fi
+
+profile="$(find "$HOME/.mozilla/firefox" -maxdepth 1 -type d -name '*.default-release' -print -quit 2>/dev/null)"
+[[ -n "$profile" ]] || { printf '%s\n' 'Firefox profile could not be created.' >&2; exit 1; }
+
+curl --fail --location --retry 3 "$THEME_URL" -o "$work_dir/chrome.zip"
+printf '%s  %s\n' "$THEME_SHA256" "$work_dir/chrome.zip" | sha256sum --check --status
+unzip -oq "$work_dir/chrome.zip" -d "$profile"
+
+cat > "$profile/user.js" <<'EOF'
+user_pref("toolkit.legacyUserProfileCustomizations.stylesheets", true);
+user_pref("svg.context-properties.content.enabled", true);
+user_pref("layout.css.color-mix.enabled", true);
+user_pref("sidebar.revamp", true);
+user_pref("sidebar.verticalTabs", true);
+user_pref("userChrome.theme-material", true);
+user_pref("userChrome.ui-compact-url-bar", true);
+user_pref("userChrome.ui-context-menu-icons", true);
+EOF
+
+if [[ -e "$HOME/.config/DankMaterialShell/firefox.css" ]]; then
+    ln -sfn "$HOME/.config/DankMaterialShell/firefox.css" "$profile/chrome/theme-material-blue.css"
+fi

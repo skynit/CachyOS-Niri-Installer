@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+state_dir="$HOME/.local/state/cachyos-desktop"
+marker="$state_dir/post-login-v2"
+log_file="$state_dir/post-login.log"
+mkdir -p -- "$state_dir"
+[[ ! -e "$marker" ]] || exit 0
+
+exec 9>"$state_dir/post-login.lock"
+flock -n 9 || exit 0
+notify-send 'CachyOS desktop' 'Finishing Firefox, Code, and Wine setup in the background.' 2>/dev/null || true
+
+failed=false
+for command_name in cachyos-firefox-setup cachyos-code-theme cachyos-wine-setup; do
+    command_marker="$state_dir/${command_name}-v1"
+    [[ ! -e "$command_marker" ]] || continue
+    if ! "$command_name" >>"$log_file" 2>&1; then
+        printf '%s failed\n' "$command_name" >> "$log_file"
+        failed=true
+    else
+        touch "$command_marker"
+    fi
+done
+
+if [[ "$failed" == false ]]; then
+    touch "$marker"
+    notify-send 'CachyOS desktop' 'Firefox, Code, and Wine setup completed.' 2>/dev/null || true
+else
+    notify-send 'CachyOS desktop' "Some first-login setup failed. See $log_file" 2>/dev/null || true
+fi

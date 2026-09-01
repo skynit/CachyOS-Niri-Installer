@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+printf '%s\n' '--- DMS lock state ---'
+dms ipc call lock isLocked 2>/dev/null || printf '%s\n' 'DMS IPC is unavailable outside a running session.'
+
+printf '%s\n' '--- PAM services ---'
+dms auth list-services --json | jq .
+
+printf '%s\n' '--- Password PAM fallback ---'
+dms auth resolve-lock --quiet || true
+
+printf '%s\n' '--- Fingerprints ---'
+fprintd-list "$USER" 2>/dev/null || printf '%s\n' 'No enrolled fingerprint or no compatible reader.'
+
+printf '%s\n' '--- Security key ---'
+if [[ -s /etc/u2f-mappings ]]; then
+    dms auth validate --purpose u2f --path /etc/pam.d/dankshell-u2f || true
+else
+    printf '%s\n' 'No security key is registered.'
+fi
+
+printf '%s\n' '--- Effective lock settings ---'
+jq '{acLockTimeout, acMonitorTimeout, acSuspendTimeout, batteryLockTimeout, batteryMonitorTimeout, batterySuspendTimeout, lockBeforeSuspend, enableFprint, enableU2f, u2fMode}' "$HOME/.config/DankMaterialShell/settings.json" 2>/dev/null || printf '%s\n' 'DMS settings are unavailable.'

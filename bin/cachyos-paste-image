@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+[[ $# -eq 1 && -d "$1" ]] || { printf 'Usage: %s DIRECTORY\n' "${0##*/}" >&2; exit 2; }
+output="$1/clipboard-$(date +%Y%m%d-%H%M%S).png"
+wl-paste --type image/png > "$output"

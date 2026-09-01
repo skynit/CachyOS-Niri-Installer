@@ -1,0 +1,209 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+readonly CC_SWITCH_DB="${CC_SWITCH_DB:-$HOME/.cc-switch/cc-switch.db}"
+readonly CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+readonly CODEX_SETTINGS="${CODEX_DESKTOP_SETTINGS:-$CONFIG_HOME/codex-desktop/settings.json}"
+readonly CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
+readonly CODEX_CLI_CONFIG="$CODEX_HOME_DIR/config.toml"
+readonly CODEX_CLI_AUTH="$CODEX_HOME_DIR/auth.json"
+readonly STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/cachyos-ai-config"
+readonly CODEX_MIRROR="$CONFIG_HOME/codex-desktop/cc-switch-sync.json"
+readonly CC_SWITCH_MIRROR="$HOME/.cc-switch/codex-desktop-sync.json"
+
+die() { printf '%s\n' "$*" >&2; exit 1; }
+
+require_python() {
+    command -v python >/dev/null 2>&1 || die 'python is required for AI configuration sync'
+}
+
+status() {
+    require_python
+    python - "$CC_SWITCH_DB" "$CODEX_SETTINGS" <<'PY'
+import json
+import os
+import sqlite3
+import sys
+
+db_path, codex_path = sys.argv[1:]
+print(f"CC Switch database: {db_path} ({'present' if os.path.isfile(db_path) else 'missing'})")
+print(f"Codex Desktop settings: {codex_path} ({'present' if os.path.isfile(codex_path) else 'missing'})")
+if not os.path.isfile(db_path):
+    raise SystemExit(0)
+
+db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+try:
+    for table in ("providers", "provider_endpoints", "mcp_servers", "settings"):
+        try:
+            count = db.execute(f"select count(*) from {table}").fetchone()[0]
+        except sqlite3.Error:
+            count = 0
+        print(f"CC Switch {table}: {count}")
+finally:
+    db.close()
+PY
+}
+
+backup() {
+    require_python
+    mkdir -p -- "$STATE_DIR"
+    chmod 700 "$STATE_DIR"
+python - "$CC_SWITCH_DB" "$CODEX_SETTINGS" "$CODEX_CLI_CONFIG" "$CODEX_CLI_AUTH" "$STATE_DIR" <<'PY'
+import os
+import shutil
+import sqlite3
+import sys
+import tempfile
+from datetime import datetime, timezone
+
+db_path, codex_path, cli_config, cli_auth, state_dir = sys.argv[1:]
+backup_dir = tempfile.mkdtemp(prefix='backup-', dir=state_dir)
+os.chmod(backup_dir, 0o700)
+if os.path.isfile(db_path):
+    source = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
+    target = os.path.join(backup_dir, 'cc-switch.db')
+    destination = sqlite3.connect(target)
+    try:
+        source.backup(destination)
+    finally:
+        destination.close()
+        source.close()
+    os.chmod(target, 0o600)
+    print(target)
+for source, name in ((codex_path, 'codex-settings.json'), (cli_config, 'codex-config.toml'), (cli_auth, 'codex-auth.json')):
+    if os.path.isfile(source):
+        target = os.path.join(backup_dir, name)
+        shutil.copy2(source, target)
+        os.chmod(target, 0o600)
+        print(target)
+print(f'Backup directory: {backup_dir}')
+PY
+}
+
+sync() {
+    require_python
+    [[ -f "$CC_SWITCH_DB" ]] || die "CC Switch database not found: $CC_SWITCH_DB"
+    mkdir -p -- "$(dirname "$CODEX_MIRROR")" "$(dirname "$CC_SWITCH_MIRROR")"
+    chmod 700 -- "$(dirname "$CC_SWITCH_MIRROR")"
+    backup
+    python - "$CC_SWITCH_DB" "$CODEX_SETTINGS" "$CODEX_MIRROR" "$CC_SWITCH_MIRROR" "$CODEX_CLI_CONFIG" "$CODEX_CLI_AUTH" <<'PY'
+import json
+import os
+import re
+import sqlite3
+import sys
+import tempfile
+from datetime import datetime, timezone
+
+db_path, codex_path, codex_mirror, cc_mirror, cli_config, cli_auth = sys.argv[1:]
+secret_key = re.compile(r'(token|secret|password|passwd|cookie|auth|credential|api[_-]?key|private[_-]?key|access[_-]?key|refresh)', re.I)
+sensitive_text = re.compile(r'((?:token|secret|password|passwd|cookie|auth|credential|api[_-]?key|private[_-]?key|access[_-]?key)\s*[:=]\s*)[^\s,;]+', re.I)
+
+def sanitize(value, key=''):
+    if secret_key.search(key):
+        return '[omitted]'
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except (TypeError, ValueError):
+            return sensitive_text.sub(r'\1[omitted]', value)
+        return sanitize(decoded)
+    if isinstance(value, dict):
+        return {k: sanitize(v, k) for k, v in value.items() if not secret_key.search(k)}
+    if isinstance(value, list):
+        return [sanitize(item) for item in value]
+    return value
+
+def parse(value):
+    if not isinstance(value, str):
+        return value
+    try:
+        return json.loads(value)
+    except (TypeError, ValueError):
+        return value
+
+def query_rows(db, query, columns):
+    rows = db.execute(query).fetchall()
+    return [sanitize(dict(zip(columns, row))) for row in rows]
+
+def sanitize_settings(rows):
+    result = []
+    for row in rows:
+        item = sanitize(dict(zip(('key', 'value'), row)))
+        if secret_key.search(str(item.get('key', ''))):
+            item['value'] = '[omitted]'
+        result.append(item)
+    return result
+
+db = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
+try:
+    active = db.execute("select id,name,settings_config from providers where app_type='codex' and is_current=1 limit 1").fetchone()
+    if active is None:
+        raise SystemExit('No active Codex provider exists in CC Switch')
+    active_id, active_name, active_payload = active
+    active_config = json.loads(active_payload)
+    config_text = active_config.get('config')
+    auth_payload = active_config.get('auth')
+    if not isinstance(config_text, str) or not config_text.strip():
+        raise SystemExit(f'Active Codex provider has no config: {active_name}')
+    if isinstance(auth_payload, str):
+        auth_payload = json.loads(auth_payload)
+    if auth_payload is not None and not isinstance(auth_payload, dict):
+        raise SystemExit(f'Active Codex provider auth is not an object: {active_name}')
+    payload = {
+        'schema_version': 1,
+        'generated_at': datetime.now(timezone.utc).isoformat(),
+        'source': 'cc-switch',
+        'note': 'Non-sensitive mirror only; credentials are intentionally omitted.',
+        'codex_desktop_settings': {},
+        'codex_provider': {'id': active_id, 'name': active_name, 'config_path': cli_config, 'auth_path': cli_auth},
+        'cc_switch': {
+            'settings': sanitize_settings(db.execute('select key,value from settings order by key').fetchall()),
+            'providers': query_rows(db, 'select id,app_type,name,category,provider_type from providers order by app_type,sort_index,name', ['id','app_type','name','category','provider_type']),
+            'provider_endpoints': query_rows(db, 'select provider_id,app_type,url from provider_endpoints order by app_type,provider_id', ['provider_id','app_type','url']),
+            'mcp_servers': query_rows(db, 'select id,name,tags,enabled_codex from mcp_servers order by name', ['id','name','tags','enabled_codex']),
+        },
+    }
+finally:
+    db.close()
+
+if os.path.isfile(codex_path):
+    try:
+        with open(codex_path, encoding='utf-8') as stream:
+            payload['codex_desktop_settings'] = sanitize(json.load(stream))
+    except (OSError, ValueError) as error:
+        raise SystemExit(f'Codex Desktop settings are not valid JSON: {error}')
+
+for target in (codex_mirror, cc_mirror):
+    parent = os.path.dirname(target)
+    with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=parent, prefix='.codex-sync-', suffix='.tmp', delete=False) as stream:
+        temporary = stream.name
+        json.dump(payload, stream, ensure_ascii=False, indent=2)
+        stream.write('\n')
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, target)
+    print(f'Synchronized non-sensitive mirror: {target}')
+
+os.makedirs(os.path.dirname(cli_config), mode=0o700, exist_ok=True)
+def atomic_write(target, content):
+    parent = os.path.dirname(target)
+    with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=parent, prefix='.codex-provider-', suffix='.tmp', delete=False) as stream:
+        temporary = stream.name
+        stream.write(content)
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, target)
+
+atomic_write(cli_config, config_text)
+if auth_payload:
+    atomic_write(cli_auth, json.dumps(auth_payload, ensure_ascii=False, indent=2) + '\n')
+print(f'Applied Codex provider: {active_name}')
+PY
+}
+
+case "${1:-status}" in
+    status) status ;;
+    backup) backup ;;
+    sync|apply-codex) sync ;;
+    *) printf 'Usage: %s status|backup|sync\n' "${0##*/}" >&2; exit 2 ;;
+esac

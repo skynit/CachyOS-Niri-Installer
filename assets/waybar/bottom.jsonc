@@ -1,0 +1,17 @@
+{
+    "layer": "top",
+    "position": "bottom",
+    "height": 38,
+    "spacing": 10,
+    "modules-left": ["niri/workspaces"],
+    "modules-center": ["niri/window"],
+    "modules-right": ["custom/record", "custom/updates", "custom/nightlight", "custom/ddc", "tray", "pulseaudio", "network", "battery", "clock"],
+    "clock": { "format": "{:%H:%M}", "tooltip-format": "{:%A, %Y-%m-%d}" },
+    "pulseaudio": { "format": "VOL {volume}%", "format-muted": "MUTED", "on-click": "pavucontrol" },
+    "network": { "format-wifi": "{essid}", "format-ethernet": "Ethernet", "format-disconnected": "Offline", "on-click": "nm-connection-editor" },
+    "battery": { "format": "BAT {capacity}%" },
+    "custom/record": { "exec": "cachyos-record-status", "return-type": "json", "interval": 1, "on-click": "cachyos-record-menu" },
+    "custom/updates": { "exec": "cachyos-update-status", "return-type": "json", "interval": 300, "on-click": "kitty -e cachyos-system-update" },
+    "custom/nightlight": { "exec": "cachyos-nightlight-status", "return-type": "json", "interval": 2, "on-click": "cachyos-nightlight" },
+    "custom/ddc": { "exec": "cachyos-ddc-brightness status", "return-type": "json", "interval": 10, "on-scroll-up": "cachyos-ddc-brightness up", "on-scroll-down": "cachyos-ddc-brightness down" }
+}

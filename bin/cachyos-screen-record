@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+state_dir="${XDG_RUNTIME_DIR:-$HOME/.cache}/cachyos-screen-record"
+pid_file="$state_dir/pid"
+output_dir="$HOME/Videos/ScreenRecords"
+mkdir -p -- "$state_dir" "$output_dir"
+
+if [[ -s "$pid_file" ]]; then
+    recorder_pid="$(<"$pid_file")"
+    if kill -0 "$recorder_pid" 2>/dev/null; then
+        kill -INT "$recorder_pid"
+        for _ in {1..50}; do
+            kill -0 "$recorder_pid" 2>/dev/null || break
+            sleep 0.1
+        done
+    fi
+    rm -f -- "$pid_file"
+    exit 0
+fi
+
+geometry="$(slurp)" || exit 0
+output_file="$output_dir/recording-$(date +%Y%m%d-%H%M%S).mkv"
+nohup wf-recorder -g "$geometry" -a -f "$output_file" >"$state_dir/wf-recorder.log" 2>&1 &
+printf '%s\n' "$!" > "$pid_file"

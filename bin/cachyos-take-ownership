@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+[[ $# -eq 1 && -e "$1" ]] || { printf 'Usage: %s PATH\n' "${0##*/}" >&2; exit 2; }
+pkexec chown -R "$(id -u):$(id -g)" -- "$1"

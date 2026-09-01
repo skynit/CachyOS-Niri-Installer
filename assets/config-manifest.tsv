@@ -1,0 +1,15 @@
+fcitx5/environment.conf	.config/environment.d/90-cachyos-input.conf
+fcitx5/profile	.config/fcitx5/profile
+fcitx5/default.custom.yaml	.local/share/fcitx5/rime/default.custom.yaml
+fish/cachyos-desktop.fish	.config/fish/conf.d/cachyos-desktop.fish
+kitty/cachyos-font.conf	.config/kitty/cachyos-font.conf
+niri/binds.kdl	.config/niri/dms/binds.kdl
+niri/cachyos-extras.kdl	.config/niri/cachyos-extras.kdl
+niri-sidebar/config.toml	.config/niri-sidebar/config.toml
+satty/config.toml	.config/satty/config.toml
+thunar/uca.xml	.config/Thunar/uca.xml
+waybar/top.jsonc	.config/waybar/top.jsonc
+waybar/bottom.jsonc	.config/waybar/bottom.jsonc
+waybar/style.css	.config/waybar/style.css
+waycorner/config.toml	.config/waycorner/config.toml
+waypaper/config.ini	.config/waypaper/config.ini

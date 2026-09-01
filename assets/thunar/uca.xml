@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<actions>
+  <action>
+    <icon>dialog-information</icon>
+    <name>Media information</name>
+    <command>cachyos-media-info %f</command>
+    <description>Show detailed media metadata</description>
+    <patterns>*</patterns>
+    <audio-files/><video-files/>
+  </action>
+  <action>
+    <icon>video-x-generic</icon>
+    <name>Convert video to GIF</name>
+    <command>cachyos-video-to-gif %f</command>
+    <description>Create a GIF next to the selected video</description>
+    <patterns>*</patterns>
+    <video-files/>
+  </action>
+  <action>
+    <icon>image-png</icon>
+    <name>Convert image to PNG</name>
+    <command>cachyos-image-to-png %f</command>
+    <description>Create a PNG copy of the selected image</description>
+    <patterns>*</patterns>
+    <image-files/>
+  </action>
+  <action>
+    <icon>com.visualstudio.code</icon>
+    <name>Open in Code</name>
+    <command>code %f</command>
+    <description>Open the selected path in Code</description>
+    <patterns>*</patterns>
+    <directories/><text-files/><other-files/>
+  </action>
+  <action>
+    <icon>edit-paste</icon>
+    <name>Paste copied files as links</name>
+    <command>cachyos-paste-symlink %f</command>
+    <description>Create symbolic links from copied file URIs</description>
+    <patterns>*</patterns>
+    <directories/>
+  </action>
+  <action>
+    <icon>edit-paste</icon>
+    <name>Paste clipboard image here</name>
+    <command>cachyos-paste-image %f</command>
+    <description>Save the clipboard image in this directory</description>
+    <patterns>*</patterns>
+    <directories/>
+  </action>
+  <action>
+    <icon>changes-allow</icon>
+    <name>Take ownership</name>
+    <command>cachyos-take-ownership %f</command>
+    <description>Change the selected path owner to the current user</description>
+    <patterns>*</patterns>
+    <directories/><audio-files/><image-files/><other-files/><text-files/><video-files/>
+  </action>
+</actions>

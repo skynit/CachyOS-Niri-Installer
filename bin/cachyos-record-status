@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+recording=false
+for pid_file in \
+    "${XDG_RUNTIME_DIR:-$HOME/.cache}/cachyos-screen-record/pid" \
+    "${XDG_RUNTIME_DIR:-$HOME/.cache}/cachyos-screen-record-gif/pid"; do
+    [[ -s "$pid_file" ]] || continue
+    if kill -0 "$(<"$pid_file")" 2>/dev/null; then
+        recording=true
+        break
+    fi
+done
+
+if [[ "$recording" == true ]]; then
+    printf '%s\n' '{"text":"REC","class":"recording","tooltip":"Recording in progress"}'
+else
+    printf '%s\n' '{"text":"Record","class":"idle","tooltip":"Open recording menu"}'
+fi

@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+mapping_file="$(mktemp)"
+combined_file="$(mktemp)"
+trap 'rm -f -- "$mapping_file" "$combined_file"' EXIT
+printf '%s\n' 'Insert the security key, then touch it when it starts blinking.'
+pamu2fcfg -u "$USER" > "$mapping_file"
+[[ -s "$mapping_file" ]] || { printf '%s\n' 'No U2F registration was produced.' >&2; exit 1; }
+
+if [[ -r /etc/u2f-mappings ]]; then
+    grep -v "^${USER}:" /etc/u2f-mappings > "$combined_file" || true
+fi
+printf '%s\n' "$(<"$mapping_file")" >> "$combined_file"
+sudo install -o root -g root -m 0644 "$combined_file" /etc/u2f-mappings
+dms auth validate --purpose u2f --path /etc/pam.d/dankshell-u2f
+cachyos-dms-setting enableU2f true
+cachyos-dms-setting u2fMode '"or"'
+dms auth sync --yes
+printf '%s\n' 'DMS security-key unlock is enabled in password-or-key mode.'

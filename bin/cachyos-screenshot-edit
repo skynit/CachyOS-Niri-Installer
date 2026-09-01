@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+output_dir="$HOME/Pictures/Screenshots"
+output_file="$output_dir/satty-$(date +%Y%m%d-%H%M%S).png"
+mkdir -p -- "$output_dir"
+
+geometry="$(slurp)" || exit 0
+grim -g "$geometry" - | satty --filename - --output-filename "$output_file"
