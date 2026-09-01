@@ -26,6 +26,10 @@ binds {
     Mod+B hotkey-overlay-title="浏览器 Browser" { spawn "firefox"; }
     //opencode ai助手
     Mod+Alt+O hotkey-overlay-title="AI助手 opencode agent" { spawn "kitty" "--class" "opencode" "-e" "opencode"; }
+    //claude cli
+    Mod+Alt+C hotkey-overlay-title="AI助手 claude cli" { spawn "kitty" "--class" "claude" "-e" "claude"; }
+    //打开obsidian笔记
+    Mod+Alt+B hotkey-overlay-title="Obsidian 笔记" { spawn "obsidian"; }
 
     // Suggested binds for running programs: terminal, app launcher, screen locker.
     Mod+T hotkey-overlay-title="共享终端 Terminal" { spawn "kitty" "--single-instance"; }
@@ -46,7 +50,7 @@ binds {
     Mod+G hotkey-overlay-title="切换总览界面 toggle overview" repeat=false { toggle-overview; }
     // 关闭聚焦窗口
     Mod+Q hotkey-overlay-title="关闭聚焦窗口 Close focus window" repeat=false { close-window; }
-    Alt+F4 hotkey-overlay-title="强制结束窗口 Force kill window" repeat=false { spawn "cachyos-niri-force-kill-window"; }
+    Alt+4 hotkey-overlay-title="强制结束窗口 Force kill window" repeat=false { spawn "cachyos-niri-force-kill-window"; }
     Alt+Shift+F4 hotkey-overlay-title="强制结束窗口及关联进程 Force kill window tree" repeat=false { spawn "cachyos-niri-force-kill-window" "-f"; }
 
     // niri-sidebar扩展相关

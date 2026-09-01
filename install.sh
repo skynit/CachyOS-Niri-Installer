@@ -9,8 +9,6 @@ readonly PINNED_DMS_VERSION="v1.5.3"
 readonly PINNED_DMS_SHA256_AMD64="c84da05e4afd84a737faaac4fa3bc65fa78fcd783c5ec930aec24f31f4e84716"
 readonly PINNED_NIRI_SIDEBAR_VERSION="v0.4.0"
 readonly PINNED_NIRI_SIDEBAR_SHA256_AMD64="8264fa0a82657a21b781588877adec67e29c51d4b4ca1cb35a2415c8520be5d1"
-readonly CODEX_DESKTOP_UPSTREAM="https://github.com/ilysenko/codex-desktop-linux.git"
-readonly CODEX_DESKTOP_COMMIT="${CACHYOS_CODEX_COMMIT:-efe491761d9075341fe79f564631a6dd9aafd291}"
 
 # shellcheck source=packages.sh
 source "$SCRIPT_DIR/packages.sh"
@@ -21,9 +19,6 @@ DRY_RUN=false
 ASSUME_YES=false
 SKIP_UPDATE=false
 SKIP_HARDWARE=false
-SKIP_CODEX=false
-CODEX_SOURCE_DIR="${CACHYOS_CODEX_SOURCE_DIR:-$HOME/.cache/cachyos-niri-dms/codex-desktop-linux}"
-CODEX_BUILD_THREADS="${CACHYOS_CODEX_BUILD_THREADS:-4}"
 TEMP_DIR=""
 DANKINSTALL_PATH=""
 
@@ -85,7 +80,6 @@ Options:
   --dms-version TAG     pinned DankMaterialShell release (default: $PINNED_DMS_VERSION)
   --skip-update         skip the initial full pacman upgrade
   --skip-hardware       skip AMD laptop firmware/graphics/audio packages
-  --skip-codex          keep the existing Codex Desktop installation
   --dry-run             print mutating commands without executing them
   -y, --yes             skip this wrapper's confirmation prompt
   -h, --help            show this help
@@ -143,10 +137,6 @@ parse_args() {
                 ;;
             --skip-hardware)
                 SKIP_HARDWARE=true
-                shift
-                ;;
-            --skip-codex)
-                SKIP_CODEX=true
                 shift
                 ;;
             --dry-run)
@@ -213,7 +203,6 @@ CachyOS + Niri + DMS installation plan
   DMS release:      $DMS_VERSION
   Full update:      $([[ "$SKIP_UPDATE" == true ]] && printf 'no' || printf 'yes')
   Hardware stack:   $([[ "$SKIP_HARDWARE" == true ]] && printf 'no' || printf 'yes')
-  Codex upstream:   $([[ "$SKIP_CODEX" == true ]] && printf 'no' || printf 'ilysenko/codex-desktop-linux')
   Replace configs:  yes
   DMS integrations: DankSearch, DankCalendar
   Applications:     daily, Chinese, office, development, media, VM, gaming, tools
@@ -365,54 +354,6 @@ install_aur_packages() {
     run paru -S --needed --noconfirm -- "${AUR_PACKAGES[@]}"
 }
 
-install_codex_desktop_upstream() {
-    [[ "$SKIP_CODEX" == false ]] || {
-        info "keeping the existing Codex Desktop installation"
-        return 0
-    }
-
-    require_command git
-    require_command make
-    ensure_temp_dir
-
-    if [[ "$DRY_RUN" == true ]]; then
-        print_command git clone "$CODEX_DESKTOP_UPSTREAM" "$CODEX_SOURCE_DIR"
-        print_command git -C "$CODEX_SOURCE_DIR" fetch --depth=1 origin "$CODEX_DESKTOP_COMMIT"
-        print_command make -C "$CODEX_SOURCE_DIR" build-app
-        print_command make -C "$CODEX_SOURCE_DIR" pacman
-        print_command sudo pacman -U --noconfirm "$CODEX_SOURCE_DIR/dist/codex-desktop-*.pkg.tar.zst"
-        return 0
-    fi
-
-    install -d -m 0755 "$(dirname "$CODEX_SOURCE_DIR")"
-    if [[ ! -d "$CODEX_SOURCE_DIR/.git" ]]; then
-        info "cloning Codex Desktop from $CODEX_DESKTOP_UPSTREAM"
-        git clone "$CODEX_DESKTOP_UPSTREAM" "$CODEX_SOURCE_DIR"
-    fi
-    git -C "$CODEX_SOURCE_DIR" remote set-url origin "$CODEX_DESKTOP_UPSTREAM"
-    git -C "$CODEX_SOURCE_DIR" fetch --depth=1 origin "$CODEX_DESKTOP_COMMIT"
-    git -C "$CODEX_SOURCE_DIR" checkout --detach "$CODEX_DESKTOP_COMMIT"
-
-    local commit
-    commit="$(git -C "$CODEX_SOURCE_DIR" rev-parse HEAD)"
-    [[ "$commit" == "$CODEX_DESKTOP_COMMIT" ]] || die "Codex source commit verification failed"
-    info "building Codex Desktop from ilysenko commit $commit"
-    export CODEX_LINUX_SOURCE_COMMIT="$commit"
-    export CODEX_LINUX_SOURCE_REMOTE="$CODEX_DESKTOP_UPSTREAM"
-    rm -rf -- "$CODEX_SOURCE_DIR/dist"
-    make -C "$CODEX_SOURCE_DIR" MAX_BUILD_THREADS="$CODEX_BUILD_THREADS" build-app
-    make -C "$CODEX_SOURCE_DIR" MAX_BUILD_THREADS="$CODEX_BUILD_THREADS" pacman
-
-    local package_file
-    package_file="$(find "$CODEX_SOURCE_DIR/dist" -maxdepth 1 -type f -name 'codex-desktop-*.pkg.tar.*' -print | sort -V | tail -n 1)"
-    [[ -n "$package_file" ]] || die "Codex Desktop pacman package was not generated"
-    if pacman -Q codex-desktop-linux >/dev/null 2>&1; then
-        warn "removing the previous third-party codex-desktop-linux package"
-        sudo pacman -R --noconfirm codex-desktop-linux
-    fi
-    sudo pacman -U --noconfirm "$package_file"
-}
-
 install_niri_sidebar() {
     local binary_name="niri-sidebar-linux-x86_64"
     local base_url="https://github.com/Vigintillionn/niri-sidebar/releases/download/$PINNED_NIRI_SIDEBAR_VERSION"
@@ -507,6 +448,7 @@ install_desktop_assets() {
     local include_line='include "cachyos-extras.kdl"'
 
     for helper in "$SCRIPT_DIR"/bin/*; do
+        [[ -f "$helper" ]] || continue
         run sudo install -m 0755 "$helper" "/usr/local/bin/${helper##*/}"
     done
 
@@ -747,7 +689,6 @@ main() {
     install_dms_features
     install_applications
     install_aur_packages
-    install_codex_desktop_upstream
     install_niri_sidebar
     configure_application_services
     configure_snapper

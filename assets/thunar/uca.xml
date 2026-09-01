@@ -56,4 +56,12 @@
     <patterns>*</patterns>
     <directories/><audio-files/><image-files/><other-files/><text-files/><video-files/>
   </action>
+  <action>
+    <icon>utilities-terminal</icon>
+    <name>Open Terminal Here</name>
+    <command>terminal-here %f</command>
+    <description>Open Kitty in the selected directory</description>
+    <patterns>*</patterns>
+    <directories/><audio-files/><image-files/><other-files/><text-files/><video-files/>
+  </action>
 </actions>

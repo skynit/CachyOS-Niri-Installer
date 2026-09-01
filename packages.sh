@@ -74,6 +74,8 @@ readonly -a DEVELOPMENT_PACKAGES=(
     neovim
     code
     opencode
+    openai-codex
+    claude-code
     shellcheck
     fish
     starship
@@ -128,6 +130,7 @@ readonly -a AUR_PACKAGES=(
     wechat-appimage
     upscaler
     cc-switch-bin
+    codex-desktop-git
     protonplus
     gearlever
     clash-verge-rev

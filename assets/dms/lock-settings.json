@@ -1,6 +1,6 @@
 {
-  "acMonitorTimeout": 600,
-  "acLockTimeout": 300,
+  "acMonitorTimeout": 1200,
+  "acLockTimeout": 1200,
   "acSuspendTimeout": 3600,
   "acPostLockMonitorTimeout": 30,
   "batteryMonitorTimeout": 300,
@@ -31,8 +31,6 @@
   "lockU2fPamPath": "",
   "blurEnabled": true,
   "blurForegroundLayers": true,
-  "blurredWallpaperLayer": true,
-  "blurWallpaperOnOverview": true,
-  "overviewRows": 2,
-  "overviewColumns": 5
+  "blurredWallpaperLayer": false,
+  "blurWallpaperOnOverview": true
 }

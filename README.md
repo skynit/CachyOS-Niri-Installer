@@ -39,7 +39,6 @@ Kitty；DMS 负责主面板、启动器、通知、锁屏和动态主题，Quick
 ./install.sh --terminal kitty   # 显式指定默认终端
 ./install.sh --skip-update      # 系统已更新时跳过 pacman -Syu
 ./install.sh --skip-hardware    # 跳过本项目的 AMD 硬件包
-./install.sh --skip-codex       # 保留现有 Codex Desktop，不重新构建上游包
 ./install.sh --yes              # 跳过安装器自身的确认提示
 ```
 
@@ -55,20 +54,21 @@ Kitty；DMS 负责主面板、启动器、通知、锁屏和动态主题，Quick
 - 将 Fish 设置为登录 Shell，并配置 Starship、eza、zoxide 和 Fastfetch。
 - 配置 Fcitx5、RIME、雾凇拼音、Waypaper、awww、Satty、录屏及双 Waybar。
 - 配置 DMS 锁屏、电源策略、指纹和安全密钥辅助工具。
-- 从 `ilysenko/codex-desktop-linux` 拉取最新源码，构建并安装 pacman 包；使用 `--skip-codex` 可跳过。
+- 通过 CachyOS 仓库安装 Codex CLI 和 Claude Code，并通过 AUR 安装 `codex-desktop-git`。
 - 生成 CC Switch 与 Codex Desktop 的非敏感配置镜像，不复制账号、令牌、Cookie 或密钥。
+- 禁止 Niri 接管电源键，并自动隐藏企业微信在 XWayland 下产生的黑色阴影窗口。
 - 自动清理受管理位置中的旧品牌包、路径和 Niri 配置残留。
 - 不自动重启。
 
 ## 默认应用
 
-`packages.sh` 是唯一的软件包清单。目前包含 **101 个去重后的仓库包**和 **13 个
+`packages.sh` 是唯一的软件包清单。目前包含 **103 个去重后的仓库包**和 **14 个
 AUR 包**，安装时不需要额外功能开关。
 
 - 日常：Firefox、Thunar、Nautilus、File Roller、Transmission、Flatseal、Mission Center、GParted、LACT、EasyEffects、MPV、imv、LocalSend、Yazi、剪贴板、截图和录屏工具。
 - 中文：Fcitx5、RIME、雾凇拼音、配置工具及 Noto 中文/Emoji 字体。
 - 办公：LibreOffice、KeePassXC、GNOME Calendar、Obsidian。
-- 开发：base-devel、Git、Neovim、Code、OpenCode、CC Switch、ShellCheck。
+- 开发：base-devel、Git、Neovim、Code、OpenCode、Codex CLI、Claude Code、CC Switch、ShellCheck。
 - 影音：OBS Studio、GIMP、Inkscape、Audacity、Kdenlive。
 - 虚拟化：virt-manager、QEMU、swtpm、virt-viewer，并启用 `libvirtd`。
 - 游戏：Steam、Lutris、MangoHud、Gamescope、Wine。
@@ -87,7 +87,7 @@ Clash Verge Rev、Obsidian、雾凇拼音、Waypaper、`nirius`、Waycorner 和 
 
 - DMS 是默认面板、启动器、通知中心、剪贴板、锁屏和动态主题服务。
 - DMS 仅绑定到 Niri 用户会话，不会在其他桌面会话中自动启动。
-- DMS 的模糊壁纸层与 Niri 深色 backdrop 组合成暗色模糊 Overview。
+- DMS 在 Overview 中启用壁纸模糊，Niri 使用深色 backdrop；常驻模糊壁纸层保持关闭。
 - DMS Overview 设置为 2 行、5 列，用于提高窗口查找效率。
 - `Super+Shift+/` 打开 Kitty + fzf，可按快捷键、说明、动作或分组搜索教程。
 
@@ -155,6 +155,8 @@ Super+T                    打开 Kitty 单实例终端
 Super+Enter                打开独立 Kitty 终端
 Super+B                    打开 Firefox
 Super+Alt+O                在 Kitty 中打开 OpenCode
+Super+Alt+C                在 Kitty 中打开 Claude Code
+Super+Alt+B                打开 Obsidian
 Super+P                    提取当前窗口信息并复制
 Super+E                    打开 Thunar，失败时回退 Nautilus
 Super+Alt+E                打开 Nautilus
@@ -162,7 +164,7 @@ Super+Z                    打开 DMS Spotlight，失败时回退 Fuzzel
 Super+Alt+W / Super+Y      打开 DMS 壁纸选择器
 Super+O / Super+G          打开或关闭 Niri Overview
 Super+Q                    正常关闭当前窗口
-Alt+F4                     强制结束点选窗口
+Alt+4                      强制结束点选窗口
 Alt+Shift+F4               强制结束点选窗口及其进程树
 Super+X                    打开 DMS 电源菜单
 Super+Alt+V                打开 DMS 剪贴板
@@ -175,10 +177,11 @@ Super+Shift+W              打开 DMS 窗口规则工具
 
 ### Codex 与 CC Switch 配置
 
-安装器将上游源码放在 `~/.cache/cachyos-niri-dms/codex-desktop-linux`，构建日志和
-产物保留在该目录中。已安装的上游包会写入构建来源信息，可用以下命令检查：
+Codex Desktop 使用当前系统采用的 AUR `codex-desktop-git` 包，Codex CLI 使用仓库中的
+`openai-codex`。可用以下命令检查桌面包与构建来源：
 
 ```bash
+pacman -Qi codex-desktop-git
 codex-desktop --version 2>/dev/null || true
 jq '.source' /opt/codex-desktop/.codex-linux/build-info.json
 ```
@@ -376,7 +379,7 @@ ddcutil detect
 | 目标功能 | 当前实现 | 差异 |
 | --- | --- | --- |
 | 网格概览 | 官方 Niri Overview + DMS 2×5 设置 | 不保证与 fork 的网格布局和交互完全一致 |
-| 暗色模糊概览背景 | DMS 模糊壁纸层 + Niri 深色 backdrop | 使用官方配置能力组合实现 |
+| 暗色模糊概览背景 | DMS Overview 模糊 + Niri 深色 backdrop | 常驻模糊壁纸层保持关闭 |
 | 放大镜 | `Super+Alt+F7` 手动启动 Woomer | 不支持鼠标快速晃动自动放大 |
 | 热角 | Waycorner | 独立工具实现，不依赖修改版 Niri |
 | 窗口跟随/快速聚焦 | nirius | 独立辅助服务实现 |

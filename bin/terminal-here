@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+target="${1:-}"
+if [[ -n "$target" && ! -d "$target" ]]; then
+    target="$(dirname -- "$target")"
+fi
+
+exec kitty --directory "${target:-$HOME}"

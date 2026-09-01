@@ -16,6 +16,12 @@ spawn-at-startup "niri-sidebar" "listen"
 spawn-at-startup "niriusd"
 spawn-at-startup "waycorner"
 spawn-at-startup "cachyos-post-login-setup"
+spawn-at-startup "wxwork-shadow-hider.py" "watch"
+
+// Avoid suspend loops on laptops where the compositor also handles the power key.
+input {
+    disable-power-key-handling
+}
 
 binds {
     Mod+Ctrl+F2 hotkey-overlay-title="Waybar top" { spawn "cachyos-waybar-top"; }

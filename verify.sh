@@ -177,13 +177,14 @@ check_applications() {
 check_desktop_extras() {
     local command_name
     for command_name in \
-        kitty fish starship eza zoxide fastfetch waybar awww-daemon waypaper satty wf-recorder fuzzel cachyos-input-toggle cachyos-ai-config-sync \
+        kitty fish starship eza zoxide fastfetch codex claude waybar awww-daemon waypaper satty wf-recorder fuzzel cachyos-input-toggle cachyos-ai-config-sync \
         niri-sidebar niriusd nirius waycorner woomer ddcutil wlsunset; do
         check_command "$command_name"
     done
 
     local helper
     for helper in "$SCRIPT_DIR"/bin/*; do
+        [[ -f "$helper" ]] || continue
         check_command "${helper##*/}"
     done
     for helper in cachyos-niri-pick cachyos-niri-force-kill-window cachyos-quick-rollback; do
@@ -290,12 +291,12 @@ check_desktop_extras() {
         warn "CC Switch/Codex Desktop mirrors are not initialized; run cachyos-ai-config-sync sync"
     fi
 
-    if [[ -x /usr/bin/codex-desktop ]]; then
+    if pacman -Q codex-desktop-git >/dev/null 2>&1 && [[ -x /usr/bin/codex-desktop ]]; then
         if [[ -s /opt/codex-desktop/.codex-linux/build-info.json ]] &&
-            jq -e '.source.remote | test("github.com/ilysenko/codex-desktop-linux")' /opt/codex-desktop/.codex-linux/build-info.json >/dev/null 2>&1; then
-            pass "Codex Desktop is built from ilysenko/codex-desktop-linux"
+            jq -e '.source.provenance == "git" and (.source.commit | type == "string" and length > 0)' /opt/codex-desktop/.codex-linux/build-info.json >/dev/null 2>&1; then
+            pass "Codex Desktop AUR package has Git build metadata"
         else
-            warn "Codex Desktop provenance is unavailable or is not ilysenko/codex-desktop-linux"
+            warn "Codex Desktop Git build metadata is unavailable"
         fi
     fi
 }
@@ -339,18 +340,16 @@ check_lock_screen() {
     done
 
     if [[ -s "$settings_file" ]] && jq -e '
-        .acLockTimeout == 300 and
-        .acMonitorTimeout == 600 and
+        .acLockTimeout == 1200 and
+        .acMonitorTimeout == 1200 and
         .acSuspendTimeout == 3600 and
         .batteryLockTimeout == 180 and
         .batteryMonitorTimeout == 300 and
         .batterySuspendTimeout == 1800 and
         .lockBeforeSuspend == true and
         .loginctlLockIntegration == true and
-        .blurredWallpaperLayer == true and
-        .blurWallpaperOnOverview == true and
-        .overviewRows == 2 and
-        .overviewColumns == 5
+        .blurredWallpaperLayer == false and
+        .blurWallpaperOnOverview == true
     ' "$settings_file" >/dev/null 2>&1; then
         pass "DMS lock and idle policy is configured"
     else
