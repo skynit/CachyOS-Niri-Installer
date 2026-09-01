@@ -12,6 +12,8 @@ readonly PINNED_NIRI_SIDEBAR_SHA256_AMD64="8264fa0a82657a21b781588877adec67e29c5
 
 # shellcheck source=packages.sh
 source "$SCRIPT_DIR/packages.sh"
+# shellcheck source=hardware.sh
+source "$SCRIPT_DIR/hardware.sh"
 
 DMS_VERSION="$PINNED_DMS_VERSION"
 TERMINAL="kitty"
@@ -21,30 +23,6 @@ SKIP_UPDATE=false
 SKIP_HARDWARE=false
 TEMP_DIR=""
 DANKINSTALL_PATH=""
-
-readonly -a HARDWARE_PACKAGES=(
-    linux-firmware
-    amd-ucode
-    mesa
-    vulkan-radeon
-    sof-firmware
-    pipewire
-    pipewire-alsa
-    pipewire-pulse
-    wireplumber
-    bluez
-    bluez-utils
-)
-
-readonly -a OPTIONAL_HARDWARE_PACKAGES=(
-    lib32-vulkan-radeon
-    vulkan-tools
-    fwupd
-    bolt
-    v4l-utils
-    usbutils
-    pciutils
-)
 
 readonly -a DMS_FEATURE_PACKAGES=(
     networkmanager
@@ -79,7 +57,7 @@ Options:
   --terminal NAME       kitty, ghostty, or alacritty (default: kitty)
   --dms-version TAG     pinned DankMaterialShell release (default: $PINNED_DMS_VERSION)
   --skip-update         skip the initial full pacman upgrade
-  --skip-hardware       skip AMD laptop firmware/graphics/audio packages
+  --skip-hardware       skip auto-detected firmware/graphics/audio packages
   --dry-run             print mutating commands without executing them
   -y, --yes             skip this wrapper's confirmation prompt
   -h, --help            show this help
@@ -202,7 +180,8 @@ CachyOS + Niri + DMS installation plan
   Terminal:         $TERMINAL
   DMS release:      $DMS_VERSION
   Full update:      $([[ "$SKIP_UPDATE" == true ]] && printf 'no' || printf 'yes')
-  Hardware stack:   $([[ "$SKIP_HARDWARE" == true ]] && printf 'no' || printf 'yes')
+  Detected hardware: $(cachyos_hardware_summary)
+  Hardware stack:   $([[ "$SKIP_HARDWARE" == true ]] && printf 'skipped' || printf 'auto-selected')
   Replace configs:  yes
   DMS integrations: DankSearch, DankCalendar
   Applications:     daily, Chinese, office, development, media, VM, gaming, tools
@@ -314,9 +293,14 @@ install_available_packages() {
 }
 
 install_hardware_stack() {
-    info "installing AMD laptop firmware, graphics, audio, Bluetooth, and diagnostics"
-    install_available_packages required true "${HARDWARE_PACKAGES[@]}"
-    install_available_packages optional false "${OPTIONAL_HARDWARE_PACKAGES[@]}"
+    local note
+    info "installing auto-selected firmware, graphics, audio, Bluetooth, and diagnostics"
+    info "detected hardware: $(cachyos_hardware_summary)"
+    for note in "${CACHYOS_HARDWARE_NOTES[@]}"; do
+        warn "$note"
+    done
+    install_available_packages required true "${CACHYOS_HARDWARE_REQUIRED_PACKAGES[@]}"
+    install_available_packages optional false "${CACHYOS_HARDWARE_OPTIONAL_PACKAGES[@]}"
 
     if pacman -Q tuned-ppd >/dev/null 2>&1; then
         warn "preserving the installed tuned-ppd power-profile provider"
@@ -672,6 +656,8 @@ post_install() {
 main() {
     parse_args "$@"
     preflight
+    cachyos_detect_hardware
+    cachyos_select_hardware_packages
     confirm_plan
     authenticate
     save_package_snapshot

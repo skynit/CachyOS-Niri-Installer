@@ -1,6 +1,6 @@
 # CachyOS + Niri + DankMaterialShell
 
-这是一个面向 CachyOS AMD 笔记本的完整桌面安装器，默认部署：
+这是一个面向 CachyOS x86_64 设备的完整桌面安装器，默认部署：
 
 ```text
 CachyOS + 官方 Niri + DMS v1.5.3 + Quickshell + Kitty
@@ -15,7 +15,8 @@ Kitty；DMS 负责主面板、启动器、通知、锁屏和动态主题，Quick
 - 使用可执行 `sudo` 的普通用户运行，不能直接使用 root。
 - 网络连接正常。
 - 当前仅支持 `x86_64`。
-- 硬件预设面向 AMD 显卡/核显笔记本。
+- 自动检测 Intel/AMD CPU 与 Intel/AMD/NVIDIA 显卡，并选择对应的微码、Mesa/Vulkan 或 NVIDIA 用户态驱动包。
+- 混合显卡会合并所需驱动包；无法识别的设备会显示警告，而不会错误套用其他厂商驱动。
 
 不要在 CachyOS Live ISO 中运行。
 
@@ -38,14 +39,14 @@ Kitty；DMS 负责主面板、启动器、通知、锁屏和动态主题，Quick
 ```bash
 ./install.sh --terminal kitty   # 显式指定默认终端
 ./install.sh --skip-update      # 系统已更新时跳过 pacman -Syu
-./install.sh --skip-hardware    # 跳过本项目的 AMD 硬件包
+./install.sh --skip-hardware    # 跳过自动识别的硬件包
 ./install.sh --yes              # 跳过安装器自身的确认提示
 ```
 
 默认安装过程会：
 
 - 完整执行一次 `pacman -Syu`，除非使用 `--skip-update`。
-- 安装 AMD 固件、Mesa/RADV、PipeWire、蓝牙及电源管理组件。
+- 根据 CPU/GPU 自动安装微码、Mesa/Vulkan 或 NVIDIA 驱动，以及 PipeWire、蓝牙和电源管理组件。
 - 安装官方 Niri、DMS、Quickshell、Xwayland Satellite 和 Kitty。
 - 下载并校验固定版本的 DMS 官方 `dankinstall` v1.5.3。
 - 安装 DankSearch、DankCalendar，以及 DMS 官方 Niri/Kitty 配置。

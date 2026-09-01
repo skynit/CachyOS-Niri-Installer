@@ -6,6 +6,8 @@ readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=packages.sh
 source "$SCRIPT_DIR/packages.sh"
+# shellcheck source=hardware.sh
+source "$SCRIPT_DIR/hardware.sh"
 
 PASS_COUNT=0
 WARN_COUNT=0
@@ -121,20 +123,32 @@ check_dms_binding() {
 }
 
 check_hardware() {
-    if command -v lspci >/dev/null 2>&1; then
-        if lspci -k 2>/dev/null | grep -A3 -Ei 'VGA|Display|3D' | grep -q 'amdgpu'; then
-            pass "AMD GPU uses amdgpu"
-        else
-            warn "amdgpu was not found in the active PCI driver output"
-        fi
+    local device vendor driver expected_driver
+    cachyos_detect_hardware
+    cachyos_select_hardware_packages
 
-        if lspci -k 2>/dev/null | grep -A5 -Ei 'Network|Wireless' | grep -qE 'rtw89_8922ae|rtw89'; then
-            pass "Realtek wireless device uses an rtw89 driver"
-        else
-            warn "rtw89 wireless driver was not found in the active PCI driver output"
-        fi
-    else
-        warn "lspci is unavailable; hardware drivers were not checked"
+    pass "detected hardware: $(cachyos_hardware_summary)"
+    for device in "${CACHYOS_GPU_DEVICES[@]}"; do
+        vendor="${device%%:*}"
+        driver="${device#*:}"
+        case "$vendor" in
+            intel) expected_driver='i915 or xe' ;;
+            amd) expected_driver='amdgpu' ;;
+            nvidia) expected_driver='nvidia or nouveau' ;;
+            *) expected_driver='a supported kernel driver' ;;
+        esac
+
+        case "$vendor:$driver" in
+            intel:i915|intel:xe|amd:amdgpu|nvidia:nvidia|nvidia:nouveau)
+                pass "$vendor GPU uses $driver"
+                ;;
+            *)
+                warn "$vendor GPU driver is ${driver:-unknown}; expected $expected_driver"
+                ;;
+        esac
+    done
+    if ((${#CACHYOS_GPU_DEVICES[@]} == 0)); then
+        warn "no GPU was detected"
     fi
 
     if command -v vulkaninfo >/dev/null 2>&1; then
@@ -399,8 +413,11 @@ main() {
         check_command "$command_name"
     done
 
+    cachyos_detect_hardware
+    cachyos_select_hardware_packages
+
     local package_name
-    for package_name in niri dms-shell quickshell xwayland-satellite linux-firmware amd-ucode mesa vulkan-radeon; do
+    for package_name in niri dms-shell quickshell xwayland-satellite "${CACHYOS_HARDWARE_REQUIRED_PACKAGES[@]}"; do
         check_package "$package_name"
     done
 
