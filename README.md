@@ -78,9 +78,10 @@ echo '959f6577f45e25ee9fd8c220fd221b08e4ea79412c7315c0f922dd6d86d5e33c  cachyos-
 - 安装并启用 Ly，将其他已启用的显示管理器停用。
 - 将 Fish 设置为登录 Shell，并配置 Starship、eza、zoxide 和 Fastfetch。
 - 配置 Fcitx5、RIME、雾凇拼音、Waypaper、awww、Satty、录屏及双 Waybar。
-- 配置 DMS 锁屏、电源策略、指纹和安全密钥辅助工具。
+- 配置 DMS 主题、光标、模糊、锁屏、电源策略、指纹和安全密钥辅助工具。
 - 通过 CachyOS 仓库安装 Codex CLI 和 Claude Code，并通过 AUR 安装 `codex-desktop-git`。
 - 生成 CC Switch 与 Codex Desktop 的非敏感配置镜像，不复制账号、令牌、Cookie 或密钥。
+- 部署稳定的 Niri 主配置、快捷键和项目扩展；DMS 根据受管理的设置生成配色、布局、光标和模糊配置。
 - 禁止 Niri 接管电源键，并自动隐藏企业微信在 XWayland 下产生的黑色阴影窗口。
 - 自动清理受管理位置中的旧品牌包、路径和 Niri 配置残留。
 - 不自动重启。
@@ -113,7 +114,7 @@ Clash Verge Rev、Obsidian、雾凇拼音、Waypaper、`nirius`、Waycorner 和 
 - DMS 是默认面板、启动器、通知中心、剪贴板、锁屏和动态主题服务。
 - DMS 仅绑定到 Niri 用户会话，不会在其他桌面会话中自动启动。
 - DMS 在 Overview 中启用壁纸模糊，Niri 使用深色 backdrop；常驻模糊壁纸层保持关闭。
-- DMS Overview 设置为 2 行、5 列，用于提高窗口查找效率。
+- DMS Overview Overlay 保持启用，并使用完整启动器样式。
 - `Super+Shift+/` 打开 Kitty + fzf，可按快捷键、说明、动作或分组搜索教程。
 
 ### 截图、录屏与 Waybar
@@ -137,7 +138,7 @@ DDC 权限通过 `i2c-dev`、`i2c` 用户组和 udev 规则配置。安装后必
 - `nirius`：窗口跟随模式，以及按应用 ID 快速聚焦或启动。
 - Waycorner：提供热角动作。
 - Woomer：提供手动屏幕放大镜。
-- Waypaper + awww：切换壁纸，并通知 DMS 重新生成动态颜色。
+- Waypaper + awww：切换壁纸，并通知 DMS 重新生成动态颜色。动态颜色取决于新机选择的壁纸。
 - Thunar：媒体信息、视频转 GIF、图片转 PNG、Code 打开、粘贴剪贴板图片、粘贴符号链接和获取所有权。
 
 ### 中文输入、Shell 与应用初始化
@@ -160,9 +161,13 @@ DDC 权限通过 `i2c-dev`、`i2c` 用户组和 udev 规则配置。安装后必
 
 ## 默认快捷键
 
-安装器会在 DMS 生成配置后，用 `assets/niri/binds.kdl` 覆盖
-`~/.config/niri/dms/binds.kdl`，因此目标机器会获得当前系统正在使用的整套操作习惯。
-`assets/niri/cachyos-extras.kdl` 继续提供 Waybar、长截图、nirius 和放大镜等补充快捷键。
+安装器直接管理 `assets/niri/config.kdl`、`assets/niri/binds.kdl` 和
+`assets/niri/cachyos-extras.kdl`。DMS 根据 `assets/dms/desktop-settings.json` 生成
+配色、布局、输出、光标和模糊配置，因此这些自动生成文件不会被项目强制覆盖。
+
+新机可以复刻稳定的 Niri 行为、窗口规则、Overview 设置和整套快捷键。动态配色仍取决于
+所选壁纸；项目不复制本机个人壁纸、账号、令牌、Cookie、密钥或应用私有状态，因此不承诺
+像素级复刻当前桌面。
 
 ### 常用应用与系统操作
 
@@ -189,7 +194,7 @@ Super+Z                    打开 DMS Spotlight，失败时回退 Fuzzel
 Super+Alt+W / Super+Y      打开 DMS 壁纸选择器
 Super+O / Super+G          打开或关闭 Niri Overview
 Super+Q                    正常关闭当前窗口
-Alt+4                      强制结束点选窗口
+Alt+4 / Alt+F4             强制结束点选窗口
 Alt+Shift+F4               强制结束点选窗口及其进程树
 Super+X                    打开 DMS 电源菜单
 Super+Alt+V                打开 DMS 剪贴板
@@ -403,15 +408,15 @@ ddcutil detect
 
 | 目标功能 | 当前实现 | 差异 |
 | --- | --- | --- |
-| 网格概览 | 官方 Niri Overview + DMS 2×5 设置 | 不保证与 fork 的网格布局和交互完全一致 |
+| 概览 | 官方 Niri Overview + DMS Overlay | 不提供 fork 的私有网格布局和交互 |
 | 暗色模糊概览背景 | DMS Overview 模糊 + Niri 深色 backdrop | 常驻模糊壁纸层保持关闭 |
 | 放大镜 | `Super+Alt+F7` 手动启动 Woomer | 不支持鼠标快速晃动自动放大 |
 | 热角 | Waycorner | 独立工具实现，不依赖修改版 Niri |
 | 窗口跟随/快速聚焦 | nirius | 独立辅助服务实现 |
 | 侧边栏 | niri-sidebar | 独立辅助服务实现 |
 
-不要把 DMS 的 2×5 设置理解为官方 Niri 新增了 fork 的私有网格实现。鼠标晃动放大也未实现，
-当前提供的是明确快捷键触发的 Woomer。
+DMS Overlay 不会为官方 Niri 增加 fork 的私有网格实现。鼠标晃动放大也未实现，当前提供的是
+明确快捷键触发的 Woomer。
 
 ## 明确不会自动执行的操作
 

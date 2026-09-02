@@ -51,6 +51,7 @@ binds {
     // 关闭聚焦窗口
     Mod+Q hotkey-overlay-title="关闭聚焦窗口 Close focus window" repeat=false { close-window; }
     Alt+4 hotkey-overlay-title="强制结束窗口 Force kill window" repeat=false { spawn "cachyos-niri-force-kill-window"; }
+    Alt+F4 hotkey-overlay-title="强制结束窗口 Force kill window" repeat=false { spawn "cachyos-niri-force-kill-window"; }
     Alt+Shift+F4 hotkey-overlay-title="强制结束窗口及关联进程 Force kill window tree" repeat=false { spawn "cachyos-niri-force-kill-window" "-f"; }
 
     // niri-sidebar扩展相关

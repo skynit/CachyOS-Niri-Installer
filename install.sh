@@ -428,8 +428,8 @@ configure_ly() {
 
 install_desktop_assets() {
     local helper
-    local niri_config="$HOME/.config/niri/config.kdl"
-    local include_line='include "cachyos-extras.kdl"'
+    local rendered_niri_config
+    local line
 
     for helper in "$SCRIPT_DIR"/bin/*; do
         [[ -f "$helper" ]] || continue
@@ -454,11 +454,22 @@ install_desktop_assets() {
         "$HOME/Pictures/Wallpapers" \
         "$HOME/Videos/ScreenRecords"
 
+    ensure_temp_dir
+    rendered_niri_config="$TEMP_DIR/niri-config.kdl"
+    if [[ "$DRY_RUN" == true ]]; then
+        print_command render-niri-config "$SCRIPT_DIR/assets/niri/config.kdl" "$rendered_niri_config"
+    else
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            printf '%s\n' "${line//@HOME@/$HOME}"
+        done < "$SCRIPT_DIR/assets/niri/config.kdl" > "$rendered_niri_config"
+    fi
+
     run install -m 0644 "$SCRIPT_DIR/assets/fcitx5/environment.conf" "$HOME/.config/environment.d/90-cachyos-input.conf"
     run install -m 0644 "$SCRIPT_DIR/assets/fcitx5/profile" "$HOME/.config/fcitx5/profile"
     run install -m 0644 "$SCRIPT_DIR/assets/fcitx5/default.custom.yaml" "$HOME/.local/share/fcitx5/rime/default.custom.yaml"
     run install -m 0644 "$SCRIPT_DIR/assets/fish/cachyos-desktop.fish" "$HOME/.config/fish/conf.d/cachyos-desktop.fish"
     run install -m 0644 "$SCRIPT_DIR/assets/kitty/cachyos-font.conf" "$HOME/.config/kitty/cachyos-font.conf"
+    run install -m 0644 "$rendered_niri_config" "$HOME/.config/niri/config.kdl"
     run install -m 0644 "$SCRIPT_DIR/assets/niri/binds.kdl" "$HOME/.config/niri/dms/binds.kdl"
     run install -m 0644 "$SCRIPT_DIR/assets/niri/cachyos-extras.kdl" "$HOME/.config/niri/cachyos-extras.kdl"
     run install -m 0644 "$SCRIPT_DIR/assets/niri-sidebar/config.toml" "$HOME/.config/niri-sidebar/config.toml"
@@ -491,20 +502,16 @@ install_desktop_assets() {
     run sudo udevadm trigger --subsystem-match=i2c-dev
 
     run sudo install -d -m 0755 /usr/local/share/cachyos-desktop/assets
-    local asset relative_asset
+    local asset relative_asset source_asset
     while IFS= read -r asset; do
         relative_asset="${asset#"$SCRIPT_DIR/assets/"}"
-        run sudo install -D -o root -g root -m 0644 "$asset" "/usr/local/share/cachyos-desktop/assets/$relative_asset"
+        source_asset="$asset"
+        if [[ "$relative_asset" == "niri/config.kdl" ]]; then
+            source_asset="$rendered_niri_config"
+        fi
+        run sudo install -D -o root -g root -m 0644 "$source_asset" "/usr/local/share/cachyos-desktop/assets/$relative_asset"
     done < <(find "$SCRIPT_DIR/assets" -type f -print | sort)
     run sudo install -o root -g root -m 0644 "$SCRIPT_DIR/assets/config-manifest.tsv" /usr/local/share/cachyos-desktop/config-manifest.tsv
-
-    if ! grep -Fqx "$include_line" "$niri_config" 2>/dev/null; then
-        if [[ "$DRY_RUN" == true ]]; then
-            print_command sh -c "printf '%s\\n' '$include_line' >> '$niri_config'"
-        else
-            printf '\n%s\n' "$include_line" >> "$niri_config"
-        fi
-    fi
 }
 
 sync_ai_configs() {
@@ -518,17 +525,17 @@ sync_ai_configs() {
     fi
 }
 
-configure_dms_lock_screen() {
+configure_dms_settings() {
     local settings_dir="$HOME/.config/DankMaterialShell"
     local settings_file="$settings_dir/settings.json"
-    local defaults_file="$SCRIPT_DIR/assets/dms/lock-settings.json"
+    local defaults_file="$SCRIPT_DIR/assets/dms/desktop-settings.json"
     local temporary_file
 
     run sudo install -o root -g root -m 0644 "$SCRIPT_DIR/assets/dms/dankshell-u2f" /etc/pam.d/dankshell-u2f
 
     if [[ "$DRY_RUN" == true ]]; then
         print_command jq --slurp '.[0] * .[1]' "$settings_file" "$defaults_file"
-        print_command install -m 0600 merged-lock-settings.json "$settings_file"
+        print_command install -m 0600 merged-desktop-settings.json "$settings_file"
         print_command dms auth resolve-lock --quiet
         return 0
     fi
@@ -538,7 +545,7 @@ configure_dms_lock_screen() {
         temporary_file="$(mktemp)"
         if ! jq --slurp '.[0] * .[1]' "$settings_file" "$defaults_file" > "$temporary_file"; then
             rm -f -- "$temporary_file"
-            die "could not merge DMS lock settings"
+            die "could not merge DMS desktop settings"
         fi
         install -m 0600 "$temporary_file" "$settings_file"
         rm -f -- "$temporary_file"
@@ -683,7 +690,7 @@ main() {
     install_niri_dms
     remove_blocked_brand_components
     install_desktop_assets
-    configure_dms_lock_screen
+    configure_dms_settings
     sync_ai_configs
     post_install
 

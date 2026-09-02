@@ -1,4 +1,38 @@
 {
+  "currentThemeName": "dynamic",
+  "currentThemeCategory": "dynamic",
+  "matugenScheme": "scheme-tonal-spot",
+  "matugenContrast": 0,
+  "cornerRadius": 16,
+  "niriLayoutGapsOverride": -1,
+  "niriLayoutRadiusOverride": -1,
+  "niriLayoutBorderSize": -1,
+  "cursorSettings": {
+    "theme": "capitaine-cursors",
+    "size": 42,
+    "niri": {
+      "hideWhenTyping": false,
+      "hideAfterInactiveMs": 0
+    },
+    "hyprland": {
+      "hideOnKeyPress": false,
+      "hideOnTouch": false,
+      "inactiveTimeout": 0
+    },
+    "dwl": {
+      "cursorHideTimeout": 0
+    },
+    "mango": {
+      "cursorHideTimeout": 0
+    }
+  },
+  "niriOutputSettings": {},
+  "blurEnabled": true,
+  "blurForegroundLayers": true,
+  "blurredWallpaperLayer": false,
+  "blurWallpaperOnOverview": true,
+  "niriOverviewOverlayEnabled": true,
+  "niriOverviewLauncherStyle": "full",
   "acMonitorTimeout": 1200,
   "acLockTimeout": 1200,
   "acSuspendTimeout": 3600,
@@ -28,9 +62,5 @@
   "u2fMode": "or",
   "lockPamPath": "",
   "lockPamExternallyManaged": false,
-  "lockU2fPamPath": "",
-  "blurEnabled": true,
-  "blurForegroundLayers": true,
-  "blurredWallpaperLayer": false,
-  "blurWallpaperOnOverview": true
+  "lockU2fPamPath": ""
 }

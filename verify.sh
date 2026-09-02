@@ -52,6 +52,14 @@ check_file() {
     fi
 }
 
+render_project_niri_config() {
+    local line
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        printf '%s\n' "${line//@HOME@/$HOME}"
+    done < "$SCRIPT_DIR/assets/niri/config.kdl"
+}
+
 check_system_service() {
     local service_name="$1"
     if systemctl is-enabled --quiet "$service_name" 2>/dev/null; then
@@ -89,6 +97,7 @@ check_os() {
 
 check_niri_config() {
     local config="$HOME/.config/niri/config.kdl"
+    local include_path
     if [[ -s "$config" ]]; then
         pass "Niri config exists: $config"
     else
@@ -96,17 +105,25 @@ check_niri_config() {
         return
     fi
 
-    if grep -Eq '^[[:space:]]*include[[:space:]]+(optional=true[[:space:]]+)?"dms/binds\.kdl"([[:space:]]|$)' "$config"; then
-        pass "Niri config includes dms/binds.kdl"
+    for include_path in colors layout alttab binds outputs cursor; do
+        if grep -Eq "^[[:space:]]*include[[:space:]]+(optional=true[[:space:]]+)?\"dms/$include_path\\.kdl\"([[:space:]]|$)" "$config"; then
+            pass "Niri config includes dms/$include_path.kdl"
+        else
+            fail "Niri config does not include dms/$include_path.kdl"
+        fi
+    done
+
+    if grep -Fqx 'include "cachyos-extras.kdl"' "$config"; then
+        pass "Niri config includes cachyos-extras.kdl"
     else
-        fail "Niri config does not include dms/binds.kdl"
+        fail "Niri config does not include cachyos-extras.kdl"
     fi
 
     if command -v niri >/dev/null 2>&1 && niri --help 2>&1 | grep -q 'validate'; then
-        if niri validate >/dev/null 2>&1; then
+        if niri validate -c "$config" >/dev/null 2>&1; then
             pass "Niri configuration validates"
         else
-            fail "Niri configuration validation failed; run: niri validate"
+            fail "Niri configuration validation failed; run: niri validate -c $config"
         fi
     fi
 }
@@ -214,16 +231,48 @@ check_desktop_extras() {
         fi
     done
 
+    local force_kill_binding
+    for force_kill_binding in Alt+4 Alt+F4; do
+        if grep -Eq "^[[:space:]]*${force_kill_binding//+/\\+}[[:space:]].*spawn \"cachyos-niri-force-kill-window\";" "$SCRIPT_DIR/assets/niri/binds.kdl"; then
+            pass "Niri keybindings provide force kill: $force_kill_binding"
+        else
+            fail "Niri keybindings are missing force kill: $force_kill_binding"
+        fi
+    done
+    if grep -Eq '^[[:space:]]*Alt\+Shift\+F4[[:space:]].*spawn "cachyos-niri-force-kill-window" "-f";' "$SCRIPT_DIR/assets/niri/binds.kdl"; then
+        pass "Niri keybindings provide force kill tree: Alt+Shift+F4"
+    else
+        fail "Niri keybindings are missing force kill tree: Alt+Shift+F4"
+    fi
+
     local source_path target_path
     while IFS=$'\t' read -r source_path target_path; do
         [[ -n "$source_path" && -n "$target_path" ]] || continue
         check_file "$HOME/$target_path"
     done < "$SCRIPT_DIR/assets/config-manifest.tsv"
 
+    local generated_asset
+    for generated_asset in colors layout alttab outputs cursor wpblur; do
+        if [[ -e "$HOME/.config/niri/dms/$generated_asset.kdl" ]]; then
+            pass "DMS generated Niri asset exists: dms/$generated_asset.kdl"
+        else
+            fail "DMS generated Niri asset is missing: dms/$generated_asset.kdl"
+        fi
+    done
     if cmp -s "$SCRIPT_DIR/assets/niri/binds.kdl" "$HOME/.config/niri/dms/binds.kdl"; then
-        pass "current-system Niri keybindings are installed"
+        pass "current-system Niri asset is installed: dms/binds.kdl"
     else
-        fail "installed Niri keybindings differ from assets/niri/binds.kdl"
+        fail "installed Niri asset differs from assets/niri/binds.kdl"
+    fi
+    if cmp -s "$SCRIPT_DIR/assets/niri/cachyos-extras.kdl" "$HOME/.config/niri/cachyos-extras.kdl"; then
+        pass "current-system Niri asset is installed: cachyos-extras.kdl"
+    else
+        fail "installed Niri asset differs from assets/niri/cachyos-extras.kdl"
+    fi
+    if cmp -s <(render_project_niri_config) "$HOME/.config/niri/config.kdl"; then
+        pass "rendered current-system Niri main config is installed"
+    else
+        fail "installed Niri main config differs from rendered assets/niri/config.kdl"
     fi
 
     check_file "$HOME/.config/waybar/style.css"
@@ -239,12 +288,6 @@ check_desktop_extras() {
     check_file /etc/modules-load.d/i2c-dev.conf
     check_file /etc/udev/rules.d/60-cachyos-ddcutil-i2c.rules
     check_file /usr/local/share/cachyos-desktop/config-manifest.tsv
-
-    if grep -Fqx 'include "cachyos-extras.kdl"' "$HOME/.config/niri/config.kdl" 2>/dev/null; then
-        pass "Niri includes the desktop extras"
-    else
-        fail "Niri does not include cachyos-extras.kdl"
-    fi
 
     check_system_service ly@tty2.service
     if [[ "$(getent passwd "$(id -un)" | cut -d: -f7)" == /usr/bin/fish ]]; then
@@ -348,26 +391,17 @@ check_neutral_install() {
 check_lock_screen() {
     local command_name
     local settings_file="$HOME/.config/DankMaterialShell/settings.json"
+    local defaults_file="$SCRIPT_DIR/assets/dms/desktop-settings.json"
 
     for command_name in fprintd-enroll fprintd-list pamu2fcfg cachyos-dms-setting cachyos-enroll-fingerprint cachyos-register-security-key cachyos-lock-doctor; do
         check_command "$command_name"
     done
 
-    if [[ -s "$settings_file" ]] && jq -e '
-        .acLockTimeout == 1200 and
-        .acMonitorTimeout == 1200 and
-        .acSuspendTimeout == 3600 and
-        .batteryLockTimeout == 180 and
-        .batteryMonitorTimeout == 300 and
-        .batterySuspendTimeout == 1800 and
-        .lockBeforeSuspend == true and
-        .loginctlLockIntegration == true and
-        .blurredWallpaperLayer == false and
-        .blurWallpaperOnOverview == true
-    ' "$settings_file" >/dev/null 2>&1; then
-        pass "DMS lock and idle policy is configured"
+    if [[ -s "$settings_file" ]] && jq --exit-status --slurp \
+        '((.[0] * .[1]) == .[0])' "$settings_file" "$defaults_file" >/dev/null 2>&1; then
+        pass "managed DMS desktop settings are configured"
     else
-        fail "DMS lock and idle policy is missing or incomplete"
+        fail "managed DMS desktop settings are missing or incomplete"
     fi
 
     if dms auth validate --purpose u2f --path /etc/pam.d/dankshell-u2f >/dev/null 2>&1; then

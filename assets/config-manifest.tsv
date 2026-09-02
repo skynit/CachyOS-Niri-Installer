@@ -4,6 +4,7 @@ fcitx5/default.custom.yaml	.local/share/fcitx5/rime/default.custom.yaml
 fish/cachyos-desktop.fish	.config/fish/conf.d/cachyos-desktop.fish
 kitty/cachyos-font.conf	.config/kitty/cachyos-font.conf
 niri/binds.kdl	.config/niri/dms/binds.kdl
+niri/config.kdl	.config/niri/config.kdl
 niri/cachyos-extras.kdl	.config/niri/cachyos-extras.kdl
 niri-sidebar/config.toml	.config/niri-sidebar/config.toml
 satty/config.toml	.config/satty/config.toml

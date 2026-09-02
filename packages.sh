@@ -49,6 +49,7 @@ readonly -a DAILY_APP_PACKAGES=(
     libnotify
     xorg-xprop
     unzip
+    capitaine-cursors
 )
 
 readonly -a CHINESE_PACKAGES=(
