@@ -1,6 +1,6 @@
 # CachyOS + Niri + DankMaterialShell
 
-这是一个面向 CachyOS x86_64 设备的完整桌面安装器，默认部署：
+这是一个面向已安装 CachyOS 的 x86_64 设备的完整桌面配置安装器，默认部署：
 
 ```text
 CachyOS + 官方 Niri + DMS v1.5.3 + Quickshell + Kitty
@@ -43,6 +43,75 @@ echo '959f6577f45e25ee9fd8c220fd221b08e4ea79412c7315c0f922dd6d86d5e33c  cachyos-
 - 签名密钥指纹：`882D CFE4 8E20 51D4 8E25 62AB F3B6 0748 8DB3 5A47`
 
 使用该镜像完成 CachyOS 基础安装并进入已安装的系统后，再运行本项目的安装脚本。
+
+## 新电脑复刻与 Windows 双系统
+
+本项目不是整盘镜像，不能恢复本机文档、账号或应用私有数据；它用于在新的 CachyOS
+基础系统上重新部署本项目管理的软件、Niri 配置、快捷键、DMS 设置和辅助脚本。包括
+`Alt+F4` 强制关闭窗口在内的项目快捷键会随安装器一同部署。
+
+如果新电脑需要 Windows 与 CachyOS 双系统，建议先安装 Windows，再安装 CachyOS，最后
+运行本项目。Windows 的详细安装、驱动和首次开机步骤见
+[Windows-Installer](https://github.com/skynit/Windows-Installer)。
+
+### 准备安装介质
+
+Ventoy 数据分区可以同时保存 Windows ISO、CachyOS ISO 和离线网卡驱动。只有首次把
+Ventoy 安装到 U 盘时会清空该 U 盘；之后向 Ventoy 数据分区复制 ISO 或驱动文件不会
+自动格式化 U 盘。制作或更新安装盘前仍应核对设备型号、容量和分区，避免选错磁盘。
+
+至少准备以下内容：
+
+- Windows 安装镜像。
+- 本 README 上方给出的 CachyOS 安装镜像。
+- 新电脑厂商提供的 Windows 芯片组、有线网卡、Wi-Fi 和蓝牙驱动。
+- 重要数据的独立备份；全新安装时只清除确认无误的目标系统盘。
+
+### 同一块硬盘：Windows 使用 256 GiB
+
+下面按 UEFI/GPT 安装，并假设目标系统盘上的原有数据可以全部清除：
+
+1. 从 Windows 安装盘的 UEFI 启动项进入安装程序，选择自定义安装。
+2. 只删除目标系统盘上的原有分区，直到整块目标盘显示为未分配空间。不要按“磁盘 0”
+   猜测目标，应同时核对磁盘容量和型号。
+3. 在未分配空间中点击新建，输入 `262144 MB`。这对应 256 GiB；让 Windows 安装程序
+   自动在这一区域内创建 EFI、MSR、Windows 和恢复分区。
+4. 将 Windows 安装到刚创建的主分区，剩余空间保持为未分配，不要在 Windows 安装阶段
+   新建第二个 NTFS 分区。
+5. 进入 Windows 后先安装网络、芯片组和设备驱动，完成 Windows Update。准备让两套系统
+   读写同一 NTFS 数据分区时，以管理员身份关闭休眠和快速启动：
+
+```powershell
+powercfg /hibernate off
+```
+
+6. 从 CachyOS 安装盘的 UEFI 启动项进入 Live 系统。运行 `efibootmgr -v`；如果提示 EFI
+   variables 不受支持，说明当前不是以 UEFI 模式启动，应退出并重新选择 UEFI 启动项。
+7. 启动 CachyOS 安装器并选择手动分区。不要使用“Install alongside”或“Replace
+   partition”，也不要删除或格式化 Windows 创建的 EFI、MSR、NTFS 和恢复分区。
+8. 在剩余未分配空间中为 Limine 创建以下分区：
+
+| 用途 | 大小 | 文件系统 | 挂载点 | 标记 |
+| --- | ---: | --- | --- | --- |
+| CachyOS 启动分区 | 4096 MiB | FAT32 | `/boot` | `boot` |
+| CachyOS 根分区 | 剩余空间 | Btrfs | `/` | 无 |
+
+9. 在安装器中选择 Limine，并再次确认引导器目标和上述 `/boot` 分区位于目标系统盘。
+   Limine 支持 Btrfs 快照启动，并可扫描 Windows Boot Manager。安装摘要中一旦出现格式化
+   Windows 分区的操作，应立即返回修改。
+10. CachyOS 安装完成后重启。若 Limine 菜单未显示 Windows，在 CachyOS 中运行：
+
+```bash
+sudo limine-scan
+```
+
+即使引导菜单暂时没有 Windows，也可以先通过主板 UEFI 启动菜单选择 Windows Boot
+Manager。双系统启动确认正常后，再按下方“安装”章节运行本项目。
+
+Windows 更新可能改变 EFI 启动顺序。条件允许时，让 Windows 与 CachyOS 分别使用独立
+硬盘和各自的 EFI/启动分区会更稳妥。分区和引导器要求应以当前
+[CachyOS 官方安装文档](https://wiki.cachyos.org/installation/installation_on_root/)与
+[引导器说明](https://wiki.cachyos.org/installation/boot_managers/)为准。
 
 ## 安装
 
