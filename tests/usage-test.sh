@@ -56,11 +56,34 @@ cat > "$HOME_DIR/.codex/sessions/2026/01/01/rollout-2026-01-01T00-00-00-demo.jso
 {"timestamp":"${YESTERDAY_TS}","ordinal":3,"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":7,"cached_input_tokens":0,"output_tokens":3,"cache_write_input_tokens":0}}}}
 JSONL
 
+# fixture 定价库：验证费用计算（含两种 input 语义下的拆分），完全不碰 cc-switch 真实库。
+PRICING_DB="$WORK_DIR/pricing.db"
+python3 - "$PRICING_DB" <<'PYFIX'
+import sqlite3, sys
+con = sqlite3.connect(sys.argv[1])
+con.execute("""create table model_pricing (
+    model_id text primary key, display_name text not null,
+    input_cost_per_million text not null, output_cost_per_million text not null,
+    cache_read_cost_per_million text not null default '0',
+    cache_creation_cost_per_million text not null default '0')""")
+con.executemany(
+    "insert into model_pricing values (?,?,?,?,?,?)",
+    [
+        ("model-one", "Model One", "1000", "2000", "100", "1000"),
+        ("model-two", "Model Two", "1000", "2000", "100", "1000"),
+        ("gpt-test", "GPT Test", "1000", "2000", "100", "0"),
+    ],
+)
+con.commit()
+con.close()
+PYFIX
+
 run_collector() {
     local name="$1"
     shift
     HOME="$HOME_DIR" \
         XDG_CACHE_HOME="$HOME_DIR/.cache" \
+        CC_SWITCH_DB="$PRICING_DB" \
         CACHYOS_DESKTOP_SHARE_DIR="$WORK_DIR/no-share" \
         "$PROJECT_DIR/bin/$name" "$@" 2>/dev/null
 }
@@ -84,8 +107,8 @@ assert_equal "$(field '.stats' "$claude")" "$(field '.stats' "$claude_cached")" 
 # ---- Codex ----------------------------------------------------------------
 codex="$(run_collector cachyos-agent-usage-codex --force)"
 assert_equal 'codex' "$(field '.id' "$codex")" 'codex：记录 id 正确'
-assert_equal '1150' "$(field '.stats.todayTotalTokens' "$codex")" \
-    'codex：今天用量取自 last_token_usage（1000+100+50），不是 total_token_usage'
+assert_equal '1050' "$(field '.stats.todayTotalTokens' "$codex")" \
+    'codex：今天 = input 1000（已含缓存 100）+ output 50，缓存不重复计入'
 assert_equal '1' "$(field '.stats.totalSessions' "$codex")" 'codex：session_meta 在行顶层也能被识别'
 assert_equal 'gpt-test' "$(field '.stats.modelUsage | keys[0]' "$codex")" 'codex：模型取自 session_meta'
 assert_equal '1' "$(field '.stats.totalPrompts' "$codex")" 'codex：task_started 计为 1 个 prompt'
@@ -94,13 +117,27 @@ assert_equal '1' "$(field '.stats.totalPrompts' "$codex")" 'codex：task_started
 # shellcheck disable=SC2016  # 这里的 $d 是 jq 的变量，由 --arg 注入，不是 shell 变量
 day_tokens_query='[.stats.recentDays[] | select(.date==$d)][0].totalTokens'
 assert_equal '10' "$(jq -r --arg d "$YESTERDAY" "$day_tokens_query" <<<"$codex")" 'codex：昨天用量归属到昨天'
-assert_equal '1150' "$(jq -r --arg d "$TODAY" "$day_tokens_query" <<<"$codex")" 'codex：今天用量归属到今天'
+assert_equal '1050' "$(jq -r --arg d "$TODAY" "$day_tokens_query" <<<"$codex")" 'codex：今天用量归属到今天'
 assert_equal "$TODAY" "$(field '.stats.recentDays[-1].date' "$codex")" 'codex：recentDays 最后一项是今天'
 assert_equal '7' "$(field '.stats.recentDays | length' "$codex")" 'codex：recentDays 固定为 7 天'
 
 codex_cached="$(run_collector cachyos-agent-usage-codex)"
 assert_equal "$(field '.stats' "$codex")" "$(field '.stats' "$codex_cached")" \
     'codex：首次运行与命中缓存结果一致'
+
+# ---- 语义与费用 ------------------------------------------------------------
+assert_equal 'exclusive' "$(field '.inputTokenSemantics' "$claude")" \
+    'claude：input 语义标为 exclusive（缓存不含在 input 里）'
+assert_equal 'inclusive' "$(field '.inputTokenSemantics' "$codex")" \
+    'codex：input 语义标为 inclusive（缓存已含在 input 里）'
+# claude model-one：100*1000/1e6 + 10*2000/1e6 + 5*100/1e6 + 1*1000/1e6 = 0.1215
+# claude model-two：200*1000/1e6 + 20*2000/1e6 = 0.24
+assert_equal '0.3615' "$(field '.stats.costUsd' "$claude")" 'claude：四项分别计价，合计 0.3615'
+# codex：input 1000 里含缓存 100 → 可计费输入 900*1000/1e6 + 50*2000/1e6 + 100*100/1e6 = 1.01
+#        昨天 7*1000/1e6 + 3*2000/1e6 = 0.013，合计 1.023
+assert_equal '1.023' "$(field '.stats.costUsd' "$codex")" \
+    'codex：缓存部分不按输入价重复计费，合计 1.023'
+assert_equal 'true' "$(field '.stats.modelUsage["model-one"].priced' "$claude")" 'claude：标注模型是否有定价'
 
 # ---- 编排器 ----------------------------------------------------------------
 if HOME="$HOME_DIR" XDG_CACHE_HOME="$HOME_DIR/.cache" PATH="$PROJECT_DIR/bin:$PATH" \

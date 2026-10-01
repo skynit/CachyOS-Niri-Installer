@@ -63,17 +63,22 @@ def add_counters(target: dict[str, int], source: dict[str, int]) -> None:
         target[key] = target.get(key, 0) + int(value or 0)
 
 
-def total_tokens(counters: dict[str, int]) -> int:
-    """总 token = 输入 + 输出 + 缓存读 + 缓存写。
+def total_tokens(counters: dict[str, int], input_includes_cache: bool = False) -> int:
+    """总 token，按**各家的 input 语义**计算——这里不能一刀切。
 
-    缓存读往往占绝大多数，因此这里一并计入，面板会另外展示四项拆分。
+    - Claude（`inputTokenSemantics="exclusive"`）：`input_tokens` 不含缓存，
+      总 = 输入 + 输出 + 缓存读 + 缓存写。实测证据：同一条请求 input=4、
+      cache_read=30208，input 显然是"非缓存的那一小部分"。
+    - Codex（`"inclusive"`）：`input_tokens` **已包含** `cached_input_tokens`，
+      总 = 输入 + 输出 + 缓存写；再加缓存读就是重复计数。
+      实测证据：某个模型聚合 input=1,068,681,044、cache_read=1,011,316,992，
+      差值仍为正且量级合理，说明缓存是输入的子集。
     """
-    return (
-        int(counters.get("inputTokens", 0))
-        + int(counters.get("outputTokens", 0))
-        + int(counters.get("cacheReadInputTokens", 0))
-        + int(counters.get("cacheCreationInputTokens", 0))
-    )
+    total = int(counters.get("inputTokens", 0)) + int(counters.get("outputTokens", 0))
+    total += int(counters.get("cacheCreationInputTokens", 0))
+    if not input_includes_cache:
+        total += int(counters.get("cacheReadInputTokens", 0))
+    return total
 
 
 def parse_timestamp(value: Any) -> dt.datetime | None:
@@ -141,21 +146,32 @@ def build_stats(
     model_usage: dict[str, dict[str, int]],
     sessions: set[str],
     prompts: int,
+    input_includes_cache: bool = False,
+    pricing: dict[str, dict[str, float]] | None = None,
 ) -> dict[str, Any]:
     """把逐日/逐模型聚合整理成面板契约里的 stats 结构。"""
     today = dt.datetime.now().astimezone().date().isoformat()
     dates = recent_date_list()
 
+    pricing = pricing or {}
     recent: list[dict[str, Any]] = []
     for date in dates:
         entry = per_day.get(date)
         counters = (entry or {}).get("counters") or empty_counters()
+        by_model = (entry or {}).get("byModel") or {}
         recent.append(
             {
                 "date": date,
-                "totalTokens": total_tokens(counters),
+                "totalTokens": total_tokens(counters, input_includes_cache),
+                "costUsd": round(
+                    sum(
+                        cost_usd(model_counters, price_for(model, pricing), input_includes_cache)
+                        for model, model_counters in by_model.items()
+                    ),
+                    6,
+                ),
                 "counters": counters,
-                "byModel": (entry or {}).get("byModel") or {},
+                "byModel": by_model,
                 "prompts": int((entry or {}).get("prompts", 0)),
                 "sessions": int((entry or {}).get("sessions", 0)),
             }
@@ -163,14 +179,17 @@ def build_stats(
 
     today_entry = per_day.get(today) or {}
     today_counters = today_entry.get("counters") or empty_counters()
-    active_dates = sorted(date for date, entry in per_day.items() if total_tokens(entry.get("counters") or {}) > 0)
+    active_dates = sorted(
+        date for date, entry in per_day.items() if total_tokens(entry.get("counters") or {}, input_includes_cache) > 0
+    )
 
     return {
         "todayPrompts": int(today_entry.get("prompts", 0)),
         "todaySessions": int(today_entry.get("sessions", 0)),
-        "todayTotalTokens": total_tokens(today_counters),
+        "todayTotalTokens": total_tokens(today_counters, input_includes_cache),
         "todayTokensByModel": {
-            model: total_tokens(counters) for model, counters in (today_entry.get("byModel") or {}).items()
+            model: total_tokens(counters, input_includes_cache)
+            for model, counters in (today_entry.get("byModel") or {}).items()
         },
         "recentDays": recent,
         "totalPrompts": prompts,
@@ -178,8 +197,19 @@ def build_stats(
         "activeDays": len(active_dates),
         "activeDates": active_dates,
         "modelUsage": {
-            model: {**counters, "totalTokens": total_tokens(counters)} for model, counters in model_usage.items()
+            model: {
+                **counters,
+                "totalTokens": total_tokens(counters, input_includes_cache),
+                "costUsd": round(cost_usd(counters, price_for(model, pricing), input_includes_cache), 6),
+                "priced": bool(price_for(model, pricing)),
+            }
+            for model, counters in model_usage.items()
         },
+        "costUsd": round(
+            sum(cost_usd(counters, price_for(model, pricing), input_includes_cache) for model, counters in model_usage.items()),
+            6
+        ),
+        "unpricedModels": sorted(model for model in model_usage if not price_for(model, pricing)),
     }
 
 
@@ -208,3 +238,74 @@ def finalise_sessions(per_day: dict[str, dict[str, Any]]) -> None:
 def write_record(agent: str, record: dict[str, Any]) -> None:
     """打印一条 display-ready JSON 记录（编排器负责落盘）。"""
     print(json.dumps(record, ensure_ascii=False))
+
+
+# --------------------------------------------------------------------------- 定价
+
+def ccswitch_pricing() -> dict[str, dict[str, float]]:
+    """从 cc-switch 的 SQLite 读模型定价（每百万 token 的美元价）。
+
+    读不到就返回空字典——没有定价只会少一个费用数字，不该让采集失败。
+    查询用 `mode=ro`，绝不动用户数据库。
+    """
+    import sqlite3
+
+    path = Path(os.environ.get("CC_SWITCH_DB") or (Path.home() / ".cc-switch" / "cc-switch.db"))
+    if not path.is_file():
+        return {}
+    try:
+        connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        rows = connection.execute(
+            "select model_id, input_cost_per_million, output_cost_per_million,"
+            " cache_read_cost_per_million, cache_creation_cost_per_million from model_pricing"
+        ).fetchall()
+        connection.close()
+    except sqlite3.Error:
+        return {}
+
+    table: dict[str, dict[str, float]] = {}
+    for model_id, in_cost, out_cost, read_cost, creation_cost in rows:
+        try:
+            table[str(model_id).lower()] = {
+                "input": float(in_cost or 0),
+                "output": float(out_cost or 0),
+                "cacheRead": float(read_cost or 0),
+                "cacheCreation": float(creation_cost or 0),
+            }
+        except (TypeError, ValueError):
+            continue
+    return table
+
+
+def price_for(model: str, table: dict[str, dict[str, float]]) -> dict[str, float]:
+    """按模型名查价：先精确、再去掉 `provider/` 前缀、最后忽略大小写。"""
+    if not model or not table:
+        return {}
+    key = model.lower()
+    if key in table:
+        return table[key]
+    short = key.rsplit("/", 1)[-1]
+    if short in table:
+        return table[short]
+    return {}
+
+
+def cost_usd(counters: dict[str, int], price: dict[str, float], input_includes_cache: bool = False) -> float:
+    """按 token 类别计价，并**按各家语义拆分输入**，避免缓存被双重计费。
+
+    - exclusive（Claude）：`input_tokens` 是非缓存部分，直接按输入价；
+      缓存读/写各自单独计价。
+    - inclusive（Codex）：`input_tokens` 里已经含了 `cached_input_tokens`，
+      必须先减掉缓存那部分，否则同一批 token 会被按输入价和缓存价各收一次。
+    """
+    if not price:
+        return 0.0
+    input_tokens = int(counters.get("inputTokens", 0))
+    cache_read = int(counters.get("cacheReadInputTokens", 0))
+    billable_input = max(0, input_tokens - cache_read) if input_includes_cache else input_tokens
+    return (
+        billable_input / 1_000_000 * price.get("input", 0.0)
+        + int(counters.get("outputTokens", 0)) / 1_000_000 * price.get("output", 0.0)
+        + cache_read / 1_000_000 * price.get("cacheRead", 0.0)
+        + int(counters.get("cacheCreationInputTokens", 0)) / 1_000_000 * price.get("cacheCreation", 0.0)
+    )

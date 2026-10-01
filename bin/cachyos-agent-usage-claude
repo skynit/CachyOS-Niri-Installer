@@ -28,12 +28,16 @@ USAGE_ENDPOINT = "https://api.anthropic.com/api/oauth/usage"
 
 
 def lib_dir() -> Path:
+    """先找与自己同仓库的 lib，再退回 share 里的安装副本。
+
+    顺序很重要：从仓库直接运行、而 share 里还是旧副本时，若优先用 share，
+    就会出现"刚加的函数不存在"这种假故障（改动明明在，跑的却是旧代码）。
+    """
+    sibling = Path(__file__).resolve().parent.parent / "assets" / "lib"
+    if (sibling / "agent_usage.py").is_file():
+        return sibling
     share = os.environ.get("CACHYOS_DESKTOP_SHARE_DIR") or "/usr/local/share/cachyos-desktop"
-    path = Path(share) / "assets" / "lib"
-    if (path / "agent_usage.py").is_file():
-        return path
-    # 从仓库直接运行时的回退
-    return Path(__file__).resolve().parent.parent / "assets" / "lib"
+    return Path(share) / "assets" / "lib"
 
 
 sys.path.insert(0, str(lib_dir()))
@@ -227,7 +231,15 @@ def main() -> int:
         "tierLabel": tier,
         "limits": limits,
         "usageStatusText": status,
-        "stats": au.build_stats(per_day, model_usage, sessions, prompts),
+        "inputTokenSemantics": "exclusive",
+        "stats": au.build_stats(
+            per_day,
+            model_usage,
+            sessions,
+            prompts,
+            input_includes_cache=False,
+            pricing=au.ccswitch_pricing(),
+        ),
         "updatedAt": au.dt.datetime.now().astimezone().isoformat(timespec="seconds"),
     }
     au.write_record(AGENT_ID, record)
