@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+
+# 重新生成 AI agent 的用量数据文件。
+#
+# 每个 cachyos-agent-usage-<agent> 采集器打印一条 display-ready JSON；本命令把它们
+# 写进 ~/.local/state/cachyos-desktop/agents/usage/，供面板读取。加一个 agent 就是加
+# 一个采集器，面板不需要改（它只读目录里的记录）。
+
+set -Eeuo pipefail
+
+readonly SCRIPT_NAME="${0##*/}"
+readonly STATE_DIR="$HOME/.local/state/cachyos-desktop"
+readonly USAGE_DIR="$STATE_DIR/agents/usage"
+
+SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SELF_DIR
+
+usage() {
+    cat <<EOF
+Usage: $SCRIPT_NAME [--force] [--limits-only] [--except <agent>] [agent...]
+
+重新生成用量记录到
+  $USAGE_DIR
+
+Options:
+  --force          让采集器忽略缓存、全量重扫
+  --limits-only    只刷新限额，不重算本地统计
+  --except <agent> 跳过某个采集器（可重复）
+  <agent>          只跑指定的采集器（可多个）
+  -h, --help       显示本帮助
+EOF
+}
+
+flags=()
+only=()
+declare -A excluded
+
+while (($# > 0)); do
+    case "$1" in
+        --force | --limits-only)
+            flags+=("$1")
+            shift
+            ;;
+        --except)
+            if (($# < 2)); then
+                usage >&2
+                exit 2
+            fi
+            excluded["$2"]=1
+            shift 2
+            ;;
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        -*)
+            printf '%s: 未知选项 %s\n' "$SCRIPT_NAME" "$1" >&2
+            exit 2
+            ;;
+        *)
+            only+=("$1")
+            shift
+            ;;
+    esac
+done
+
+install -d -m 0700 "$USAGE_DIR"
+
+wanted() {
+    local agent="$1"
+    local candidate
+    [[ -n ${excluded[$agent]:-} ]] && return 1
+    ((${#only[@]} == 0)) && return 0
+    for candidate in "${only[@]}"; do
+        [[ $candidate == "$agent" ]] && return 0
+    done
+    return 1
+}
+
+collect() {
+    local collector="$1"
+    local agent="$2"
+    local record
+    local temporary
+
+    # 采集器可能因为凭据缺失、文件格式变化而失败：失败就保留上一份记录，不要写入半截数据。
+    if ! record="$("$collector" ${flags[@]+"${flags[@]}"} 2>/dev/null)" || [[ -z $record ]]; then
+        printf '%s: %s 采集器失败（保留上一份记录）\n' "$SCRIPT_NAME" "$agent" >&2
+        return 1
+    fi
+    if ! jq -e . >/dev/null 2>&1 <<<"$record"; then
+        printf '%s: %s 采集器输出的不是合法 JSON\n' "$SCRIPT_NAME" "$agent" >&2
+        return 1
+    fi
+
+    temporary="$(mktemp "$USAGE_DIR/.$agent.XXXXXX")"
+    printf '%s\n' "$record" > "$temporary"
+    mv -- "$temporary" "$USAGE_DIR/$agent.json"
+}
+
+status=0
+pids=()
+agents=()
+
+# 采集器优先取本目录（仓库内直接运行），否则取同名的已安装命令。
+for collector in "$SELF_DIR"/cachyos-agent-usage-*; do
+    [[ -x $collector ]] || continue
+    agent="${collector##*/cachyos-agent-usage-}"
+    [[ $agent == "update" ]] && continue
+    wanted "$agent" || continue
+    collect "$collector" "$agent" &
+    pids+=("$!")
+    agents+=("$agent")
+done
+
+if ((${#pids[@]} == 0)); then
+    printf '%s: 没有找到任何采集器\n' "$SCRIPT_NAME" >&2
+    exit 1
+fi
+
+for index in "${!pids[@]}"; do
+    if ! wait "${pids[$index]}"; then
+        status=1
+    fi
+done
+
+if ((status == 0)); then
+    printf '已更新 %d 个用量记录：%s\n' "${#agents[@]}" "${agents[*]}"
+fi
+exit "$status"

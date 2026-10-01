@@ -1,0 +1,216 @@
+#!/usr/bin/env python3
+"""采集 Codex 的用量，输出一条 display-ready JSON 记录。
+
+数据来源：`~/.codex/sessions/**/rollout-*.jsonl` 与 `~/.codex/archived_sessions/`。
+每行是 `{timestamp, ordinal, type, payload}`，其中：
+
+- `payload.type == "session_meta"` —— 会话 id / cwd / 起始时间
+- `payload.type == "token_count"` —— 同时带 `info.total_token_usage`（会话累计）与
+  `info.last_token_usage`（本轮增量）。**必须用增量**：累计值会把整个会话的 token
+  全部算到最后一个事件所在的那一天。
+- 模型名散在若干路径（`payload.model`、`payload.thread_settings.model` 等），
+  按"最近一次见到"归属到后续的 token 事件；找不到就记 unknown，绝不猜。
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+from pathlib import Path
+from typing import Any
+
+AGENT_ID = "codex"
+AGENT_NAME = "Codex"
+MODEL_PATHS = (
+    ("model",),
+    ("thread_settings", "model"),
+    ("state", "model"),
+    ("collaboration_mode", "settings", "model"),
+)
+
+
+def lib_dir() -> Path:
+    share = os.environ.get("CACHYOS_DESKTOP_SHARE_DIR") or "/usr/local/share/cachyos-desktop"
+    path = Path(share) / "assets" / "lib"
+    if (path / "agent_usage.py").is_file():
+        return path
+    return Path(__file__).resolve().parent.parent / "assets" / "lib"
+
+
+sys.path.insert(0, str(lib_dir()))
+import agent_usage as au  # noqa: E402
+
+
+def codex_dir() -> Path:
+    return Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex")).expanduser()
+
+
+def model_from_payload(payload: dict[str, Any]) -> str:
+    for path in MODEL_PATHS:
+        node: Any = payload
+        for key in path:
+            if not isinstance(node, dict):
+                node = None
+                break
+            node = node.get(key)
+        if isinstance(node, str) and node:
+            return node
+    return ""
+
+
+def counters_from(usage: dict[str, Any]) -> dict[str, int]:
+    return {
+        "inputTokens": int(usage.get("input_tokens") or 0),
+        "outputTokens": int(usage.get("output_tokens") or 0),
+        "cacheReadInputTokens": int(usage.get("cached_input_tokens") or 0),
+        "cacheCreationInputTokens": int(usage.get("cache_write_input_tokens") or 0),
+    }
+
+
+def scan_rollouts(cache: dict[str, Any]) -> tuple[dict[str, Any], dict[str, dict[str, int]], set[str], int]:
+    roots = [codex_dir() / "sessions", codex_dir() / "archived_sessions"]
+    files = au.collect_files(roots, "rollout-*.jsonl")
+    per_day: dict[str, Any] = {}
+    model_usage: dict[str, dict[str, int]] = {}
+    sessions: set[str] = set()
+    prompts = 0
+    known = cache.setdefault("files", {})
+    seen: dict[str, Any] = {}
+
+    for path in files:
+        stamp = au.file_stamp(path)
+        key = str(path)
+        if not stamp:
+            continue
+
+        cached = known.get(key)
+        if cached and cached.get("stamp") == stamp:
+            seen[key] = cached
+            for date, entry in (cached.get("perDay") or {}).items():
+                au.merge_day(
+                    per_day,
+                    date,
+                    entry.get("counters") or au.empty_counters(),
+                    entry.get("model") or "",
+                    int(entry.get("prompts", 0)),
+                    entry.get("session") or "",
+                )
+            for model, counters in (cached.get("models") or {}).items():
+                au.add_counters(model_usage.setdefault(model, au.empty_counters()), counters)
+            prompts += int(cached.get("prompts", 0))
+            if cached.get("session"):
+                sessions.add(cached["session"])
+            continue
+
+        file_per_day: dict[str, Any] = {}
+        file_models: dict[str, dict[str, int]] = {}
+        file_prompts = 0
+        session_id = ""
+        current_model = ""
+
+        for entry in au.iter_jsonl(path):
+            if not isinstance(entry, dict):
+                continue
+            payload = entry.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            # 事件类型有两个来源：多数在 payload.type，但 session_meta 这类在**行顶层**的
+            # type 上。只看一处会漏掉会话元信息（会话数、模型），进而把 token 记成 unknown。
+            kind = payload.get("type") or entry.get("type")
+
+            if kind == "session_meta":
+                session_id = str(payload.get("session_id") or payload.get("id") or session_id)
+                # 会话元信息里通常也带模型，先记下来，免得开头几轮 token 变成 unknown。
+                found_model = model_from_payload(payload)
+                if found_model:
+                    current_model = found_model
+                continue
+
+            found_model = model_from_payload(payload)
+            if found_model:
+                current_model = found_model
+
+            if kind == "task_started":
+                date = au.local_date(entry.get("timestamp"))
+                if date:
+                    file_prompts += 1
+                    day = per_day.setdefault(
+                        date, {"counters": au.empty_counters(), "byModel": {}, "prompts": 0, "sessions": 0}
+                    )
+                    day["prompts"] += 1
+                    if session_id:
+                        day.setdefault("_sessions", set()).add(session_id)
+                continue
+
+            if kind != "token_count":
+                continue
+
+            info = payload.get("info")
+            usage = info.get("last_token_usage") if isinstance(info, dict) else None
+            if not isinstance(usage, dict):
+                continue
+            counters = counters_from(usage)
+            date = au.local_date(entry.get("timestamp"))
+            if not date:
+                continue
+            model = current_model or "unknown"
+            au.merge_day(per_day, date, counters, model)
+            au.add_counters(file_models.setdefault(model, au.empty_counters()), counters)
+            file_per_day[date] = {"counters": counters, "model": model, "session": session_id}
+            if session_id:
+                sessions.add(session_id)
+
+        prompts += file_prompts
+        for model, counters in file_models.items():
+            au.add_counters(model_usage.setdefault(model, au.empty_counters()), counters)
+        if session_id:
+            sessions.add(session_id)
+        seen[key] = {
+            "stamp": stamp,
+            "perDay": file_per_day,
+            "models": file_models,
+            "prompts": file_prompts,
+            "session": session_id,
+        }
+
+    cache["files"] = seen
+    return per_day, model_usage, sessions, prompts
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="采集 Codex 用量")
+    parser.add_argument("--force", action="store_true", help="忽略缓存，全量重扫")
+    parser.add_argument("--limits-only", action="store_true", help="只取限额（Codex 走 app-server RPC，暂无）")
+    args = parser.parse_args()
+
+    if args.limits_only:
+        per_day: dict[str, Any] = {}
+        model_usage: dict[str, dict[str, int]] = {}
+        sessions: set[str] = set()
+        prompts = 0
+    else:
+        cache = {"files": {}} if args.force else au.load_cache(AGENT_ID)
+        per_day, model_usage, sessions, prompts = scan_rollouts(cache)
+        au.finalise_sessions(per_day)
+        if not args.force:
+            au.save_cache(AGENT_ID, cache)
+
+    record = {
+        "schemaVersion": au.SCHEMA_VERSION,
+        "id": AGENT_ID,
+        "name": AGENT_NAME,
+        "ready": bool(per_day),
+        "hasLocalStats": bool(per_day),
+        "tierLabel": "",
+        "limits": [],
+        "usageStatusText": "" if per_day else "没有找到 Codex 会话记录",
+        "stats": au.build_stats(per_day, model_usage, sessions, prompts),
+        "updatedAt": au.dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+    au.write_record(AGENT_ID, record)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

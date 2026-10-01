@@ -396,6 +396,7 @@ check_ai_agent_stack() {
     local link
 
     check_file "$share_dir/assets/lib/agent.sh"
+    check_file "$share_dir/assets/lib/agent_usage.py"
     for skill in cachyos diagnose-crash; do
         check_file "$skill_root/$skill/SKILL.md"
     done

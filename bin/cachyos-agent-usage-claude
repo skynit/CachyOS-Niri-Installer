@@ -1,0 +1,238 @@
+#!/usr/bin/env python3
+"""采集 Claude Code 的用量，输出一条 display-ready JSON 记录。
+
+数据来源（全部本地，离线可用）：
+- `~/.claude/projects/**/*.jsonl` 会话转录：每条 assistant 消息自带
+  `message.usage`（input_tokens / output_tokens / cache_creation_input_tokens /
+  cache_read_input_tokens）与 `timestamp`，因此可以按事件时间戳精确归属到本地日期。
+- `~/.claude/stats-cache.json` 与 `~/.claude/history.jsonl` 作为没有转录时的回退。
+
+限额（5 小时会话 / 每周）来自 Anthropic 的非公开 OAuth 端点。**拿不到就不显示限额**，
+本地统计照常输出——不猜、不编。
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+from typing import Any
+
+AGENT_ID = "claude"
+AGENT_NAME = "Claude Code"
+USAGE_ENDPOINT = "https://api.anthropic.com/api/oauth/usage"
+
+
+def lib_dir() -> Path:
+    share = os.environ.get("CACHYOS_DESKTOP_SHARE_DIR") or "/usr/local/share/cachyos-desktop"
+    path = Path(share) / "assets" / "lib"
+    if (path / "agent_usage.py").is_file():
+        return path
+    # 从仓库直接运行时的回退
+    return Path(__file__).resolve().parent.parent / "assets" / "lib"
+
+
+sys.path.insert(0, str(lib_dir()))
+import agent_usage as au  # noqa: E402
+
+
+def claude_dir() -> Path:
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or (Path.home() / ".claude")).expanduser()
+
+
+def scan_transcripts(cache: dict[str, Any]) -> tuple[dict[str, Any], dict[str, dict[str, int]], set[str], int]:
+    """增量扫描转录，返回 (per_day, model_usage, sessions, prompts)。"""
+    files = au.collect_files([claude_dir() / "projects"], "*.jsonl")
+    per_day: dict[str, Any] = {}
+    model_usage: dict[str, dict[str, int]] = {}
+    sessions: set[str] = set()
+    prompts = 0
+    known = cache.setdefault("files", {})
+    seen: dict[str, Any] = {}
+
+    for path in files:
+        stamp = au.file_stamp(path)
+        key = str(path)
+        if not stamp:
+            continue
+        cached = known.get(key)
+        if cached and cached.get("stamp") == stamp:
+            seen[key] = cached
+            for date, entry in (cached.get("perDay") or {}).items():
+                au.merge_day(per_day, date, entry.get("counters") or au.empty_counters(), entry.get("model") or "")
+                if entry.get("session"):
+                    sessions.add(entry["session"])
+            for model, counters in (cached.get("models") or {}).items():
+                au.add_counters(model_usage.setdefault(model, au.empty_counters()), counters)
+            prompts += int(cached.get("prompts", 0))
+            continue
+
+        file_per_day: dict[str, Any] = {}
+        file_models: dict[str, dict[str, int]] = {}
+        file_prompts = 0
+        session_id = ""
+
+        for entry in au.iter_jsonl(path):
+            if not isinstance(entry, dict):
+                continue
+            if not session_id:
+                session_id = str(entry.get("sessionId") or entry.get("session_id") or "")
+            message = entry.get("message")
+            if not isinstance(message, dict):
+                continue
+            usage = message.get("usage")
+            if isinstance(usage, dict):
+                model = str(message.get("model") or "unknown")
+                counters = {
+                    "inputTokens": int(usage.get("input_tokens") or 0),
+                    "outputTokens": int(usage.get("output_tokens") or 0),
+                    "cacheReadInputTokens": int(usage.get("cache_read_input_tokens") or 0),
+                    "cacheCreationInputTokens": int(usage.get("cache_creation_input_tokens") or 0),
+                }
+                date = au.local_date(entry.get("timestamp"))
+                if date:
+                    file_per_day[date] = {
+                        "counters": counters,
+                        "model": model,
+                        "session": session_id,
+                    }
+                    au.merge_day(per_day, date, counters, model)
+                    au.add_counters(file_models.setdefault(model, au.empty_counters()), counters)
+                    if session_id:
+                        sessions.add(session_id)
+                continue
+
+            # 用户消息计为一次 prompt（工具结果不算）。
+            if str(entry.get("type")) == "user":
+                content = message.get("content")
+                is_tool_result = isinstance(content, list) and any(
+                    isinstance(part, dict) and part.get("type") == "tool_result" for part in content
+                )
+                if not is_tool_result:
+                    file_prompts += 1
+                    date = au.local_date(entry.get("timestamp"))
+                    if date:
+                        entry_day = per_day.setdefault(
+                            date, {"counters": au.empty_counters(), "byModel": {}, "prompts": 0, "sessions": 0}
+                        )
+                        entry_day["prompts"] += 1
+                        if session_id:
+                            entry_day.setdefault("_sessions", set()).add(session_id)
+
+        prompts += file_prompts
+        # 解析分支必须和"缓存命中"分支合并出同样的结果：漏掉这一步会让首次运行的
+        # modelUsage 为空、第二次（命中缓存）才有值——同一份数据出现两种答案。
+        for model, counters in file_models.items():
+            au.add_counters(model_usage.setdefault(model, au.empty_counters()), counters)
+        seen[key] = {
+            "stamp": stamp,
+            "perDay": file_per_day,
+            "models": file_models,
+            "prompts": file_prompts,
+            "session": session_id,
+        }
+
+    cache["files"] = seen
+    return per_day, model_usage, sessions, prompts
+
+
+def scan_history_fallback() -> int:
+    """没有转录时的粗略计数：history.jsonl 每行一次输入。"""
+    path = claude_dir() / "history.jsonl"
+    if not path.is_file():
+        return 0
+    count = 0
+    for entry in au.iter_jsonl(path):
+        if isinstance(entry, dict):
+            count += 1
+    return count
+
+
+def fetch_limits() -> tuple[list[dict[str, Any]], str, str]:
+    """尽力获取限额。返回 (limits, tierLabel, statusText)；失败时 limits 为空。"""
+    credentials_path = claude_dir() / ".credentials.json"
+    token = ""
+    try:
+        with credentials_path.open(encoding="utf-8") as handle:
+            data = json.load(handle)
+        token = str(((data.get("claudeAiOauth") or {}).get("accessToken")) or "")
+    except (OSError, ValueError):
+        token = ""
+
+    if not token:
+        return [], "", "未找到 Claude 凭据，只显示本地统计"
+
+    request = urllib.request.Request(
+        USAGE_ENDPOINT,
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            payload = json.load(response)
+    except (urllib.error.URLError, ValueError, OSError, TimeoutError):
+        return [], "", "限额端点不可用，只显示本地统计"
+
+    limits: list[dict[str, Any]] = []
+    for key, label in (("five_hour", "5 小时"), ("seven_day", "每周")):
+        window = payload.get(key)
+        if not isinstance(window, dict):
+            continue
+        percent = window.get("utilization")
+        if percent is None:
+            continue
+        limits.append(
+            {
+                "label": label,
+                "percent": float(percent) * (100.0 if float(percent) <= 1.0 else 1.0),
+                "resetsAt": window.get("resets_at") or "",
+            }
+        )
+    tier = str((payload.get("plan") or payload.get("tier") or ""))
+    return limits, tier, "" if limits else "限额端点没有返回可用窗口"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="采集 Claude Code 用量")
+    parser.add_argument("--force", action="store_true", help="忽略缓存，全量重扫")
+    parser.add_argument("--limits-only", action="store_true", help="只取限额，不算本地统计")
+    args = parser.parse_args()
+
+    cache = {"files": {}} if args.force else au.load_cache(AGENT_ID)
+
+    if args.limits_only:
+        per_day: dict[str, Any] = {}
+        model_usage: dict[str, dict[str, int]] = {}
+        sessions: set[str] = set()
+        prompts = 0
+    else:
+        per_day, model_usage, sessions, prompts = scan_transcripts(cache)
+        au.finalise_sessions(per_day)
+        if not per_day:
+            prompts = scan_history_fallback()
+
+    limits, tier, status = fetch_limits()
+    if not args.limits_only and not args.force:
+        au.save_cache(AGENT_ID, cache)
+
+    record = {
+        "schemaVersion": au.SCHEMA_VERSION,
+        "id": AGENT_ID,
+        "name": AGENT_NAME,
+        "ready": bool(per_day) or bool(limits),
+        "hasLocalStats": bool(per_day),
+        "tierLabel": tier,
+        "limits": limits,
+        "usageStatusText": status,
+        "stats": au.build_stats(per_day, model_usage, sessions, prompts),
+        "updatedAt": au.dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+    au.write_record(AGENT_ID, record)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
