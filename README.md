@@ -314,19 +314,23 @@ cachyos-ai-config-sync sync
 ```bash
 cachyos-default-agent                 # 查看当前默认 agent（未设置时无输出）
 cachyos-default-agent codex           # 设为默认
-cachyos-agent                         # 启动默认 agent（未设置时弹 fzf 选择器）
+cachyos-agent                         # 启动默认 agent；没有默认值时弹选择器
 cachyos-agent --pick                  # 强制重新选择
 cachyos-agent claude                  # 启动指定 agent
 cachyos-agent --list                  # 列出支持的 agent 及安装状态
 cachyos-agent-prompt "审查这个改动"     # 带一段 prompt 启动默认 agent
 ```
 
-- 默认 agent 记在 `~/.config/cachyos-desktop/agent`。
+- 默认 agent 记在 `~/.config/cachyos-desktop/agent`（权限 0600）。这个文件可以手工改，
+  读取时会去掉首尾空白；如果写的是不受支持的名字，会提示并转为重新选择，而不是直接报错。
+- 选择器在终端里就地运行；没有终端（例如快捷键触发）时开一个 Kitty 窗口跑 fzf，
+  选择结果通过临时文件回传。按 `Esc` 取消则退出 1，不改动原默认值。
 - 所有 agent 窗口共用 kitty class `cachyos-agent`；这样一条窗口规则或主题就能覆盖全部
   agent 窗口，不必每个 agent 各写一条（项目本身目前没有为它写规则）。
   从快捷键启动会开新窗口；在终端里加 `--inline` 直接在当前终端运行。
 - 三个 agent 的 `-p`/`--help` 之类参数不会被误当成选项：`claude` 与 `codex` 的 prompt
-  统一用 `--` 分隔（`opencode` 走自己的 `--prompt`）。
+  统一用 `--` 分隔（`opencode` 走自己的 `--prompt`）。prompt 里的换行、引号、反斜杠、
+  `$`、制表符都原样传给 agent。
 
 #### Agent 技能
 
@@ -365,10 +369,21 @@ cachyos-crash-mute SomeApp          # 不再提醒该程序
 cachyos-crash-mute SomeApp off      # 恢复提醒
 ```
 
-通知默认就是**可点击的动作式**：点通知上的「用 AI 诊断」会直接调用
-`cachyos-agent-crash <pid>`（已在真实桌面会话上验证通知服务会回发动作）。想要只提示、
-不等待点击，就设 `CACHYOS_CRASH_ACTION=0` 启动 watcher；动作式通知发不出去时也会自动
-退回提示式。静音只是不再提醒，程序该崩还是会崩。
+通知默认就是**可点击的动作式**：点通知上的「用 AI 诊断」会把崩溃的四个字段
+（进程 / PID / 程序 / 信号）一并交给默认 agent（已在真实桌面会话上验证通知服务会回发
+动作）。想要只提示、不等待点击，就设 `CACHYOS_CRASH_ACTION=0` 启动 watcher；动作式
+通知发不出去时也会自动退回提示式。
+
+几个刻意的设计：
+
+- **同一个程序最多保留一条待处理通知。** 动作式通知会一直等到用户处理（`-t 0` 不自动
+  过期），若每次都新起一个，崩溃循环会让通知和等待进程无上界堆积。
+- **通知在后台发送**，不阻塞检测循环——否则用户还没点的那段时间里发生的崩溃都不会被记录。
+- **静音按内核的程序名长度对齐**：内核只记录 `comm` 的前 15 字节，所以
+  `cachyos-crash-mute gnome-keyring-daemon` 会按 `gnome-keyring-d` 静音（并给出提示）。
+  静音只是不再提醒，程序该崩还是会崩。
+- **`cachyos-agent-crash` 只把事实交给 agent**，诊断方法本身写在 `diagnose-crash` 技能里，
+  因此换任何默认 agent 都适用，方法也只维护一份。
 
 同一个程序最多保留一条待处理通知：崩溃循环不会把通知和等待进程堆起来。
 
@@ -542,7 +557,12 @@ cachyos-lock-doctor
 cachyos-agent --list        # 确认三个 agent 的安装状态
 ```
 
-`tests/run-all.sh` 是纯函数测试（agent 表、硬件选择），不需要桌面环境，也不需要先安装。
+`tests/run-all.sh` 跑 `tests/` 下所有 `*-test.sh`，都是纯函数与 stub 测试，不需要桌面环境、
+不需要先安装，也不会有桌面副作用（不会弹通知）：
+
+- `tests/agent-test.sh` —— agent 表、argv 逐字保真、以及 launcher 与选择器的端到端往返。
+- `tests/crash-test.sh` —— 崩溃字段解析（含缺失字段的对齐）与静音名单的名字截断。
+- `tests/hardware-test.sh` —— CPU/GPU 检测与包选择。
 
 硬件进一步检查：
 
@@ -554,6 +574,48 @@ powerprofilesctl
 bluetoothctl show
 ddcutil detect
 ```
+
+## 与 Omarchy 的关系
+
+AI Agent 这一层是**借鉴 [Omarchy](https://omarchy.org/) 的设计**做的。Omarchy 是 DHH 主导
+的 Arch + Hyprland 发行版，它把 AI 编程 agent 当作一等公民集成；本项目在
+**CachyOS + Niri + DMS** 上重新实现了同样的思路，并按本项目的约定改写。
+
+### 直接借鉴的做法
+
+| Omarchy 的做法 | 本项目的实现 | 为什么照搬 |
+| --- | --- | --- |
+| `bin/omarchy-agent` 用一张 `case` 表统一各 agent 的"无人值守"旗标 | `assets/lib/agent.sh` 的 `cachyos_agent_command` | 每个 agent 的旗标都不同（`--auto` / `--permission-mode auto` / `--approve-for-me`…），散落在快捷键里必然漂移。本项目把它抽成**纯函数库**，因此可以单测 |
+| 固定 app-id，让所有 agent 窗口共用一类 | kitty `--class cachyos-agent` | 一条窗口规则或主题即可覆盖全部 agent 窗口 |
+| prompt 单独成一条命令（裸 prompt 会遮蔽子命令） | `cachyos-agent-prompt` | 上游注释里写明了这个理由 |
+| prompt 前放 `--`，避免以横线开头的内容被当成选项 | 三个 agent 全部处理 | 上游为 `cursor-agent` 的子命令歧义专门解释过 |
+| 从 `$HOME` 启动时切到工作目录 | 仅在 `~/Work` 已存在时才切 | agent 不记忆 `$HOME` 的信任，否则每次都要重新确认 |
+| 用固定 MESSAGE_ID 订阅 systemd-coredump | `bin/cachyos-crash-watch` | 结构化字段比核心文件名信息更多 |
+| 崩溃记录先写、通知后发 | 同 | 通知可能丢（无 D-Bus、勿扰、通知服务刚死），记录是诊断入口的唯一依赖 |
+| 崩溃详情以独立 argv 传参，绝不拼命令字符串 | 同 | 进程名是攻击者可控的 |
+| 崩溃去重 + 按程序静音 | 同，另加"每程序最多一条待处理通知" | 崩溃循环会反复转储 |
+| 诊断方法只写一份（skill），prompt 里只放事实 | `assets/agent-skills/diagnose-crash/` | 换任何 agent 都适用，方法也只维护一份 |
+| 把系统知识做成技能并软链给各 harness | `cachyos-agent-skills` + `cachyos` 技能 | 让 agent 知道哪些配置受托管、改前先 `protect` |
+| 在脚注里写清"为什么"与被否决的替代方案 | 本项目沿用同一风格 | 这是 Omarchy 最值得学的一点 |
+
+### 没有照搬的部分
+
+| Omarchy 的做法 | 本项目的选择 | 原因 |
+| --- | --- | --- |
+| `pacman` pre-transaction guard + `omarchy update` 更新管线 | 用 CachyOS 自己的 `pacman -Syu` / `cachyos-system-update` | 与 CachyOS 现有机制直接冲突，且会接管不属于本项目的更新路径 |
+| 每用户迁移系统（数百个时间戳脚本） | `cachyos-config update` + manifest | 本项目规模不需要那套机器 |
+| 470 个命令的 CLI 路由器（元数据头 + 最长前缀匹配） | 显式 `cachyos-*` 命令 + `verify.sh` 遍历 | 48 个命令用不上路由层 |
+| mise stub 按需安装 agent | 用 pacman / AUR 安装 | 不引入第二套包管理器 |
+| `omarchy-shell` 的 QML 插件 | DMS 插件（`plugin.json`） | 宿主不同，插件 API 完全不同 |
+| 用 `--exec` 绕开"shell 不回发 ActionInvoked" | 直接用 `notify-send -A -w` | 在本项目实测 DMS（quickshell）**会**回发 `ActionInvoked`，不需要绕 |
+
+### 已知限制
+
+- 崩溃监听只在服务运行期间生效：服务重启（例如更新）窗口内的崩溃不会被补报——
+  `journalctl -f -n 0` 有意不重播历史。
+- 点击通知后启动的诊断会话被刻意移出 service 的 cgroup（`KillMode=process`），代价是重启
+  watcher 时会短暂留下一个空闲的 `journalctl` 进程，它在下次有匹配输出时因 SIGPIPE 自行退出。
+- 选择器需要终端或 Kitty；两者都没有时只能用 `cachyos-default-agent <agent>` 直接指定。
 
 ## 官方 Niri 与修改版功能差异
 
