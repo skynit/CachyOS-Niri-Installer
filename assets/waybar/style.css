@@ -23,6 +23,7 @@ window#waybar {
 #battery,
 #idle_inhibitor,
 #custom-record,
+#custom-voxtype,
 #custom-updates,
 #custom-nightlight,
 #custom-ddc {
@@ -46,6 +47,15 @@ window#waybar {
 #custom-record.recording {
     background: #b3261e;
     color: #ffffff;
+}
+
+#custom-voxtype.recording {
+    background: #b3261e;
+    color: #ffffff;
+}
+
+#custom-voxtype.transcribing {
+    color: #ffd166;
 }
 
 #custom-updates.pending {

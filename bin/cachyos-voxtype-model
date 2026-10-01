@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+
+# 打开语音模型管理界面（换模型、重新下载）。
+
+set -Eeuo pipefail
+
+command -v voxtype >/dev/null 2>&1 || {
+    printf '本地听写未安装。先运行 cachyos-voxtype-install。\n' >&2
+    exit 1
+}
+
+exec kitty --class cachyos-voxtype --title "Voxtype 语音模型" -e voxtype setup model

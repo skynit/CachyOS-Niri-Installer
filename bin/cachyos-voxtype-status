@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+
+# 本地听写的状态，输出 Waybar 的 JSON 格式。
+#
+# 空闲时输出空文本（控件随之收起），只在录音/转写时出现——听写是偶发动作，
+# 常驻一个"待命"图标只是噪音。
+#
+# voxtype 把状态写在 state_file（配置里是 "auto" = $XDG_RUNTIME_DIR/voxtype/state），
+# 这里直接读它，比每次 fork `voxtype status` 便宜得多。
+
+set -uo pipefail
+
+emit() {
+    printf '{"text":"%s","class":"%s","tooltip":"%s"}\n' "$1" "$2" "$3"
+}
+
+if ! command -v voxtype >/dev/null 2>&1; then
+    emit "" "absent" "本地听写未安装（cachyos-voxtype-install）"
+    exit 0
+fi
+
+state_file="${XDG_RUNTIME_DIR:-/tmp}/voxtype/state"
+state="$(cat "$state_file" 2>/dev/null || true)"
+state="${state//[$'\t\r\n ']/}"
+
+case "$state" in
+    recording)
+        emit "听写中" "recording" "正在录音：再按 Super+Ctrl+X 结束并转写"
+        ;;
+    transcribing)
+        emit "转写中" "transcribing" "正在把录音转成文字"
+        ;;
+    *)
+        emit "" "idle" "按 Super+Ctrl+X 开始听写"
+        ;;
+esac

@@ -415,6 +415,34 @@ cachyos-agent-usage-claude            # 采集器直接输出一条 JSON 记录
 `node --test` 覆盖；接线用的两个 jq 程序（只增不覆盖、幂等、尊重用户已关掉的开关）由
 `tests/dms-plugin-test.sh` 覆盖。
 
+#### 本地听写（可选）
+
+基于 [Voxtype](https://github.com/peteonrails/voxtype)，本地 Whisper 推理，不上传音频。
+**刻意不装进默认安装**：语音模型约 150MB，听写也不是所有人的需求。
+
+```bash
+cachyos-voxtype-install    # 装 voxtype-bin + wtype、下载模型、按需开 GPU、写好快捷键
+cachyos-voxtype-toggle     # 开始/结束听写（快捷键绑的就是它）
+cachyos-voxtype-config     # 打开 voxtype 的交互式配置
+cachyos-voxtype-model      # 换模型 / 重新下载
+cachyos-voxtype-status     # 输出 Waybar 的 JSON 状态（栏上那个"听写中"）
+cachyos-voxtype-remove     # 卸载：删快捷键、备份配置、移除模型
+```
+
+安装后快捷键是 **`Super+Ctrl+X`** 与 **`Super+F9`**（都是开始/结束切换）。这两个键
+写在 `~/.config/niri/cachyos-voxtype.kdl`，由主配置用 `include optional=true` 引入——
+Niri 没有条件绑定，用可选 include 才能做到"**装了听写才有这几个键**"，而不是让没用听写的人
+白白失去它们。
+
+> **已知限制（实测）**：上游 Omarchy 在 Hyprland 上用 `F9` 的"按下开始 / 松开结束"实现
+> 按住说话。**Niri 不支持按键释放绑定**——`F9 release { }` 会让 `niri validate` 直接解析
+> 报错——所以本项目只能做 toggle：按一次开始，再按一次结束。裸 `F9` 也没有被占用，
+> 它仍然是应用自己的功能键。
+
+栏上的状态控件空闲时不显示文字（自动收起），只在录音/转写时出现；状态从
+`$XDG_RUNTIME_DIR/voxtype/state` 读取，由 `voxtype` 自己维护。用 `cachyos-voxtype-remove`
+卸载时会先把 `~/.config/voxtype` 备份成带时间戳的目录，不会静默丢掉你调过的设备或采样率。
+
 #### 新增一个 agent
 
 旗标集中在一处：`assets/lib/agent.sh`。加一个 agent 需要同时改三处——该文件的
@@ -593,6 +621,7 @@ cachyos-agent --list        # 确认三个 agent 的安装状态
 - `tests/usage-test.sh` —— 用量采集：同日多条用量必须累加、缓存与全量结果一致、
   缓存版本失配要作废、两种 input 语义下的计费。
 - `tests/dms-plugin-test.sh` —— 状态栏接线：只增不覆盖、幂等、尊重用户关掉的插件开关。
+- `tests/voxtype-test.sh` —— 听写状态机、未安装时的提示、快捷键文件的写入与卸载、配置备份。
 - `tests/hardware-test.sh` —— CPU/GPU 检测与包选择。
 
 插件自身的纯逻辑另有独立测试（在插件目录里）：

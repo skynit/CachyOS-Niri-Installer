@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+
+# 卸载本地听写：快捷键、配置、服务与语音模型。
+#
+# 只卸 voxtype-bin，**不动 wtype**：wtype 是通用的输入注入工具，其他脚本可能在用。
+
+set -Eeuo pipefail
+
+if [[ ! -t 0 || ! -t 1 ]]; then
+    if [[ "${CACHYOS_VOXTYPE_TERMINAL:-0}" != 1 ]]; then
+        command -v kitty >/dev/null 2>&1 || {
+            printf '找不到 Kitty，无法请求 sudo 密码；请在终端里运行 cachyos-voxtype-remove。\n' >&2
+            exit 1
+        }
+        exec kitty --class cachyos-voxtype --title "卸载本地听写" \
+            -e env CACHYOS_VOXTYPE_TERMINAL=1 "$0" "$@"
+    fi
+fi
+
+# 先撤快捷键并让 Niri 重新加载：这样即使后面的卸载失败，也不会留下指向不存在的命令的绑定。
+rm -f -- "$HOME/.config/niri/cachyos-voxtype.kdl"
+if command -v niri >/dev/null 2>&1; then
+    niri msg action reload-config >/dev/null 2>&1 || true
+fi
+
+if command -v voxtype >/dev/null 2>&1; then
+    systemctl --user disable --now voxtype.service >/dev/null 2>&1 || true
+    systemctl --user daemon-reload >/dev/null 2>&1 || true
+
+    if command -v paru >/dev/null 2>&1; then
+        paru -Rns --noconfirm -- voxtype-bin || printf 'voxtype-bin 卸载失败，请手动检查。\n' >&2
+    else
+        printf '找不到 paru，请手动卸载 voxtype-bin。\n' >&2
+    fi
+
+    # 配置先备份再删：用户可能调过输入设备或提示音，静默丢掉不合适。
+    if [[ -d "$HOME/.config/voxtype" ]]; then
+        backup="$HOME/.config/voxtype.bak-$(date +%Y%m%d-%H%M%S)"
+        mv -- "$HOME/.config/voxtype" "$backup"
+        printf '配置已备份到 %s\n' "$backup"
+    fi
+
+    # 模型（约 150MB）与运行期数据
+    rm -rf -- "$HOME/.local/share/voxtype"
+else
+    printf 'voxtype 未安装，只清理了快捷键与配置残留。\n'
+fi
+
+printf '本地听写已卸载。\n'
+
+if [[ "${CACHYOS_VOXTYPE_TERMINAL:-0}" == 1 ]]; then
+    printf '\n按 Enter 关闭窗口。'
+    # 没有 stdin（例如非交互调用）时 read 会返回非 0，不能让 set -e 把它当成失败。
+    read -r || true
+fi

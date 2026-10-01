@@ -484,6 +484,35 @@ check_dms_plugin_stack() {
     fi
 }
 
+check_voxtype_stack() {
+    local share_dir="${CACHYOS_DESKTOP_SHARE_DIR:-/usr/local/share/cachyos-desktop}"
+    local waybar_file
+
+    # voxtype 本身是可选软件（模型约 150MB），没装不算失败；这里只检查"随包资源与接线"
+    # 是否就位——它们决定用户执行 cachyos-voxtype-install 时能不能一次成功。
+    check_file "$share_dir/assets/voxtype/config.toml"
+    check_file "$share_dir/assets/niri/cachyos-voxtype.kdl"
+
+    # 快捷键走"可选 include"：Niri 没有条件绑定，这样没装听写的人不会白白失去这些键。
+    if grep -Eq '^include optional=true "cachyos-voxtype.kdl"' "$SCRIPT_DIR/assets/niri/config.kdl"; then
+        pass "Niri includes the dictation bindings optionally"
+    else
+        fail "Niri does not include cachyos-voxtype.kdl as an optional include"
+    fi
+
+    # 状态控件：两个栏都要有，否则切到另一个栏就看不到听写状态。
+    for waybar_file in top.jsonc bottom.jsonc; do
+        if jq -e '."custom/voxtype".exec == "cachyos-voxtype-status"' \
+            "$SCRIPT_DIR/assets/waybar/$waybar_file" >/dev/null 2>&1 &&
+            jq -e '."modules-right" | index("custom/voxtype")' \
+                "$SCRIPT_DIR/assets/waybar/$waybar_file" >/dev/null 2>&1; then
+            pass "Waybar ($waybar_file) has the dictation status module"
+        else
+            fail "Waybar ($waybar_file) is missing the dictation status module"
+        fi
+    done
+}
+
 check_lock_screen() {
     local command_name
     local settings_file="$HOME/.config/DankMaterialShell/settings.json"
@@ -566,6 +595,7 @@ main() {
     check_desktop_extras
     check_ai_agent_stack
     check_dms_plugin_stack
+    check_voxtype_stack
     check_lock_screen
     check_neutral_install
 

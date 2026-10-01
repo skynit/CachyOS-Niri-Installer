@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+# 开始/结束本地听写。没装就告诉用户怎么装，而不是静默失败。
+
+set -uo pipefail
+
+if ! command -v voxtype >/dev/null 2>&1; then
+    message="本地听写未安装。运行 cachyos-voxtype-install（会下载约 150MB 模型）。"
+    if command -v dms >/dev/null 2>&1; then
+        dms notify "$message" 2>/dev/null || true
+    else
+        notify-send "本地听写未安装" "$message" 2>/dev/null || true
+    fi
+    exit 0
+fi
+
+exec voxtype record toggle

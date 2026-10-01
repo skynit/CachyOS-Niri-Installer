@@ -1,0 +1,36 @@
+# Voxtype 本地听写配置
+#
+# 位置：~/.config/voxtype/config.toml
+# 所有设置都能用命令行旗标临时覆盖；改完不需要重启服务，下一次录音就读新值。
+#
+# 本文件由 CachyOS-Niri-Installer 提供模板，但**安装后归用户所有**：
+# cachyos-voxtype-install 只在文件不存在时写入，不会覆盖你的改动。
+
+# 状态文件：供 Waybar 等外部集成读取（本项目的 cachyos-voxtype-status 读它）。
+# "auto" = $XDG_RUNTIME_DIR/voxtype/state；也可给绝对路径，或 "disabled" 关闭。
+# `voxtype record toggle` 与 `voxtype status` 依赖它，不要关。
+state_file = "auto"
+
+[hotkey]
+# 快捷键由窗口管理器负责（本项目是 Niri，见 ~/.config/niri/cachyos-voxtype.kdl），
+# 所以这里内建的全局热键保持关闭，避免两套机制抢同一个键。
+enabled = false
+
+[audio]
+# 输入设备；"default" 跟随系统默认（可用 pactl list sources short 查看）
+device = "default"
+
+# 采样率：Whisper 期望 16000
+sample_rate = 16000
+
+# 单次录音上限（秒），防止忘记停止时无限录制
+max_duration_secs = 60
+
+# 录音期间暂停 MPRIS 播放器，避免把音乐录进去
+pause_media = true
+
+# 录音开始/结束的提示音（默认关闭：听写常在会议中触发，提示音会打扰）
+# [audio.feedback]
+# enabled = true
+# theme = "subtle"
+# volume = 0.7

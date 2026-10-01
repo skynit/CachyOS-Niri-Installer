@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+
+# 打开 Voxtype 的交互式配置界面。
+
+set -Eeuo pipefail
+
+command -v voxtype >/dev/null 2>&1 || {
+    printf '本地听写未安装。先运行 cachyos-voxtype-install。\n' >&2
+    exit 1
+}
+
+exec kitty --class cachyos-voxtype --title "Voxtype 配置" -e voxtype configure

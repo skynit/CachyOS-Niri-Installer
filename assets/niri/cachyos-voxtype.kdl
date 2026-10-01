@@ -1,0 +1,14 @@
+// 本地听写（Voxtype）的快捷键。本文件由 cachyos-voxtype-install 安装，
+// 由 cachyos-voxtype-remove 删除。
+//
+// 为什么单独一个文件、并在 config.kdl 里用 `include optional=true` 引入：
+// Niri 没有条件绑定，而听写是可选功能（模型约 150MB）。直接写进 binds.kdl 会让没用
+// 听写的人白白失去这两个键——**裸 F9 尤其不能绑**，那是应用自己的功能键。
+//
+// 上游 Omarchy 用 Hyprland 的"按下 start / 松开 stop"做按住说话；Niri **不支持按键
+// 释放绑定**（`F9 release { }` 会让 niri validate 直接解析报错），所以这里只能做
+// toggle：按一次开始，再按一次结束。
+binds {
+    Super+Ctrl+X hotkey-overlay-title="听写：开始/结束" { spawn "cachyos-voxtype-toggle"; }
+    Super+F9 hotkey-overlay-title="听写：开始/结束" { spawn "cachyos-voxtype-toggle"; }
+}

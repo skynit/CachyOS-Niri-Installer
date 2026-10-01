@@ -275,3 +275,8 @@ include optional=true "dms/outputs.kdl"
 include optional=true "dms/cursor.kdl"
 
 include "cachyos-extras.kdl"
+
+// 本地听写（Voxtype）的快捷键。**可选**：只有装了听写（cachyos-voxtype-install）才会
+// 生成这个文件。Niri 没有条件绑定，用可选 include 才能做到"装了才有这几个键"，而不是
+// 让没用听写的人白白失去它们（裸 F9 尤其不能绑，那是应用自己的功能键）。
+include optional=true "cachyos-voxtype.kdl"

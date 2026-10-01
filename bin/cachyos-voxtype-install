@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+
+# 安装本地听写：Voxtype + Whisper 语音模型（约 150MB）。
+#
+# 刻意不放进默认安装：模型体积不小，听写也不是所有人的需求。
+# 装包需要 sudo，而本命令可能从快捷键触发（没有终端），因此沿用仓库既有的
+# "没有终端就用 Kitty 重开自己来问密码"模式（同 cachyos-snapshot）。
+
+set -Eeuo pipefail
+
+readonly SCRIPT_NAME="${0##*/}"
+readonly SHARE_DIR="${CACHYOS_DESKTOP_SHARE_DIR:-/usr/local/share/cachyos-desktop}"
+
+notify() {
+    if command -v dms >/dev/null 2>&1; then
+        dms notify "$1" >/dev/null 2>&1 || true
+    else
+        notify-send "本地听写" "$1" 2>/dev/null || true
+    fi
+}
+
+if [[ ! -t 0 || ! -t 1 ]]; then
+    if [[ "${CACHYOS_VOXTYPE_TERMINAL:-0}" != 1 ]]; then
+        command -v kitty >/dev/null 2>&1 || {
+            printf '找不到 Kitty，无法请求 sudo 密码；请在终端里运行 %s。\n' "$SCRIPT_NAME" >&2
+            notify "找不到 Kitty，无法请求密码；请在终端里运行 cachyos-voxtype-install。"
+            exit 1
+        }
+        exec kitty --class cachyos-voxtype --title "安装本地听写" \
+            -e env CACHYOS_VOXTYPE_TERMINAL=1 "$0" "$@"
+    fi
+fi
+
+if ! command -v voxtype >/dev/null 2>&1; then
+    command -v paru >/dev/null 2>&1 || {
+        printf '找不到 paru（AUR 助手），无法安装 voxtype-bin。\n' >&2
+        exit 1
+    }
+    printf '安装 voxtype-bin 与 wtype…\n'
+    paru -S --needed --noconfirm -- wtype voxtype-bin
+else
+    printf 'voxtype 已安装，跳过装包。\n'
+fi
+
+install -d -m 0755 "$HOME/.config/voxtype"
+if [[ -e "$HOME/.config/voxtype/config.toml" ]]; then
+    # 不覆盖：用户可能已经调过设备、采样率或提示音。
+    printf '保留已有的 ~/.config/voxtype/config.toml。\n'
+else
+    install -m 0644 "$SHARE_DIR/assets/voxtype/config.toml" "$HOME/.config/voxtype/config.toml"
+fi
+
+printf '下载语音模型（约 150MB）…\n'
+voxtype setup --download --no-post-install
+
+# GPU 加速：有 DRM 渲染节点就试着打开，失败只是回落到 CPU，不影响功能。
+if compgen -G '/dev/dri/renderD*' >/dev/null; then
+    voxtype setup gpu --enable || printf 'GPU 加速未启用，继续用 CPU 推理。\n' >&2
+else
+    printf '没有可用的 GPU 渲染节点，使用 CPU 推理。\n'
+fi
+
+voxtype setup systemd
+
+# 快捷键：Niri 没有条件绑定，所以用"可选 include"实现"装了听写才有这几个键"。
+# 直接写进 binds.kdl 会让没用听写的人白白失去它们（裸 F9 更是应用自己的功能键）。
+install -m 0644 "$SHARE_DIR/assets/niri/cachyos-voxtype.kdl" "$HOME/.config/niri/cachyos-voxtype.kdl"
+if command -v niri >/dev/null 2>&1; then
+    niri msg action reload-config >/dev/null 2>&1 || true
+fi
+
+printf '本地听写已就绪：按 Super+Ctrl+X（或 Super+F9）开始/结束。\n'
+notify "本地听写已就绪：按 Super+Ctrl+X 开始/结束。"
+
+if [[ "${CACHYOS_VOXTYPE_TERMINAL:-0}" == 1 ]]; then
+    printf '\n按 Enter 关闭窗口。'
+    # 没有 stdin（例如非交互调用）时 read 会返回非 0，不能让 set -e 把它当成失败。
+    read -r || true
+fi
