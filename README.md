@@ -253,8 +253,9 @@ Super+/                    打开 Kitty 临时终端
 Super+T                    打开 Kitty 单实例终端
 Super+Enter                打开独立 Kitty 终端
 Super+B                    打开 Firefox
-Super+Alt+O                在 Kitty 中打开 OpenCode
-Super+Alt+C                在 Kitty 中打开 Claude Code
+Super+Alt+O                用 OpenCode 启动 AI agent（自动带无人值守旗标）
+Super+Alt+C                用 Claude Code 启动 AI agent
+Super+`                    启动默认 AI agent（未设置时弹出选择器）
 Super+Alt+B                打开 Obsidian
 Super+P                    提取当前窗口信息并复制
 Super+E                    打开 Thunar，失败时回退 Nautilus
@@ -298,6 +299,80 @@ cachyos-ai-config-sync sync
 镜像位于 `~/.config/codex-desktop/cc-switch-sync.json` 和
 `~/.cc-switch/codex-desktop-sync.json`。真实 API 凭据只写入权限为 `600` 的
 `~/.codex/auth.json`，不会写入镜像或日志。
+
+### AI Agent
+
+安装器把三个 AI 编程 agent 接成同一套入口，并自动带上各自的"无人值守"旗标——这些旗标
+每个 agent 都不一样，散落在快捷键里很难维护：
+
+| agent | 包 | 无人值守旗标 |
+| --- | --- | --- |
+| `opencode` | `opencode` | `--auto` |
+| `claude` | `claude-code` | `--permission-mode auto` |
+| `codex` | `openai-codex` | `--approve-for-me` |
+
+```bash
+cachyos-default-agent                 # 查看当前默认 agent（未设置时无输出）
+cachyos-default-agent codex           # 设为默认
+cachyos-agent                         # 启动默认 agent（未设置时弹 fzf 选择器）
+cachyos-agent --pick                  # 强制重新选择
+cachyos-agent claude                  # 启动指定 agent
+cachyos-agent --list                  # 列出支持的 agent 及安装状态
+cachyos-agent-prompt "审查这个改动"     # 带一段 prompt 启动默认 agent
+```
+
+- 默认 agent 记在 `~/.config/cachyos-desktop/agent`。
+- 所有 agent 窗口共用 kitty class `cachyos-agent`，窗口规则和主题因此能一次命中。
+  从快捷键启动会开新窗口；在终端里加 `--inline` 直接在当前终端运行。
+- 三个 agent 的 `-p`/`--help` 之类参数不会被误当成选项：`claude` 与 `codex` 的 prompt
+  统一用 `--` 分隔（`opencode` 走自己的 `--prompt`）。
+
+#### Agent 技能
+
+安装器把两份技能软链到各 harness 的技能目录，让 agent 知道这套桌面该怎么改：
+
+- `cachyos`：Niri、DMS、`cachyos-*` 命令的正确用法，以及"哪些配置受安装器托管、
+  改前要先 `cachyos-config protect`"。
+- `diagnose-crash`：如何从 `coredumpctl` 事实判断崩溃该归因于用户配置还是上游 bug。
+
+只为**已存在**的技能目录建立软链（`~/.agents/skills`、`~/.claude/skills`、`~/.codex/skills`、
+`~/.gemini/config/skills`、`~/.pi/agent/skills`、`~/.hermes/skills`、`~/.cc-switch/skills`），
+绝不创建 harness 目录。安装时、首次登录以及每次 `cachyos-agent` 启动前各同步一次——
+最后这个时机最可靠，因为那时 harness 目录才确实存在。手动重跑：
+
+```bash
+cachyos-agent-skills
+cachyos-agent-skills --harness codex   # 只同步某一个 harness
+```
+
+#### 崩溃诊断
+
+`cachyos-crash-watch.service` 常驻监听 systemd-coredump。进程崩溃后会：
+
+1. 把 `pid`/`comm`/`exe`/`signal`/时间写入
+   `~/.local/state/cachyos-desktop/agents/last-crash`；
+2. 发一条通知。同一程序 60 秒内只提醒一次（`CACHYOS_CRASH_DEDUPE_SECONDS` 可调）。
+
+诊断入口：
+
+```bash
+cachyos-agent-crash --latest        # 用默认 agent 诊断最近一次记录到的崩溃
+cachyos-agent-crash 1516893         # 指定 PID（PID 见 coredumpctl list）
+cachyos-crash-mute                  # 列出已静音的程序
+cachyos-crash-mute SomeApp          # 不再提醒该程序
+cachyos-crash-mute SomeApp off      # 恢复提醒
+```
+
+通知的"点击即诊断"取决于通知服务是否回发动作，默认只发提示；需要动作式通知时设
+`CACHYOS_CRASH_ACTION=1` 启动 watcher（该行为需在目标机器上实测，见 PLAN 的 Spike A）。
+静音只是不再提醒，程序该崩还是会崩。
+
+#### 新增一个 agent
+
+旗标集中在一处：`assets/lib/agent.sh`。加一个 agent 需要同时改三处——该文件的
+`cachyos_agent_supported`/`cachyos_agent_name`/`cachyos_agent_command`
+（必要时还有 `cachyos_agent_skill_relpaths`）、`packages.sh` 里的包、以及
+`tests/agent-test.sh` 的断言。
 
 ### 窗口、列、显示器与工作区
 
@@ -451,14 +526,18 @@ Snapper 快照和回滚仅在根文件系统为 Btrfs 时可用。`cachyos-grub-
 
 1. 重启，在 Ly 中选择 Niri 会话。
 2. 至少退出并重新登录一次，使 Fish、Fcitx5、`libvirt` 和 `i2c` 组权限生效。
-3. 等待首次登录的 Firefox、Code、Wine 初始化完成。
+3. 等待首次登录的 Firefox、Code、Wine 与 agent 技能初始化完成。
 4. 在本项目目录执行：
 
 ```bash
+bash tests/run-all.sh
 ./verify.sh
 dms doctor
 cachyos-lock-doctor
+cachyos-agent --list        # 确认三个 agent 的安装状态
 ```
+
+`tests/run-all.sh` 是纯函数测试（agent 表、硬件选择），不需要桌面环境，也不需要先安装。
 
 硬件进一步检查：
 
