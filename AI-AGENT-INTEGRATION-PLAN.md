@@ -673,6 +673,30 @@ cp ~/.local/state/cachyos-desktop/acceptance-backup-20261001-235646/binds.kdl.li
 
 **审核过程本身的教训**：派发评审时**没有禁止它们改动系统状态**。结果评审在收到约束前对真机上正在运行的 `cachyos-crash-watch.service` 执行了 `stop`，并向 journal 注入合成 coredump 条目，在你桌面上产生约 11 条假的"进程崩溃"通知；这些通知的回调又跑在**临时 HOME** 下，于是点击后弹出 fzf 选择器（找不到默认 agent）。已清理（`notifications clearAll` + 收掉等待进程 + 清掉残留 watcher），服务已恢复。**以后派发涉及本机服务的评审，约束里必须写明"不得改动系统状态"。**
 
+### 独立审核·第二轮（2026-10-02）
+
+第二轮覆盖了第一轮没审的两个维度（崩溃诊断命令、agent 启动层与库），另加验器/文档层的 13 条。发现 3 个新阻塞项，全部已修。
+
+| # | severity | 缺陷 | 证据 | 修法 |
+| --- | --- | --- | --- | --- |
+| S1 | **高** | fzf 选择器**从来没成功过**（两条缺陷叠加）：① `[[ -t 0 && -t 1 ]]` 在 `agent="$(pick_agent)"` 里恒为假（命令替换让 stdout 变成管道）→ 内联分支是死代码；② kitty 分支 `chosen="$(kitty … sh -lc '… | fzf | cut -f1')"` 捕获的是 kitty 自己的 stdout，而 kitty 把子进程挂在新窗口的 pty 上 → 永远为空 → "没有选择 agent。"。`Super+``、`--pick`、未设默认值时的 `--prompt` 全部失效 | 评审在真 pty 上复现（`$( )` 内 `-t 1` 为假；kitty 分支调用者拿到 0 字节，窗口内却写成功） | 判据只看 stdin；kitty 分支把选择写临时文件再读回；两条分支共用同一条 pipeline。**真机验证**：安装版 `cachyos-agent --pick` 现能写回 `codex` |
+| S2 | **高** | 制表符是 IFS **空白**字符，`read` 仍会折叠空字段 → 缺 `COREDUMP_EXE` 时 `signal` 顶到 `exe` 列。上一轮"IFS=$'\t' 已修复"的说法是错的 | 评审逐条喂合成记录：`missing EXE → exe=11 signal=` | 改用非空白分隔符 `\x1f` + jq `join`；新增 `tests/crash-test.sh`（12 项），并验证它跑在修复前版本上会失败 |
+| S3 | **高** | 内核把 `comm` 截到 15 字节，静音名单存完整名 → `gnome-keyring-daemon`、`xdg-desktop-portal` 这类长名字**永远静音不了** | 真实崩溃复现（`verylongprocessname12345`） | `normalize_program` 按**字节**截断到 15 并提示 |
+| S4 | 中 | 动作式通知只传 PID → 提示词里进程/程序/信号全是 unknown；且 `-t 0` 通知挂久后 PID 可能已被复用 | 评审实测 | 四个字段一并传给 `cachyos-agent-crash` |
+| S5 | 中 | `CACHYOS_CRASH_DEDUPE_SECONDS` 未校验：设成 `abc` → `set -u` 下算术报错，watcher 当场退出，state 目录都没建；叠加 `Restart=always` 变成"每次崩溃重启一次服务" | 评审实测 rc=1 | 校验为非负整数，否则回退 60 并告警 |
+| S6 | 中 | 点击通知启动的 `cachyos-agent-crash → kitty → agent` 留在 service cgroup 里 → watcher 任何一次重启都会 SIGTERM 掉用户正在进行的诊断会话 | 评审抓到 cgroup 现场 | unit 加 `KillMode=process` |
+| S7 | 中 | 默认限流（10s/5 次）与 `RestartSec=5` 组合下永远凑不满 → 坏掉的 watcher 无限静默重启、永不进入 failed | 评审实测 `StartLimit*` | 加 `StartLimitIntervalSec=60` + `StartLimitBurst=3` |
+| S8 | 中 | 选中"未安装"的 agent 会打印归因错误的信息（"cachyos-default-agent 不可用"），且两条分支展示不一致 | 评审实测 | 区分退出码 127 与其他；两条分支统一用 `--list` |
+| S9 | 中 | 目标同名若是**真实目录**，`ln -sfn` 会嵌套进去，脚本仍报"已链接 N 个技能"，技能在 harness 路径上不可见 | 评审实测 | 目标是真实文件/目录时跳过并告警，不碰用户内容 |
+| S10 | 中 | 默认 agent 文件被手工改坏（拼错 / 尾随空格 / CRLF）直接 exit 2，不回落选择器 | 评审实测三种输入 | 读取时去首尾空白；不受支持则告警并重新选择 |
+| S11 | 低 | journalctl 永久失败 = 服务 active 却什么都不做，`2>/dev/null` 让失败完全不可见 | 评审实测 | 不再吞 stderr，并记录每次重连 |
+| S12 | 低 | 一个目标目录不可写就中止整个技能同步 | 评审实测 | 单目标失败不中止，末尾汇总退出码 |
+| S13 | 低 | `--` 不被识别；`AGENT_FILE` 是目录时假成功；`--latest` 对目录静默 rc=4 | 评审实测 | 分别修掉 |
+
+**测试盲区也补上了**：评审指出"A 只测库、不测收集端"正是 S2 能"全绿漏过"的原因。`tests/agent-test.sh` 现在有 launcher 端到端用例（stub harness 记录 argv，含多行 prompt 往返）和选择器用例（stub kitty 真的执行内层命令 + `FZF_DEFAULT_OPTS=--filter`）。
+
+**我在修 S9/S12 时又犯了同类错误**：用 `edit` 替换 `main()` 时凭记忆写新旧文本，漏掉了 `--quiet` 与 `--harness` 两个选项、把文件改坏；靠"编辑后立刻读文件复核"发现并修复。教训：**替换块必须以刚读到的原文为锚点，不能凭记忆**。
+
 ## 附录 A：与 Omarchy 的对应关系
 
 | Omarchy | 本项目 | 备注 |
