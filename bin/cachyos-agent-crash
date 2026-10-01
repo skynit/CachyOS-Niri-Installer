@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+readonly SCRIPT_NAME="${0##*/}"
+readonly SHARE_DIR="${CACHYOS_DESKTOP_SHARE_DIR:-/usr/local/share/cachyos-desktop}"
+readonly STATE_DIR="$HOME/.local/state/cachyos-desktop"
+readonly LAST_CRASH_FILE="$STATE_DIR/agents/last-crash"
+
+# 先赋值再 readonly：readonly 会掩盖命令替换的失败，而这里失败会让后续 $SELF_DIR/...
+# 静默指向根目录。
+SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SELF_DIR
+
+# 诊断方法写在 skill 里，只维护一份，换哪个 agent 都照它做。
+skill_path="$SHARE_DIR/assets/agent-skills/diagnose-crash/SKILL.md"
+if [[ ! -r $skill_path ]]; then
+    skill_path="$SELF_DIR/../assets/agent-skills/diagnose-crash/SKILL.md"
+fi
+
+usage() {
+    cat <<EOF
+Usage: $SCRIPT_NAME <pid> [comm] [exe] [signal]
+       $SCRIPT_NAME --latest
+
+把一次进程崩溃交给默认 AI agent 诊断。通常由崩溃通知触发；也可以对
+\`coredumpctl list\` 里的任意 PID 手动执行，或用 --latest 处理最近一次记录的崩溃。
+
+诊断方法见：$skill_path
+EOF
+}
+
+crash_field() {
+    sed -n "s/^$1=//p" "$LAST_CRASH_FILE" 2>/dev/null | head -1
+}
+
+sibling_cachyos_agent() {
+    if command -v cachyos-agent >/dev/null 2>&1; then
+        cachyos-agent "$@"
+    else
+        "$SELF_DIR/cachyos-agent" "$@"
+    fi
+}
+
+main() {
+    local pid=""
+    local comm="unknown"
+    local exe="unknown"
+    local signal="unknown"
+    local when="unknown"
+    local prompt
+
+    case "${1:-}" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        --latest)
+            if [[ ! -r $LAST_CRASH_FILE ]]; then
+                printf '没有记录到崩溃：%s\n' "$LAST_CRASH_FILE" >&2
+                exit 1
+            fi
+            pid="$(crash_field pid)"
+            comm="$(crash_field comm)"
+            exe="$(crash_field exe)"
+            signal="$(crash_field signal)"
+            when="$(crash_field time)"
+            comm="${comm:-unknown}"
+            exe="${exe:-unknown}"
+            signal="${signal:-unknown}"
+            when="${when:-unknown}"
+            ;;
+        "")
+            usage >&2
+            exit 2
+            ;;
+        *)
+            pid="$1"
+            comm="${2:-unknown}"
+            exe="${3:-unknown}"
+            signal="${4:-unknown}"
+            ;;
+    esac
+
+    if [[ ! $pid =~ ^[0-9]+$ ]]; then
+        printf '不是 PID：%s\n' "$pid" >&2
+        printf '用法：%s <pid>（PID 见 coredumpctl list）\n' "$SCRIPT_NAME" >&2
+        exit 1
+    fi
+
+    # 手输的 PID 也去查一次时间；核心已被轮转掉时只损失时间戳，不影响诊断。
+    when="$(coredumpctl list --no-pager --no-legend "$pid" 2>/dev/null |
+        awk 'END { if (NF >= 4) print $1, $2, $3, $4 }')" || true
+    when="${when:-unknown}"
+
+    prompt="$(
+        cat <<PROMPT
+本机有一个进程崩溃了，我想知道原因。
+
+systemd-coredump 记录到的事实：
+  进程：  $comm
+  PID：   $pid
+  程序：  $exe
+  信号：  $signal
+  时间：  $when
+
+请使用 diagnose-crash skill：它说明了如何调查、该报告什么、以及什么情况下值得向上游
+报告。如果你的 harness 没有 skill 机制，就直接读这个文件并照它做：
+
+  $skill_path
+PROMPT
+    )"
+
+    sibling_cachyos_agent --prompt "$prompt"
+}
+
+main "$@"

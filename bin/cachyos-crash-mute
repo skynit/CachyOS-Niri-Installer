@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+readonly SCRIPT_NAME="${0##*/}"
+readonly AGENTS_DIR="$HOME/.local/state/cachyos-desktop/agents"
+readonly MUTE_FILE="$AGENTS_DIR/crash-muted.txt"
+
+usage() {
+    cat <<EOF
+Usage: $SCRIPT_NAME [<program>] [off]
+
+不带参数时列出已静音的程序；带程序名时把它加入静音名单，带 off 时解除。
+
+程序名可以用名称或路径（按 basename 归一）。静音只是不再提醒，程序该崩还是会崩。
+
+示例：
+  $SCRIPT_NAME                   列出
+  $SCRIPT_NAME hyprland          静音 hyprland
+  $SCRIPT_NAME /usr/bin/hyprland 同上
+  $SCRIPT_NAME hyprland off      解除
+EOF
+}
+
+normalize_program() {
+    local name
+    name="$(basename -- "$1")"
+    name="${name%$'\r'}"
+    if [[ -z $name || $name == "." || $name == ".." || $name == *$'\n'* ]]; then
+        printf '不是有效的程序名：%s\n' "$1" >&2
+        return 1
+    fi
+    printf '%s\n' "$name"
+}
+
+list_muted() {
+    if [[ ! -s $MUTE_FILE ]]; then
+        printf '没有已静音的程序。\n'
+        return 0
+    fi
+    printf '已静音的程序（%s）：\n' "$MUTE_FILE"
+    sed 's/^/  /' "$MUTE_FILE"
+}
+
+write_muted() {
+    local temporary
+    temporary="$(mktemp "$AGENTS_DIR/.crash-muted.XXXXXX")"
+    if (($# > 0)); then
+        printf '%s\n' "$@" > "$temporary"
+    else
+        : > "$temporary"
+    fi
+    mv -- "$temporary" "$MUTE_FILE"
+}
+
+main() {
+    install -d -m 0700 "$AGENTS_DIR"
+    touch "$MUTE_FILE"
+
+    if (($# == 0)); then
+        list_muted
+        return 0
+    fi
+
+    if (($# > 2)); then
+        usage >&2
+        return 2
+    fi
+
+    local program
+    if ! program="$(normalize_program "$1")"; then
+        return 2
+    fi
+
+    local -a muted=()
+    if [[ -s $MUTE_FILE ]]; then
+        mapfile -t muted < "$MUTE_FILE"
+    fi
+
+    local -a updated=()
+    local entry
+    local found=false
+
+    if [[ ${2:-} == "off" ]]; then
+        for entry in "${muted[@]}"; do
+            [[ $entry == "$program" ]] && found=true && continue
+            updated+=("$entry")
+        done
+        if [[ $found == false ]]; then
+            printf '%s 本来就不在静音名单里。\n' "$program"
+            return 0
+        fi
+        write_muted ${updated[@]+"${updated[@]}"}
+        printf '已解除静音：%s\n' "$program"
+        return 0
+    fi
+
+    if [[ -n ${2:-} ]]; then
+        usage >&2
+        return 2
+    fi
+
+    for entry in "${muted[@]}"; do
+        if [[ $entry == "$program" ]]; then
+            printf '%s 已在静音名单里。\n' "$program"
+            return 0
+        fi
+        updated+=("$entry")
+    done
+    updated+=("$program")
+    write_muted "${updated[@]}"
+    printf '已静音：%s（用 %s %s off 恢复）\n' "$program" "$SCRIPT_NAME" "$program"
+}
+
+main "$@"

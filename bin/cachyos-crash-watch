@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+
+# 监听 systemd-coredump 并提示用 AI 诊断。由 cachyos-crash-watch.service 常驻运行。
+
+set -Eeuo pipefail
+
+readonly SCRIPT_NAME="${0##*/}"
+
+# systemd.journal-fields(7)：systemd-coredump 用这个固定 MESSAGE_ID 记录每次核心转储，
+# 其结构化字段（COREDUMP_*）比核心文件名包含更多信息。
+readonly COREDUMP_MESSAGE_ID=fc2e22bc6ee647b6b90729ab34a250b1
+
+# 崩溃循环会反复转储，同一程序在一个窗口内只提醒一次。
+readonly DEDUPE_SECONDS="${CACHYOS_CRASH_DEDUPE_SECONDS:-60}"
+
+# 匹配这个扩展正则的程序名永不提醒。
+readonly IGNORE_PATTERN="${CACHYOS_CRASH_IGNORE:-}"
+
+# 动作式通知（点击即诊断）默认为开：目标机器上已实测 DMS（quickshell）会回发
+# ActionInvoked，`notify-send -A -w` 能拿到动作名（见计划的 Spike A）。设
+# CACHYOS_CRASH_ACTION=0 退回纯提示式；动作式发不出去时也会自动退回提示式。
+readonly ACTION_NOTIFY="${CACHYOS_CRASH_ACTION:-1}"
+
+readonly STATE_DIR="$HOME/.local/state/cachyos-desktop"
+readonly AGENTS_DIR="$STATE_DIR/agents"
+readonly MUTE_FILE="$AGENTS_DIR/crash-muted.txt"
+readonly LAST_CRASH_FILE="$AGENTS_DIR/last-crash"
+
+declare -A last_notified=()
+
+usage() {
+    cat <<EOF
+Usage: $SCRIPT_NAME
+
+常驻监听 systemd-coredump，把每次崩溃记录到
+  $LAST_CRASH_FILE
+并发送一条通知。同一程序 ${DEDUPE_SECONDS} 秒内只提醒一次；已静音的程序跳过
+（见 cachyos-crash-mute）。
+
+环境变量：
+  CACHYOS_CRASH_DEDUPE_SECONDS  去重窗口秒数（默认 60）
+  CACHYOS_CRASH_IGNORE          程序名正则，匹配则永不提醒
+  CACHYOS_CRASH_ACTION          置 0 退回纯提示式通知（默认为可点击的动作式）
+EOF
+}
+
+require_jq() {
+    # jq 来自 DAILY_APP_PACKAGES，安装器运行 preflight 时还没有它，因此在这里检查
+    # 而不是把它加进 preflight 的必需命令。
+    if ! command -v jq >/dev/null 2>&1; then
+        printf '%s: 需要 jq 来解析 coredump 记录\n' "$SCRIPT_NAME" >&2
+        return 1
+    fi
+}
+
+crash_is_muted() {
+    [[ -s $MUTE_FILE ]] || return 1
+    grep -Fxq -- "$1" "$MUTE_FILE"
+}
+
+record_crash() {
+    local pid="$1"
+    local comm="$2"
+    local exe="$3"
+    local signal="$4"
+    local when="$5"
+    local temporary
+
+    install -d -m 0700 "$AGENTS_DIR"
+    temporary="$(mktemp "$AGENTS_DIR/.last-crash.XXXXXX")"
+    {
+        printf 'pid=%s\n' "$pid"
+        printf 'comm=%s\n' "$comm"
+        printf 'exe=%s\n' "$exe"
+        printf 'signal=%s\n' "$signal"
+        printf 'time=%s\n' "$when"
+    } > "$temporary"
+    mv -- "$temporary" "$LAST_CRASH_FILE"
+}
+
+# shell 持有 org.freedesktop.Notifications，shell 崩溃会把通知服务一起带走，此时发出的
+# 通知会丢失——而最该送达的那条恰恰最可能是它。所以先等 DMS 回来。
+wait_for_notifier() {
+    command -v systemctl >/dev/null 2>&1 || return 0
+    for _ in 1 2 3 4 5; do
+        systemctl --user is-active --quiet dms.service 2>/dev/null && return 0
+        sleep 1
+    done
+    return 0
+}
+
+send_notification() {
+    local pid="$1"
+    local comm="$2"
+    local summary="进程崩溃：$comm"
+    local body="点击诊断，或执行 cachyos-agent-crash --latest"
+
+    wait_for_notifier
+
+    # 整个通知过程放到后台：动作式通知 `-w` 会一直等到用户处理，若同步执行，用户还没点
+    # 的这段时间里发生的崩溃都不会被记录——正是最需要记录的时候。子 shell 里不能再用
+    # local，因此下面的变量都是子 shell 自己的。
+    (
+        if [[ $ACTION_NOTIFY == 1 ]]; then
+            # -t 0 表示不自动过期：崩溃提示要留到用户处理，默认的 10 秒太容易错过
+            #（已实测 DMS 接受 0）。
+            if action="$(notify-send --urgency=critical -t 0 -A diagnose="用 AI 诊断" -w "$summary" "$body" 2>/dev/null)"; then
+                if [[ $action == "diagnose" ]]; then
+                    cachyos-agent-crash "$pid" >/dev/null 2>&1 || true
+                fi
+                exit 0
+            fi
+            # 动作式发不出去（例如没有通知服务）就退回提示式，别让这次崩溃悄悄消失。
+        fi
+
+        # 崩溃详情以独立 argv 传给处理命令，绝不拼接进命令行：进程名是攻击者可控的。
+        notify-send --urgency=critical -t 0 "$summary" "$body" 2>/dev/null && exit 0
+        if command -v dms >/dev/null 2>&1; then
+            dms notify "$summary" "$body" 2>/dev/null && exit 0
+        fi
+    ) &
+
+    return 0
+}
+
+handle_entry() {
+    local entry="$1"
+    local pid=""
+    local comm=""
+    local exe=""
+    local signal=""
+    local when=""
+    local now
+    local previous
+
+    # IFS 必须是单个制表符：默认 IFS 会把空字段（例如缺失的 COREDUMP_EXE）折叠掉，
+    # 后面的列会整体错位。jq 失败（残缺记录）就跳过，不能让常驻进程退出。
+    IFS=$'\t' read -r pid comm exe signal < <(
+        jq -r '[
+            (.COREDUMP_PID // ""),
+            (.COREDUMP_COMM // ""),
+            (.COREDUMP_EXE // ""),
+            (.COREDUMP_SIGNAL // "")
+        ] | @tsv' <<<"$entry" 2>/dev/null
+    ) || return 0
+
+    [[ -n $comm ]] || return 0
+
+    if [[ -n $IGNORE_PATTERN ]] && [[ $comm =~ $IGNORE_PATTERN ]]; then
+        return 0
+    fi
+    if crash_is_muted "$comm"; then
+        return 0
+    fi
+
+    now="$(date +%s)"
+    previous="${last_notified[$comm]:-0}"
+    if ((now - previous < DEDUPE_SECONDS)); then
+        return 0
+    fi
+    last_notified["$comm"]="$now"
+
+    when="$(date '+%Y-%m-%d %H:%M:%S')"
+    record_crash "$pid" "$comm" "$exe" "$signal" "$when"
+    send_notification "$pid" "$comm"
+}
+
+watch() {
+    local entry
+
+    require_jq || exit 1
+
+    # 进程替换而非管道：管道会把 while 放进子 shell，去重表会随之丢失。
+    # 外层循环让 journalctl 因日志轮转退出后能自动重连。
+    while true; do
+        while IFS= read -r entry; do
+            handle_entry "$entry" || true
+        done < <(journalctl -f -n 0 -o json "MESSAGE_ID=$COREDUMP_MESSAGE_ID" 2>/dev/null)
+        sleep 2
+    done
+}
+
+case "${1:-}" in
+    -h|--help)
+        usage
+        exit 0
+        ;;
+    "")
+        watch
+        ;;
+    *)
+        printf '%s: 未知参数 %s\n' "$SCRIPT_NAME" "$1" >&2
+        usage >&2
+        exit 2
+        ;;
+esac

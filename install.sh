@@ -445,6 +445,7 @@ install_desktop_assets() {
         "$HOME/.config/niri/dms" \
         "$HOME/.config/niri-sidebar" \
         "$HOME/.config/satty" \
+        "$HOME/.config/systemd/user" \
         "$HOME/.config/Thunar" \
         "$HOME/.config/waybar" \
         "$HOME/.config/waycorner" \
@@ -481,6 +482,11 @@ install_desktop_assets() {
     run install -m 0644 "$SCRIPT_DIR/assets/waycorner/config.toml" "$HOME/.config/waycorner/config.toml"
     run install -m 0644 "$SCRIPT_DIR/assets/waypaper/config.ini" "$HOME/.config/waypaper/config.ini"
 
+    # manifest 只驱动 cachyos-config 的运行时刷新，安装期不读它；$HOME 下的文件必须在这里
+    # 逐个显式安装，否则 verify.sh 的 manifest 循环会因为文件不存在而 FAIL。
+    run install -m 0644 "$SCRIPT_DIR/assets/systemd/user/cachyos-crash-watch.service" \
+        "$HOME/.config/systemd/user/cachyos-crash-watch.service"
+
     if [[ ! -e "$HOME/.config/kitty/kitty.conf" ]]; then
         if [[ "$DRY_RUN" == true ]]; then
             print_command sh -c "printf '%s\\n' 'include cachyos-font.conf' > '$HOME/.config/kitty/kitty.conf'"
@@ -512,6 +518,25 @@ install_desktop_assets() {
         run sudo install -D -o root -g root -m 0644 "$source_asset" "/usr/local/share/cachyos-desktop/assets/$relative_asset"
     done < <(find "$SCRIPT_DIR/assets" -type f -print | sort)
     run sudo install -o root -g root -m 0644 "$SCRIPT_DIR/assets/config-manifest.tsv" /usr/local/share/cachyos-desktop/config-manifest.tsv
+}
+
+install_agent_skills() {
+    # 技能软链是用户态操作，不需要 sudo。安装时大多数 harness 目录还不存在（要等对应
+    # CLI 首次运行才会出现），所以这里只是尽力而为；cachyos-agent 启动前还会按 harness
+    # 再同步一次，那才是真正可靠的时机。
+    if [[ "$DRY_RUN" == true ]]; then
+        print_command /usr/local/bin/cachyos-agent-skills
+        return 0
+    fi
+
+    if [[ ! -x /usr/local/bin/cachyos-agent-skills ]]; then
+        warn "cachyos-agent-skills 未安装；跳过 agent 技能软链"
+        return 0
+    fi
+
+    if ! /usr/local/bin/cachyos-agent-skills; then
+        warn "agent 技能软链未完全建立；稍后可手动运行 cachyos-agent-skills"
+    fi
 }
 
 sync_ai_configs() {
@@ -650,6 +675,7 @@ post_install() {
     if [[ "$DRY_RUN" == true ]]; then
         print_command systemctl --user daemon-reload
         print_command systemctl --user add-wants niri.service dms.service
+        print_command systemctl --user enable --now cachyos-crash-watch.service
         return 0
     fi
 
@@ -657,6 +683,12 @@ post_install() {
     if ! systemctl --user add-wants niri.service dms.service; then
         warn "could not bind dms.service to niri.service; run this after logging in:"
         warn "  systemctl --user add-wants niri.service dms.service"
+    fi
+
+    # 崩溃监听与 niri 会话同生命周期（unit 里 WantedBy=niri.service，与上面的 dms 一致）。
+    if ! systemctl --user enable --now cachyos-crash-watch.service; then
+        warn "could not start cachyos-crash-watch.service; run this after logging in:"
+        warn "  systemctl --user enable --now cachyos-crash-watch.service"
     fi
 }
 
@@ -690,6 +722,7 @@ main() {
     install_niri_dms
     remove_blocked_brand_components
     install_desktop_assets
+    install_agent_skills
     configure_dms_settings
     sync_ai_configs
     post_install
@@ -701,7 +734,7 @@ main() {
 后续步骤：
   1. 在方便时重启，并在 Ly 中选择 Niri 会话。
   2. 至少退出并重新登录一次，使 Fish、Fcitx5、libvirt 和 i2c 组权限生效。
-  3. 首次进入 Niri 后会在后台初始化 Firefox、Code 和 Wine。
+  3. 首次进入 Niri 后会在后台初始化 Firefox、Code、Wine 和 agent 技能。
   4. 执行：./verify.sh
   5. 在 Niri 中执行：dms doctor
   6. 执行：cachyos-lock-doctor

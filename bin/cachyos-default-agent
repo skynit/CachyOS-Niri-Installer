@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+readonly SCRIPT_NAME="${0##*/}"
+readonly SHARE_DIR="${CACHYOS_DESKTOP_SHARE_DIR:-/usr/local/share/cachyos-desktop}"
+readonly AGENT_FILE="$HOME/.config/cachyos-desktop/agent"
+
+# 先赋值再 readonly：readonly 会掩盖命令替换的失败，而这里失败会让后续 $SELF_DIR/...
+# 静默指向根目录。
+SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SELF_DIR
+
+agent_lib="$SHARE_DIR/assets/lib/agent.sh"
+if [[ ! -r $agent_lib ]]; then
+    agent_lib="$SELF_DIR/../assets/lib/agent.sh"
+fi
+# shellcheck source=assets/lib/agent.sh
+source "$agent_lib" || {
+    printf '找不到 agent 表：%s\n' "$agent_lib" >&2
+    exit 1
+}
+
+usage() {
+    cat <<EOF
+Usage: $SCRIPT_NAME [<agent>]
+
+不带参数时打印当前默认 agent；尚未设置则不输出任何内容并退出 0。
+带参数时把它设为默认 agent。
+
+支持的 agent: $(cachyos_agent_supported | tr '\n' ' ')
+EOF
+}
+
+main() {
+    if (($# == 0)); then
+        # 未设置时静默：本项目不为用户选边，菜单与脚本据此判断"尚未选择"。
+        [[ -r $AGENT_FILE ]] || return 0
+
+        local current
+        IFS= read -r current < "$AGENT_FILE" || true
+        if [[ -n $current ]]; then
+            printf '%s\n' "$current"
+        fi
+        return 0
+    fi
+
+    if (($# > 1)); then
+        usage >&2
+        return 2
+    fi
+
+    local agent="$1"
+
+    if ! cachyos_agent_supported | grep -qx -- "$agent"; then
+        printf '不支持的 agent：%s\n支持的 agent: %s\n' "$agent" "$(cachyos_agent_supported | tr '\n' ' ')" >&2
+        return 2
+    fi
+
+    # 本项目不替用户装 agent，所以选一个不存在的命令没有意义，直接拒绝。
+    if ! command -v "$agent" >/dev/null 2>&1; then
+        printf '找不到命令 %s；先安装它再设为默认 agent。\n' "$agent" >&2
+        return 1
+    fi
+
+    install -d -m 0700 "$(dirname -- "$AGENT_FILE")"
+    temporary_file="$(mktemp "$(dirname -- "$AGENT_FILE")/.agent.XXXXXX")"
+    trap 'rm -f -- "$temporary_file"' EXIT
+    printf '%s\n' "$agent" > "$temporary_file"
+    mv -- "$temporary_file" "$AGENT_FILE"
+    trap - EXIT
+
+    printf '%s\n' "$agent"
+}
+
+main "$@"

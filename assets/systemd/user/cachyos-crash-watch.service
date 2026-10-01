@@ -1,0 +1,13 @@
+[Unit]
+Description=Watch systemd-coredump and offer an AI diagnosis
+Documentation=man:coredumpctl(1) man:systemd.journal-fields(7)
+After=dms.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/cachyos-crash-watch
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=niri.service

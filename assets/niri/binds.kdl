@@ -24,10 +24,12 @@ binds {
     Mod+Slash hotkey-overlay-title="临时终端 Quick Terminal" {spawn "kitty" "--single-instance" "--class" "quickterminal";}
     //打开浏览器
     Mod+B hotkey-overlay-title="浏览器 Browser" { spawn "firefox"; }
-    //opencode ai助手
-    Mod+Alt+O hotkey-overlay-title="AI助手 opencode agent" { spawn "kitty" "--class" "opencode" "-e" "opencode"; }
+    //opencode ai助手（cachyos-agent 负责带上无人值守旗标与统一的窗口 class）
+    Mod+Alt+O hotkey-overlay-title="AI助手 opencode agent" { spawn "cachyos-agent" "opencode"; }
     //claude cli
-    Mod+Alt+C hotkey-overlay-title="AI助手 claude cli" { spawn "kitty" "--class" "claude" "-e" "claude"; }
+    Mod+Alt+C hotkey-overlay-title="AI助手 claude cli" { spawn "cachyos-agent" "claude"; }
+    //默认 AI agent：已设置就直接启动，还没有默认值时弹出选择器
+    Mod+grave hotkey-overlay-title="AI agent" { spawn "cachyos-agent"; }
     //打开obsidian笔记
     Mod+Alt+B hotkey-overlay-title="Obsidian 笔记" { spawn "obsidian"; }
 

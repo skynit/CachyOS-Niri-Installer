@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+readonly SCRIPT_NAME="${0##*/}"
+readonly SHARE_DIR="${CACHYOS_DESKTOP_SHARE_DIR:-/usr/local/share/cachyos-desktop}"
+readonly AGENT_FILE="$HOME/.config/cachyos-desktop/agent"
+
+# 先赋值再 readonly：readonly 会掩盖命令替换的失败，而这里失败会让后续 $SELF_DIR/...
+# 静默指向根目录。
+SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SELF_DIR
+
+# agent 表来自随包资源；直接从仓库运行时回落到仓库内的副本，便于开发与 --dry-run。
+agent_lib="$SHARE_DIR/assets/lib/agent.sh"
+if [[ ! -r $agent_lib ]]; then
+    agent_lib="$SELF_DIR/../assets/lib/agent.sh"
+fi
+# shellcheck source=assets/lib/agent.sh
+source "$agent_lib" || {
+    printf '找不到 agent 表：%s\n' "$agent_lib" >&2
+    exit 1
+}
+
+usage() {
+    cat <<EOF
+Usage: $SCRIPT_NAME [options] [<agent>]
+
+启动 AI 编程 agent，并自动带上它的无人值守旗标。
+
+Options:
+  --inline          在当前终端直接运行（默认另开 Kitty 窗口）
+  --pick            强制弹出 fzf 选择器并记住选择
+  --list            列出支持的 agent
+  --validate <id>   ID 受支持时退出 0
+  --prompt <text>   带一段 prompt 启动
+  -h, --help        显示本帮助
+
+不带参数时启动默认 agent；还没有默认值时弹选择器，而不是报错。
+
+支持的 agent: $(cachyos_agent_supported | tr '\n' ' ')
+EOF
+}
+
+# 未安装时回落到同目录的兄弟命令，使仓库内直接运行也可用。
+sibling_command() {
+    local name="$1"
+    shift
+
+    if command -v "$name" >/dev/null 2>&1; then
+        "$name" "$@"
+    elif [[ -x $SELF_DIR/$name ]]; then
+        "$SELF_DIR/$name" "$@"
+    else
+        return 127
+    fi
+}
+
+read_default_agent() {
+    [[ -r $AGENT_FILE ]] || return 1
+
+    local value
+    IFS= read -r value < "$AGENT_FILE" || true
+    [[ -n $value ]] || return 1
+    printf '%s\n' "$value"
+}
+
+pick_agent() {
+    local chosen
+    local picker_command
+
+    if command -v cachyos-agent >/dev/null 2>&1; then
+        picker_command=cachyos-agent
+    else
+        printf -v picker_command '%q' "$SELF_DIR/cachyos-agent"
+    fi
+
+    # 选择器只显示名称，取回的仍是 id。
+    if [[ -t 0 && -t 1 ]]; then
+        chosen="$(cachyos_agent_list_display | fzf --delimiter='\t' --with-nth=2 --prompt='默认 AI agent> ' --reverse | cut -f1)"
+    else
+        chosen="$(kitty --class cachyos-agent-pick sh -lc \
+            "$picker_command --list | fzf --delimiter='\t' --with-nth=2 --prompt='默认 AI agent> ' --reverse | cut -f1")"
+    fi
+
+    [[ -n $chosen ]] || return 1
+
+    if ! sibling_command cachyos-default-agent "$chosen" >/dev/null; then
+        printf '无法保存默认 agent：cachyos-default-agent 不可用。\n' >&2
+        return 1
+    fi
+
+    printf '%s\n' "$chosen"
+}
+
+launch() {
+    local agent="$1"
+    local prompt="$2"
+    local inline="$3"
+    local -a command
+
+    if ! cachyos_agent_supported | grep -qx -- "$agent"; then
+        printf '不支持的 agent：%s\n支持的 agent: %s\n' "$agent" "$(cachyos_agent_supported | tr '\n' ' ')" >&2
+        return 2
+    fi
+
+    if ! command -v "$agent" >/dev/null 2>&1; then
+        printf '找不到命令 %s。先安装它，或用 %s --pick 换一个 agent。\n' "$agent" "$SCRIPT_NAME" >&2
+        return 1
+    fi
+
+    # 最佳努力地同步技能软链：用户真正运行某个 harness 的这一刻，它的技能目录才
+    # 确实存在（安装时往往还没有）。失败不影响启动。
+    sibling_command cachyos-agent-skills --quiet --harness "$agent" || true
+
+    mapfile -t command < <(cachyos_agent_command "$agent" "$prompt")
+
+    # agent 不记忆 $HOME 的信任，从家目录启动会让它每次都重新确认，因此改到工作目录。
+    if [[ $PWD == "$HOME" && -d $HOME/Work ]]; then
+        cd "$HOME/Work"
+    fi
+
+    if [[ $inline == true ]]; then
+        exec "${command[@]}"
+    fi
+    exec kitty --class "$CACHYOS_AGENT_WINDOW_CLASS" -e "${command[@]}"
+}
+
+main() {
+    local inline=false
+    local pick=false
+    local prompt=""
+    local agent=""
+    local mode=launch
+
+    while (($# > 0)); do
+        case "$1" in
+            --inline)
+                inline=true
+                shift
+                ;;
+            --pick)
+                pick=true
+                shift
+                ;;
+            --list)
+                mode=list
+                shift
+                ;;
+            --validate)
+                (($# >= 2)) || { usage >&2; return 2; }
+                mode=validate
+                agent="$2"
+                shift 2
+                ;;
+            --prompt)
+                (($# >= 2)) || { usage >&2; return 2; }
+                prompt="$2"
+                shift 2
+                ;;
+            -h|--help)
+                usage
+                return 0
+                ;;
+            -*)
+                printf '未知选项：%s\n' "$1" >&2
+                return 2
+                ;;
+            *)
+                if [[ -n $agent ]]; then
+                    printf '只能指定一个 agent。\n' >&2
+                    return 2
+                fi
+                agent="$1"
+                shift
+                ;;
+        esac
+    done
+
+    case "$mode" in
+        list)
+            # 未安装的 agent 照样列出，但标注出来，选择时心里有数。
+            local id
+            local name
+            local mark
+            while IFS=$'\t' read -r id name; do
+                mark=""
+                command -v "$id" >/dev/null 2>&1 || mark="  (未安装)"
+                printf '%s\t%s%s\n' "$id" "$name" "$mark"
+            done < <(cachyos_agent_list_display)
+            return 0
+            ;;
+        validate)
+            if cachyos_agent_supported | grep -qx -- "$agent"; then
+                return 0
+            fi
+            return 1
+            ;;
+    esac
+
+    if [[ -z $agent ]]; then
+        if [[ $pick == true ]] || ! agent="$(read_default_agent)"; then
+            # --pick 强制弹出选择器；没有默认值时也走这里——对一个启动器来说，
+            # 询问比报错有用，快捷键因此可以直接不带参数调用。
+            if ! agent="$(pick_agent)"; then
+                printf '没有选择 agent。\n' >&2
+                return 1
+            fi
+        fi
+    fi
+
+    launch "$agent" "$prompt" "$inline"
+}
+
+main "$@"

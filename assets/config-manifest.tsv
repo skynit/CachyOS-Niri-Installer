@@ -14,3 +14,4 @@ waybar/bottom.jsonc	.config/waybar/bottom.jsonc
 waybar/style.css	.config/waybar/style.css
 waycorner/config.toml	.config/waycorner/config.toml
 waypaper/config.ini	.config/waypaper/config.ini
+systemd/user/cachyos-crash-watch.service	.config/systemd/user/cachyos-crash-watch.service

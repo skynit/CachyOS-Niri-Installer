@@ -388,6 +388,46 @@ check_neutral_install() {
     fi
 }
 
+check_ai_agent_stack() {
+    local share_dir="${CACHYOS_DESKTOP_SHARE_DIR:-/usr/local/share/cachyos-desktop}"
+    local skill_root="$share_dir/assets/agent-skills"
+    local skill
+    local harness_dir
+    local link
+
+    check_file "$share_dir/assets/lib/agent.sh"
+    for skill in cachyos diagnose-crash; do
+        check_file "$skill_root/$skill/SKILL.md"
+    done
+
+    # 快捷键必须仍然走 cachyos-agent，否则无人值守旗标和统一窗口 class 会失效。
+    if grep -Fq 'spawn "cachyos-agent"' "$SCRIPT_DIR/assets/niri/binds.kdl"; then
+        pass "Niri keybindings launch agents through cachyos-agent"
+    else
+        fail "Niri keybindings no longer reference cachyos-agent"
+    fi
+
+    # 技能软链只在对应 harness 目录存在时才有意义；目录不存在是正常的，不算失败。
+    for harness_dir in .claude/skills .codex/skills; do
+        [[ -d "$HOME/$harness_dir" ]] || continue
+        for skill in cachyos diagnose-crash; do
+            link="$HOME/$harness_dir/$skill"
+            if [[ -L "$link" && "$(readlink -f "$link")" == "$skill_root/$skill" ]]; then
+                pass "agent skill symlink is current: $harness_dir/$skill"
+            else
+                fail "agent skill symlink is missing or stale: $harness_dir/$skill (run cachyos-agent-skills)"
+            fi
+        done
+    done
+
+    # 崩溃监听跟随 niri 会话；安装时用户管理器可能不可达，所以只警告。
+    if systemctl --user is-enabled --quiet cachyos-crash-watch.service 2>/dev/null; then
+        pass "cachyos-crash-watch.service is enabled"
+    else
+        warn "cachyos-crash-watch.service is not enabled (run: systemctl --user enable --now cachyos-crash-watch.service)"
+    fi
+}
+
 check_lock_screen() {
     local command_name
     local settings_file="$HOME/.config/DankMaterialShell/settings.json"
@@ -468,6 +508,7 @@ main() {
     check_hardware
     check_applications
     check_desktop_extras
+    check_ai_agent_stack
     check_lock_screen
     check_neutral_install
 

@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+readonly SCRIPT_NAME="${0##*/}"
+readonly SHARE_DIR="${CACHYOS_DESKTOP_SHARE_DIR:-/usr/local/share/cachyos-desktop}"
+
+# 先赋值再 readonly：readonly 会掩盖命令替换的失败，而这里失败会让后续 $SELF_DIR/...
+# 静默指向根目录。
+SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SELF_DIR
+
+# 随包资源；从仓库直接运行时回落到仓库内的副本。
+ASSET_DIR="$SHARE_DIR/assets"
+if [[ ! -d $ASSET_DIR/agent-skills ]]; then
+    ASSET_DIR="$SELF_DIR/../assets"
+fi
+
+agent_lib="$SHARE_DIR/assets/lib/agent.sh"
+if [[ ! -r $agent_lib ]]; then
+    agent_lib="$SELF_DIR/../assets/lib/agent.sh"
+fi
+# shellcheck source=assets/lib/agent.sh
+source "$agent_lib" || {
+    printf '找不到 agent 表：%s\n' "$agent_lib" >&2
+    exit 1
+}
+
+usage() {
+    cat <<EOF
+Usage: $SCRIPT_NAME [--quiet] [--harness <agent>]
+
+把本项目的 agent 技能软链到各 harness 的技能目录。
+
+只为**已存在**的目录建立软链，绝不创建 harness 目录；重复执行是幂等的。
+用软链而非拷贝，因此重跑 ./install.sh 更新资源后立即生效。
+
+Options:
+  --quiet             只在出错时输出
+  --harness <agent>   只处理该 agent 的技能目录
+  -h, --help          显示本帮助
+EOF
+}
+
+# 技能名就是 assets/agent-skills/ 下的目录名。
+skill_names() {
+    local path
+
+    for path in "$ASSET_DIR"/agent-skills/*/; do
+        [[ -d $path ]] || continue
+        basename -- "$path"
+    done
+}
+
+# 全部已知的 harness 技能目录，$HOME 相对。
+known_skill_relpaths() {
+    printf '%s\n' \
+        '.agents/skills' \
+        '.claude/skills' \
+        '.codex/skills' \
+        '.gemini/config/skills' \
+        '.pi/agent/skills' \
+        '.hermes/skills' \
+        '.cc-switch/skills'
+
+    local profile
+    for profile in "$HOME"/.hermes/profiles/*/skills; do
+        [[ -d $profile ]] || continue
+        printf '%s\n' "${profile#"$HOME"/}"
+    done
+}
+
+link_into() {
+    local directory="$1"
+    local skill
+    local count=0
+
+    if [[ ! -d $directory ]]; then
+        if [[ $quiet == false ]]; then
+            printf '跳过（目录不存在）  %s\n' "${directory#"$HOME"/}"
+        fi
+        return 0
+    fi
+
+    while IFS= read -r skill; do
+        ln -sfn "$ASSET_DIR/agent-skills/$skill" "$directory/$skill"
+        count=$((count + 1))
+    done < <(skill_names)
+
+    if [[ $quiet == false ]]; then
+        printf '已链接 %d 个技能到 %s\n' "$count" "${directory#"$HOME"/}"
+    fi
+}
+
+main() {
+    local quiet=false
+    local harness=""
+    local relpath
+    local relpaths
+
+    while (($# > 0)); do
+        case "$1" in
+            --quiet)
+                quiet=true
+                shift
+                ;;
+            --harness)
+                (($# >= 2)) || { usage >&2; return 2; }
+                harness="$2"
+                shift 2
+                ;;
+            -h|--help)
+                usage
+                return 0
+                ;;
+            *)
+                printf '未知选项：%s\n' "$1" >&2
+                return 2
+                ;;
+        esac
+    done
+
+    if [[ ! -d $ASSET_DIR/agent-skills ]]; then
+        printf '找不到技能资源目录：%s\n' "$ASSET_DIR/agent-skills" >&2
+        return 1
+    fi
+
+    if [[ -n $harness ]]; then
+        if ! relpaths="$(cachyos_agent_skill_relpaths "$harness")"; then
+            printf '不支持的 agent：%s\n' "$harness" >&2
+            return 2
+        fi
+        while IFS= read -r relpath; do
+            [[ -n $relpath ]] || continue
+            link_into "$HOME/$relpath"
+        done <<< "$relpaths"
+        return 0
+    fi
+
+    while IFS= read -r relpath; do
+        [[ -n $relpath ]] || continue
+        link_into "$HOME/$relpath"
+    done < <(known_skill_relpaths)
+}
+
+main "$@"

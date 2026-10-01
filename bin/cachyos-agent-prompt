@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+readonly SCRIPT_NAME="${0##*/}"
+
+# 先赋值再 readonly：readonly 会掩盖命令替换的失败，而这里失败会让后续 $SELF_DIR/...
+# 静默指向根目录。
+SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SELF_DIR
+
+usage() {
+    cat <<EOF
+Usage: $SCRIPT_NAME [--inline] <prompt...>
+
+用一段 prompt 启动默认 AI agent。
+
+Options:
+  --inline    在当前终端直接运行（默认另开 Kitty 窗口）
+  -h, --help  显示本帮助
+EOF
+}
+
+inline=()
+if [[ ${1:-} == "--inline" ]]; then
+    inline=(--inline)
+    shift
+fi
+
+case "${1:-}" in
+    -h|--help)
+        usage
+        exit 0
+        ;;
+esac
+
+if (($# == 0)); then
+    usage >&2
+    exit 2
+fi
+
+# prompt 单独成一条命令：若挂在 cachyos-agent 下，裸 prompt 会遮蔽它的子选项。
+if command -v cachyos-agent >/dev/null 2>&1; then
+    exec cachyos-agent "${inline[@]}" --prompt "$*"
+fi
+exec "$SELF_DIR/cachyos-agent" "${inline[@]}" --prompt "$*"
