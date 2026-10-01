@@ -9,22 +9,26 @@
 | `~/.config/niri/cachyos-extras.kdl` | 安装器 `assets/niri/cachyos-extras.kdl` | 窗口规则与项目扩展 |
 | `~/.config/niri/dms/{colors,layout,alttab,outputs,cursor,wpblur}.kdl` | **DMS 生成** | 动态配色、布局、光标、模糊；不要手改，会被 DMS 重写 |
 
-主配置通过 `include optional=true` 引入以上文件，所以任何一个文件缺失都不会让 Niri
-启动失败：
+主配置引入以上文件，但**只有 DMS 生成的那批是 `optional=true`**，缺了不影响启动：
 
 ```
 include optional=true "dms/colors.kdl"
 ...
-include "cachyos-extras.kdl"
+include "cachyos-extras.kdl"      # 没有 optional：这个文件必须存在
 ```
+
+`cachyos-extras.kdl` 是**必需**的：删掉或改名会让 Niri 直接启动失败
+（`niri validate` 会报 `failed to read included config`）。托管文件都通过
+`cachyos-config update` 刷新，不要手工移走。
 
 ## 关键事实
 
 - **`Mod` 与 `Super` 是同一个键**，两种拼写在 `binds.kdl` 里等价。
 - 26 个字母键**全部已被占用**。想加两键快捷键只能用非字母键；`Mod+X` 也不行
-  （`Super+X` 是 DMS 电源菜单）。可用的空闲键包括
-  `` Mod+grave ``、`Mod+BackSpace`、`Mod+Delete`、`Mod+Backslash`、`Mod+Insert`、
-  `Mod+F4/F6/F7/F9/F10/F11/F12`。
+  （`Super+X` 是 DMS 电源菜单）。实测空闲的非字母键：`Mod+BackSpace`、`Mod+Delete`、
+  `Mod+Backslash`、`Mod+Insert`、`Mod+F4/F6/F7/F9/F10/F11/F12`。
+  注意 `Mod+grave` **已被本项目占用**为"启动默认 AI agent"，不要再绑定它。
+- 已占用的键不要重复绑定：`niri validate` 会直接报 `duplicate keybind`。
 - 快捷键绑定格式：
 
   ```kdl

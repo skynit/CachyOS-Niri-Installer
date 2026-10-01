@@ -28,6 +28,11 @@ readonly LAST_CRASH_FILE="$AGENTS_DIR/last-crash"
 
 declare -A last_notified=()
 
+# 每个程序最多保留一个"待用户处理"的通知。动作式通知会一直等到用户处理（-t 0 不自动
+# 过期），若每次都新起一个，崩溃循环会让进程数无上界增长——每组等待占用 3 个进程
+#（后台子 shell + 命令替换 + notify-send -w）。键为程序名，值为该组等待进程的 PID。
+declare -A notification_pids=()
+
 usage() {
     cat <<EOF
 Usage: $SCRIPT_NAME
@@ -89,6 +94,14 @@ wait_for_notifier() {
     return 0
 }
 
+notification_is_pending() {
+    local comm="$1"
+    local pid="${notification_pids[$comm]:-}"
+
+    [[ -n $pid ]] || return 1
+    kill -0 "$pid" 2>/dev/null
+}
+
 send_notification() {
     local pid="$1"
     local comm="$2"
@@ -96,6 +109,11 @@ send_notification() {
     local body="点击诊断，或执行 cachyos-agent-crash --latest"
 
     wait_for_notifier
+
+    # 这个程序已经有一条还没被处理的通知：不再发新的，也不新起等待进程。
+    if notification_is_pending "$comm"; then
+        return 0
+    fi
 
     # 整个通知过程放到后台：动作式通知 `-w` 会一直等到用户处理，若同步执行，用户还没点
     # 的这段时间里发生的崩溃都不会被记录——正是最需要记录的时候。子 shell 里不能再用
@@ -119,6 +137,7 @@ send_notification() {
             dms notify "$summary" "$body" 2>/dev/null && exit 0
         fi
     ) &
+    notification_pids["$comm"]=$!
 
     return 0
 }

@@ -328,7 +328,7 @@ check_desktop_extras() {
     fi
 
     local setup_marker
-    for setup_marker in cachyos-firefox-setup-v1 cachyos-code-theme-v1 cachyos-wine-setup-v1; do
+    for setup_marker in cachyos-firefox-setup-v1 cachyos-code-theme-v1 cachyos-wine-setup-v1 cachyos-agent-skills-v1; do
         if [[ -e "$HOME/.local/state/cachyos-desktop/$setup_marker" ]]; then
             pass "first-login initializer completed: $setup_marker"
         else
@@ -400,12 +400,24 @@ check_ai_agent_stack() {
         check_file "$skill_root/$skill/SKILL.md"
     done
 
-    # 快捷键必须仍然走 cachyos-agent，否则无人值守旗标和统一窗口 class 会失效。
-    if grep -Fq 'spawn "cachyos-agent"' "$SCRIPT_DIR/assets/niri/binds.kdl"; then
-        pass "Niri keybindings launch agents through cachyos-agent"
-    else
-        fail "Niri keybindings no longer reference cachyos-agent"
-    fi
+    # 三条快捷键必须逐条走 cachyos-agent，否则无人值守旗标和统一窗口 class 会失效。
+    # 只 grep 一次"存在"是不够的：删掉其中两条、只留一条也会通过。
+    # 格式为「显示名|正则」；正则里 Mod+ 的加号必须转义，grep -E 下它是量词。
+    local -a agent_bindings=(
+        'Mod+Alt+O|Mod\+Alt\+O[[:space:]].*spawn "cachyos-agent" "opencode"'
+        'Mod+Alt+C|Mod\+Alt\+C[[:space:]].*spawn "cachyos-agent" "claude"'
+        'Mod+grave|Mod\+grave[[:space:]].*spawn "cachyos-agent"'
+    )
+    local binding key pattern
+    for binding in "${agent_bindings[@]}"; do
+        key="${binding%%|*}"
+        pattern="${binding#*|}"
+        if grep -Eq "^[[:space:]]*$pattern" "$SCRIPT_DIR/assets/niri/binds.kdl"; then
+            pass "Niri keybinding launches an agent through cachyos-agent: $key"
+        else
+            fail "Niri keybinding is missing or bypasses cachyos-agent: $key"
+        fi
+    done
 
     # 技能软链只在对应 harness 目录存在时才有意义；目录不存在是正常的，不算失败。
     for harness_dir in .claude/skills .codex/skills; do

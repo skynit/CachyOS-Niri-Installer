@@ -615,7 +615,7 @@ DSH 沙箱可访问会话 D-Bus（`/run/user/1000/bus`）与 `systemctl --user`�
 | 技能软链 | 真机建立 6 条（`.claude/skills`、`.codex/skills`、`.cc-switch/skills` 各 2 条） |
 | 真实崩溃 → 记录 | 安装版 watcher 捕获 SIGSEGV，`pid/comm/exe/signal/time` 五字段正确 |
 | 真实崩溃 → 通知 | 带动作的通知发出（`notify-send` 处于等待用户处理状态） |
-| 点击处理器 | 确定性验证：`cachyos-agent-crash --latest` 生成的 argv 为 `kitty --class cachyos-agent -e codex --approve-for-me -- <prompt>`；prompt 是**单个**参数（19 个 argv），含五个事实字段与 skill 绝对路径，时间戳由 `coredumpctl` 真取出 |
+| 点击处理器 | 确定性验证：`cachyos-agent-crash --latest` 生成的 argv 为 `kitty --class cachyos-agent -e codex --approve-for-me -- <prompt>`；含五个事实字段与 skill 绝对路径，时间戳由 `coredumpctl` 真取出 |
 | systemd 服务 | `enabled` + `active`，挂载点 `niri.service.wants/cachyos-crash-watch.service`（与 `dms.service` 同处） |
 | 快捷键上线 | 部署 binds 后 niri 自动重载（journal 有 `loaded config`），`niri validate` 通过，`dms keybinds show niri` 可见 `Mod+grave → AI agent`、`Mod+Alt+O/C → cachyos-agent` |
 | `./verify.sh` | 308 passed / 2 warnings / 4 failed；**AI Agent 的 18 项检查全部 PASS** |
@@ -648,6 +648,30 @@ cp ~/.local/state/cachyos-desktop/acceptance-backup-20261001-235646/binds.kdl.li
 ```
 
 未完成：快照（`sudo snapper -c root create` 在本机报"创建快照失败"，原因未查明；已改用手动备份），以及第 2、3 项需要真实按键的验收。
+
+### 独立审核（2026-10-02）
+
+按文件维度派了三个**全新上下文**的评审（只读、要求 file:line + 实跑证据）。合并结果如下，全部已修。
+
+| # | severity | 缺陷 | 证据 | 修法 |
+| --- | --- | --- | --- | --- |
+| R1 | **高** | `cachyos_agent_command` 按**行**输出 argv，`mapfile` 按行收集 → **prompt 里任何换行都会把参数拆开**；崩溃诊断的 prompt 正是多行 heredoc，agent 会收到多余位置参数而拒绝启动 | `mapfile -t arr < <(cachyos_agent_command codex $'第一行\n第三行')` → 5 个元素（应为 3）；真机链路实测收到 12 个参数 | 库改 `printf '%s\0'`、调用方改 `mapfile -d ''`；测试改用 NUL 读取并新增**参数个数**断言（换行/竖线/制表符），且验证过"新测试跑在旧库上会失败" |
+| R2 | 中 | 每个未处理的动作式通知常驻 3 个进程且 `-t 0` 不过期 → 崩溃循环下**无上界累积**（评审现场抓到 11 组、约 33 个进程） | 评审现场进程树 | 每个程序最多一条待处理通知（`notification_pids` + `kill -0`）；实测去重关闭下连崩 5 次只留 1 组 |
+| R3 | 中 | README 把 `CACHYOS_CRASH_ACTION` 的默认值写反了（"默认只发提示，需要时设 1"），而代码默认是 1 | `README.md:367` vs `bin/cachyos-crash-watch:22` | README 改写为"默认即可点击，设 0 退回提示式" |
+| R4 | 中 | `niri.md` 称"所有 include 都是 optional，缺文件也能启动"——`config.kdl:277` 的 `cachyos-extras.kdl` **没有** optional，缺了会直接启动失败；文档同一页内自相矛盾 | 删掉该文件后 `niri validate` 报 `failed to read included config` | 文档改为"只有 DMS 生成的那批是 optional，`cachyos-extras.kdl` 必需" |
+| R5 | 中 | `niri.md` 把 `Mod+grave` 列为**空闲键**，而同一次提交已把它绑给 AI agent；照文档做会产生重复绑定（硬错误） | `niri validate` 报 `duplicate keybind` | 从空闲键列表移除并明确标注它已被占用 |
+| R6 | 中 | `commands.md` 写了不存在的 `cachyos-config windowrules`（真实子命令只有五个） | `bash bin/cachyos-config windowrules` → usage + exit 2 | 删掉该行，改为指向 `dms ipc call window-rules toggle` / `dms config windowrules` |
+| R7 | 中 | `dms.md` 把 `Super+Alt+W` / `Super+Y` 说成 Waypaper；实际两者都是 `dms ipc call dankdash wallpaper`，Waypaper 是 `Super+Ctrl+F10` | `binds.kdl:47,244` vs `cachyos-extras.kdl:32` | 改写该段并说明两条路径的关系 |
+| R8 | 低 | `verify.sh` 的 binds 检查只 grep 一次"存在"：删掉两条绑定只留一条仍 PASS | 评审反证 | 改为逐条断言 `Mod+Alt+O` / `Mod+Alt+C` / `Mod+grave`；并验证"删一条恰好 1 FAIL、改回裸 kitty 恰好 1 FAIL" |
+| R9 | 低 | `verify.sh` 的首次登录 marker 列表漏了 `cachyos-agent-skills-v1` | `bin/cachyos-post-login-setup:16` vs `verify.sh:331` | 加入该 marker |
+| R10 | 低 | `dms.md` 把 `settings`/`widget` 的方法混在一行（`widget` 没有 `dump`） | `dms ipc --help` | 拆成两行 |
+| R11 | 低 | 内部计划术语泄漏进随包文档（`（P0-3 交付）`、`见 PLAN 的 Spike A`） | `commands.md`、`README.md` | 删除这些字样 |
+| R12 | 低 | README 的 harness 目录清单漏了 `~/.hermes/profiles/*/skills` | `bin/cachyos-agent-skills:56-71` | 补上 |
+| R13 | 低 | README 说统一 class"窗口规则和主题因此能一次命中"，但仓库里没有任何这样的规则 | 全仓库 grep 无匹配 | 改写为"统一后一条规则即可覆盖（项目目前未写规则）" |
+
+**一条被评审推翻的我自己写的理由**：我原先把 `Restart=always` 的理由写成"安装时 `install` 就地替换脚本，运行中的 bash 读不到后续内容会以 0 退出"。评审实测 `install -m 0755 b.sh a.sh` 后 inode 由 8827 变 8829（**替换**而非就地截断），运行中的 bash 仍持有旧 inode 的 fd，不会因此退出——这个理由不成立。`Restart=always` 仍然保留，但理由改成真实的那条：**这个 watcher 没有合法的正常退出路径**（`watch` 是死循环，失败路径都以非 0 退出），任何一次 `exit 0` 都属意外，`on-failure` 会把它静默留在 dead 状态。
+
+**审核过程本身的教训**：派发评审时**没有禁止它们改动系统状态**。结果评审在收到约束前对真机上正在运行的 `cachyos-crash-watch.service` 执行了 `stop`，并向 journal 注入合成 coredump 条目，在你桌面上产生约 11 条假的"进程崩溃"通知；这些通知的回调又跑在**临时 HOME** 下，于是点击后弹出 fzf 选择器（找不到默认 agent）。已清理（`notifications clearAll` + 收掉等待进程 + 清掉残留 watcher），服务已恢复。**以后派发涉及本机服务的评审，约束里必须写明"不得改动系统状态"。**
 
 ## 附录 A：与 Omarchy 的对应关系
 

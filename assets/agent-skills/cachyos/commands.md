@@ -14,8 +14,8 @@ cachyos-default-agent [<agent>]  读/写默认 agent（未设置时静默）
 cachyos-agent-skills [--quiet] [--harness <agent>]
                               把 agent 技能软链到各 harness 的技能目录
 cachyos-agent-crash <pid>|--latest
-                              把一次进程崩溃交给默认 agent 诊断（P0-3 交付）
-cachyos-crash-mute [<程序> [on|off]]   按程序静默崩溃提醒（P0-3 交付）
+                              把一次进程崩溃交给默认 agent 诊断
+cachyos-crash-mute [<程序> [on|off]]   按程序静默崩溃提醒
 cachyos-ai-config-sync status|backup|sync
                               在 CC Switch 数据库与 Codex 配置之间同步 provider
 ```
@@ -31,8 +31,10 @@ cachyos-config update          用 /usr/local/share/cachyos-desktop 的版本覆
 cachyos-config migrate         先备份再覆盖（大版本升级用）
 cachyos-config protect PATH    把某个 $HOME 下的托管文件标记为用户自有
 cachyos-config unprotect PATH  取消保护
-cachyos-config windowrules     管理窗口规则
 ```
+
+窗口规则不归 `cachyos-config` 管（它的合法子命令只有上面五个）：用
+`dms ipc call window-rules toggle`，或 `dms config windowrules`（`list`/`remove`/`reorder`/`update`）。
 
 ## 系统维护
 

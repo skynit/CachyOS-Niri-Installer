@@ -11,6 +11,13 @@
 # shellcheck disable=SC2034
 CACHYOS_AGENT_WINDOW_CLASS="cachyos-agent"
 
+# cachyos_agent_command 的输出协议版本：1 = 按行分隔，2 = NUL 分隔。
+# bin/cachyos-agent 会校验它：库和命令一旦错配（例如只更新了其中一个），
+# 按行分隔的库配上按 NUL 收集的调用方会把整段 argv 当成一个命令名，
+# 报出 "exec: ...: 未找到" 这种难以定位的错误。
+# shellcheck disable=SC2034
+CACHYOS_AGENT_LIB_PROTOCOL=2
+
 # 支持的 agent id，每行一个。
 cachyos_agent_supported() {
     printf '%s\n' codex claude opencode
@@ -39,7 +46,12 @@ cachyos_agent_skill_relpaths() {
     esac
 }
 
-# 生成 argv，每行一个参数，便于调用方用 mapfile 收集、也便于单测逐字断言。
+# 生成 argv，**NUL 分隔**，调用方用
+#   mapfile -d '' -t argv < <(cachyos_agent_command ...)
+# 收集。
+#
+# 分隔符必须是 NUL 而不是换行：prompt 天然可以含换行（崩溃诊断的 prompt 就是多行
+# heredoc），按行分隔会把它拆成多个参数，agent 会收到一堆多余的位置参数而报错。
 #
 # 三个 agent 的无人值守旗标各不相同，prompt 的传法也不同：opencode 只认
 # --prompt，claude 与 codex 用位置参数，并且必须先放 --，否则以 - 开头的 prompt
@@ -71,7 +83,7 @@ cachyos_agent_command() {
         esac
     fi
 
-    printf '%s\n' "${command[@]}"
+    printf '%s\0' "${command[@]}"
 }
 
 # "id<TAB>名称" —— 给 fzf 选择器和 --list 用。

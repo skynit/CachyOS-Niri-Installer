@@ -6,7 +6,11 @@ After=dms.service
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/cachyos-crash-watch
-Restart=on-failure
+# always 而不是 on-failure：这个 watcher 没有合法的正常退出路径（watch 是死循环，
+# 所有失败路径都以非 0 退出），因此任何一次 exit 0 都属意外；on-failure 会把服务
+# 静默留在 dead 状态，always 则保证它一定会回来（连续失败仍由 systemd 的
+# StartLimit 兜住并标记 failed，不会无声空转）。
+Restart=always
 RestartSec=5
 
 [Install]

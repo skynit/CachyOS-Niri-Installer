@@ -30,7 +30,8 @@ dms ipc call <target> <method> [参数...]
 | `plugins` | `list`、`enable`、`disable`、`reload` | 插件开关 |
 | `plugin-scan` | `rescan`、`reload`、`status` | 重新扫描插件目录 |
 | `notifications` | `toggleDoNotDisturb`、`clearAll` | 通知 |
-| `settings` / `widget` | `dump`、`list` | 调试 |
+| `settings` | `dump`、`dumpSession`、`get`、`set`、`tabs` | 设置界面 |
+| `widget` | `list`、`status`、`toggle`、`reveal` | 栏位小组件（没有 `dump`） |
 
 `dms ipc call plugins list` 可以离线列出已加载插件及其状态。
 
@@ -85,7 +86,10 @@ dms auth resolve-lock --quiet
 ## 主题与动态配色
 
 - 主题颜色由 **matugen** 依据当前壁纸生成，输出到 `~/.config/niri/dms/colors.kdl` 等文件。
-- 换壁纸用 Waypaper（`Super+Alt+W` / `Super+Y`）；它会通知 DMS 重新生成配色。
+- 换壁纸走 DMS 自己的选择器：`Super+Alt+W`、`Super+Y`、`Super+Shift+F10` 都是
+  `dms ipc call dankdash wallpaper`；它换完会自动重新生成配色。
+- Waypaper 是另一条独立路径（`Super+Ctrl+F10`，并在登录时 `--restore`），
+  **不是**那两个快捷键调用的东西；它同样会通知 DMS 重新生成配色。
 - Firefox 与 VS Code 的主题分别由 `cachyos-firefox-setup`、`cachyos-code-theme` 链接到
   生成的配色。
 - 明暗模式：`dms ipc call theme toggle`。

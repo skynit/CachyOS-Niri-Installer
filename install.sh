@@ -675,7 +675,8 @@ post_install() {
     if [[ "$DRY_RUN" == true ]]; then
         print_command systemctl --user daemon-reload
         print_command systemctl --user add-wants niri.service dms.service
-        print_command systemctl --user enable --now cachyos-crash-watch.service
+        print_command systemctl --user enable cachyos-crash-watch.service
+        print_command systemctl --user restart cachyos-crash-watch.service
         return 0
     fi
 
@@ -686,9 +687,15 @@ post_install() {
     fi
 
     # 崩溃监听与 niri 会话同生命周期（unit 里 WantedBy=niri.service，与上面的 dms 一致）。
-    if ! systemctl --user enable --now cachyos-crash-watch.service; then
-        warn "could not start cachyos-crash-watch.service; run this after logging in:"
+    # 分两步且用 restart 而不是 `enable --now`：对**已在运行**的单元 `--now` 不会重启它，
+    # 于是更新后服务仍在执行被替换掉的旧脚本。
+    if ! systemctl --user enable cachyos-crash-watch.service; then
+        warn "could not enable cachyos-crash-watch.service; run this after logging in:"
         warn "  systemctl --user enable --now cachyos-crash-watch.service"
+    fi
+    if ! systemctl --user restart cachyos-crash-watch.service; then
+        warn "could not start cachyos-crash-watch.service; run this after logging in:"
+        warn "  systemctl --user restart cachyos-crash-watch.service"
     fi
 }
 

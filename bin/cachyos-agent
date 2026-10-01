@@ -22,6 +22,15 @@ source "$agent_lib" || {
     exit 1
 }
 
+# 库与命令必须来自同一次安装：argv 协议不一致时给出可执行的提示，而不是让 exec
+# 报出 "未找到" 这种难以定位的错误。
+if ((${CACHYOS_AGENT_LIB_PROTOCOL:-1} < 2)); then
+    printf '%s: agent 表版本过旧（协议 %s，需要 2）：%s\n' \
+        "$SCRIPT_NAME" "${CACHYOS_AGENT_LIB_PROTOCOL:-1}" "$agent_lib" >&2
+    printf '请重跑 ./install.sh 以同时更新 bin/ 与 assets/。\n' >&2
+    exit 1
+fi
+
 usage() {
     cat <<EOF
 Usage: $SCRIPT_NAME [options] [<agent>]
@@ -113,7 +122,8 @@ launch() {
     # 确实存在（安装时往往还没有）。失败不影响启动。
     sibling_command cachyos-agent-skills --quiet --harness "$agent" || true
 
-    mapfile -t command < <(cachyos_agent_command "$agent" "$prompt")
+    # -d ''：argv 是 NUL 分隔的，prompt 里的换行必须留在同一个参数内。
+    mapfile -d '' -t command < <(cachyos_agent_command "$agent" "$prompt")
 
     # agent 不记忆 $HOME 的信任，从家目录启动会让它每次都重新确认，因此改到工作目录。
     if [[ $PWD == "$HOME" && -d $HOME/Work ]]; then

@@ -322,7 +322,8 @@ cachyos-agent-prompt "审查这个改动"     # 带一段 prompt 启动默认 ag
 ```
 
 - 默认 agent 记在 `~/.config/cachyos-desktop/agent`。
-- 所有 agent 窗口共用 kitty class `cachyos-agent`，窗口规则和主题因此能一次命中。
+- 所有 agent 窗口共用 kitty class `cachyos-agent`；这样一条窗口规则或主题就能覆盖全部
+  agent 窗口，不必每个 agent 各写一条（项目本身目前没有为它写规则）。
   从快捷键启动会开新窗口；在终端里加 `--inline` 直接在当前终端运行。
 - 三个 agent 的 `-p`/`--help` 之类参数不会被误当成选项：`claude` 与 `codex` 的 prompt
   统一用 `--` 分隔（`opencode` 走自己的 `--prompt`）。
@@ -336,9 +337,10 @@ cachyos-agent-prompt "审查这个改动"     # 带一段 prompt 启动默认 ag
 - `diagnose-crash`：如何从 `coredumpctl` 事实判断崩溃该归因于用户配置还是上游 bug。
 
 只为**已存在**的技能目录建立软链（`~/.agents/skills`、`~/.claude/skills`、`~/.codex/skills`、
-`~/.gemini/config/skills`、`~/.pi/agent/skills`、`~/.hermes/skills`、`~/.cc-switch/skills`），
-绝不创建 harness 目录。安装时、首次登录以及每次 `cachyos-agent` 启动前各同步一次——
-最后这个时机最可靠，因为那时 harness 目录才确实存在。手动重跑：
+`~/.gemini/config/skills`、`~/.pi/agent/skills`、`~/.hermes/skills` 及每个已存在的
+`~/.hermes/profiles/*/skills`、`~/.cc-switch/skills`），绝不创建 harness 目录。
+安装时、首次登录以及每次 `cachyos-agent` 启动前各同步一次——最后这个时机最可靠，
+因为那时 harness 目录才确实存在。手动重跑：
 
 ```bash
 cachyos-agent-skills
@@ -363,9 +365,12 @@ cachyos-crash-mute SomeApp          # 不再提醒该程序
 cachyos-crash-mute SomeApp off      # 恢复提醒
 ```
 
-通知的"点击即诊断"取决于通知服务是否回发动作，默认只发提示；需要动作式通知时设
-`CACHYOS_CRASH_ACTION=1` 启动 watcher（该行为需在目标机器上实测，见 PLAN 的 Spike A）。
-静音只是不再提醒，程序该崩还是会崩。
+通知默认就是**可点击的动作式**：点通知上的「用 AI 诊断」会直接调用
+`cachyos-agent-crash <pid>`（已在真实桌面会话上验证通知服务会回发动作）。想要只提示、
+不等待点击，就设 `CACHYOS_CRASH_ACTION=0` 启动 watcher；动作式通知发不出去时也会自动
+退回提示式。静音只是不再提醒，程序该崩还是会崩。
+
+同一个程序最多保留一条待处理通知：崩溃循环不会把通知和等待进程堆起来。
 
 #### 新增一个 agent
 

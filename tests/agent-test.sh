@@ -43,9 +43,20 @@ assert_equal() {
     fi
 }
 
-# 把 argv 用 | 连接成一行，空参数也会显现，便于逐字比较。
+# 读 NUL 分隔的 argv，用 | 连接各元素。元素内部的换行原样保留，因此能看出
+# "prompt 被拆成多个参数"这类回归。
 argv_of() {
-    cachyos_agent_command "$1" "${2-}" | paste -sd'|'
+    local -a argv=()
+    mapfile -d '' -t argv < <(cachyos_agent_command "$1" "${2-}")
+    local IFS='|'
+    printf '%s' "${argv[*]}"
+}
+
+# 参数个数。元素本身含 | 时上面的字符串连接会有歧义，因此个数单独断言。
+argv_count() {
+    local -a argv=()
+    mapfile -d '' -t argv < <(cachyos_agent_command "$1" "${2-}")
+    printf '%s' "${#argv[@]}"
 }
 
 assert_equal 'codex claude opencode' "$(cachyos_agent_supported | paste -sd' ')" \
@@ -69,6 +80,23 @@ assert_equal 'codex|--approve-for-me' "$(argv_of codex)" \
     'codex 无 prompt 时使用 --approve-for-me'
 assert_equal 'codex|--approve-for-me|--|--help' "$(argv_of codex '--help')" \
     'codex 在 prompt 前插入 --'
+
+# 回归：argv 曾经按换行分隔，含换行的 prompt 会被拆成多个参数，agent 因此收到
+# 多余的位置参数而报错。崩溃诊断的 prompt 就是多行 heredoc，所以这条必须有。
+# 注意 argv 的第一个元素是程序名本身，所以个数比"旗标+prompt"多一个。
+multi_line_prompt="$(printf '第一行\n\n第三行')"
+assert_equal '4' "$(argv_count codex "$multi_line_prompt")" \
+    'codex：prompt 含换行时参数个数不变（不会被拆开）'
+assert_equal "$(printf 'codex|--approve-for-me|--|第一行\n\n第三行')" \
+    "$(argv_of codex "$multi_line_prompt")" 'codex：prompt 含换行时仍是单个参数'
+assert_equal '4' "$(argv_count opencode "$multi_line_prompt")" \
+    'opencode：prompt 含换行时参数个数不变'
+assert_equal '5' "$(argv_count claude "$multi_line_prompt")" \
+    'claude：prompt 含换行时参数个数不变'
+assert_equal '4' "$(argv_count codex 'a|b')" \
+    'prompt 含竖线时参数个数不变（连接表示法有歧义，故按个数断言）'
+assert_equal '4' "$(argv_count codex '含 制表	符')" \
+    'prompt 含制表符时参数个数不变'
 
 assert_equal '.codex/skills' "$(cachyos_agent_skill_relpaths codex)" 'codex 的技能目录'
 assert_equal '.claude/skills' "$(cachyos_agent_skill_relpaths claude)" 'claude 的技能目录'
