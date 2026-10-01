@@ -22,6 +22,10 @@ from typing import Any, Iterable, Iterator
 SCHEMA_VERSION = 1
 RECENT_DAYS = 7
 
+# 缓存格式/解析逻辑的版本。**改动任何解析或聚合逻辑都必须递增**：缓存键只看源文件的
+# (mtime, size)，源文件没变而代码变了时，旧缓存会继续给出按旧逻辑算出的数字。
+CACHE_VERSION = 2
+
 
 def cache_dir() -> Path:
     root = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache"))
@@ -36,15 +40,19 @@ def load_cache(agent: str) -> dict[str, Any]:
         with path.open(encoding="utf-8") as handle:
             data = json.load(handle)
     except (OSError, ValueError):
-        return {"files": {}}
+        return {"files": {}, "cacheVersion": CACHE_VERSION}
     if not isinstance(data, dict) or not isinstance(data.get("files"), dict):
-        return {"files": {}}
+        return {"files": {}, "cacheVersion": CACHE_VERSION}
+    if data.get("cacheVersion") != CACHE_VERSION:
+        # 逻辑变过就整体作废，避免"代码修好了、数字还是旧的"。
+        return {"files": {}, "cacheVersion": CACHE_VERSION}
     return data
 
 
 def save_cache(agent: str, cache: dict[str, Any]) -> None:
     path = cache_dir() / f"{agent}-files.json"
     temporary = path.with_suffix(".tmp")
+    cache["cacheVersion"] = CACHE_VERSION
     try:
         with temporary.open("w", encoding="utf-8") as handle:
             json.dump(cache, handle, ensure_ascii=False)

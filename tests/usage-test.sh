@@ -25,6 +25,18 @@ fail() {
     (($# >= 2)) && printf '  %s\n' "$2" >&2
     exit 1
 }
+assert_close() {
+    # 费用是浮点乘法，用容差比较；精确比较会被浮点表示坑掉。
+    local expected="$1"
+    local actual="$2"
+    local description="$3"
+    if awk -v a="$actual" -v b="$expected" 'BEGIN { d = a - b; if (d < 0) d = -d; exit !(d < 0.000001) }'; then
+        pass "$description"
+    else
+        fail "$description" "expected: [$expected] actual: [$actual]"
+    fi
+}
+
 assert_equal() {
     if [[ "$1" == "$2" ]]; then
         pass "$3"
@@ -45,6 +57,7 @@ mkdir -p "$HOME_DIR/.claude/projects/demo" "$HOME_DIR/.codex/sessions/2026/01/01
 cat > "$HOME_DIR/.claude/projects/demo/session.jsonl" <<JSONL
 {"type":"user","sessionId":"S1","timestamp":"${TODAY}T10:00:00+08:00","message":{"role":"user","content":"你好"}}
 {"type":"assistant","sessionId":"S1","timestamp":"${TODAY_TS}","message":{"model":"model-one","usage":{"input_tokens":100,"output_tokens":10,"cache_read_input_tokens":5,"cache_creation_input_tokens":1}}}
+{"type":"assistant","sessionId":"S1","timestamp":"${TODAY_TS}","message":{"model":"model-one","usage":{"input_tokens":50,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}
 {"type":"assistant","sessionId":"S1","timestamp":"${YESTERDAY_TS}","message":{"model":"model-two","usage":{"input_tokens":200,"output_tokens":20,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}
 JSONL
 
@@ -53,6 +66,7 @@ cat > "$HOME_DIR/.codex/sessions/2026/01/01/rollout-2026-01-01T00-00-00-demo.jso
 {"timestamp":"${TODAY}T11:00:00+08:00","ordinal":0,"type":"session_meta","payload":{"session_id":"C1","cwd":"/tmp","model":"gpt-test"}}
 {"timestamp":"${TODAY}T11:00:01+08:00","ordinal":1,"type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}}
 {"timestamp":"${TODAY_TS}","ordinal":2,"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":999999,"output_tokens":888888},"last_token_usage":{"input_tokens":1000,"cached_input_tokens":100,"output_tokens":50,"cache_write_input_tokens":0}}}}
+{"timestamp":"${TODAY_TS}","ordinal":2,"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":500,"cached_input_tokens":0,"output_tokens":20,"cache_write_input_tokens":0}}}}
 {"timestamp":"${YESTERDAY_TS}","ordinal":3,"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":7,"cached_input_tokens":0,"output_tokens":3,"cache_write_input_tokens":0}}}}
 JSONL
 
@@ -93,10 +107,11 @@ field() { jq -r "$1" <<<"$2"; }
 # ---- Claude ---------------------------------------------------------------
 claude="$(run_collector cachyos-agent-usage-claude --force)"
 assert_equal 'claude' "$(field '.id' "$claude")" 'claude：记录 id 正确'
-assert_equal '116' "$(field '.stats.todayTotalTokens' "$claude")" 'claude：今天的总 token = 四项之和'
-assert_equal '116' "$(field '.stats.todayTokensByModel["model-one"]' "$claude")" 'claude：按模型归属今天用量'
-assert_equal '336' "$(field '.stats.totalPrompts, (.stats.modelUsage | to_entries | map(.value.totalTokens) | add)' "$claude" | tail -1)" \
-    'claude：模型总计 = 116 + 220'
+assert_equal '171' "$(field '.stats.todayTotalTokens' "$claude")" \
+    'claude：今天的总 token 是同日多条用量的**累加**（116 + 55），不是最后一条'
+assert_equal '171' "$(field '.stats.todayTokensByModel["model-one"]' "$claude")" 'claude：按模型归属今天用量（同为累加）'
+assert_equal '391' "$(field '(.stats.modelUsage | to_entries | map(.value.totalTokens) | add)' "$claude")" \
+    'claude：模型总计 = 171 + 220'
 assert_equal '1' "$(field '.stats.totalSessions' "$claude")" 'claude：会话数按 sessionId 去重'
 assert_equal '1' "$(field '.stats.totalPrompts' "$claude")" 'claude：user 消息计为 1 个 prompt'
 
@@ -107,8 +122,8 @@ assert_equal "$(field '.stats' "$claude")" "$(field '.stats' "$claude_cached")" 
 # ---- Codex ----------------------------------------------------------------
 codex="$(run_collector cachyos-agent-usage-codex --force)"
 assert_equal 'codex' "$(field '.id' "$codex")" 'codex：记录 id 正确'
-assert_equal '1050' "$(field '.stats.todayTotalTokens' "$codex")" \
-    'codex：今天 = input 1000（已含缓存 100）+ output 50，缓存不重复计入'
+assert_equal '1570' "$(field '.stats.todayTotalTokens' "$codex")" \
+    'codex：今天 = (1000-100+50) + (500+20)，缓存不重复计入且同日累加'
 assert_equal '1' "$(field '.stats.totalSessions' "$codex")" 'codex：session_meta 在行顶层也能被识别'
 assert_equal 'gpt-test' "$(field '.stats.modelUsage | keys[0]' "$codex")" 'codex：模型取自 session_meta'
 assert_equal '1' "$(field '.stats.totalPrompts' "$codex")" 'codex：task_started 计为 1 个 prompt'
@@ -117,7 +132,7 @@ assert_equal '1' "$(field '.stats.totalPrompts' "$codex")" 'codex：task_started
 # shellcheck disable=SC2016  # 这里的 $d 是 jq 的变量，由 --arg 注入，不是 shell 变量
 day_tokens_query='[.stats.recentDays[] | select(.date==$d)][0].totalTokens'
 assert_equal '10' "$(jq -r --arg d "$YESTERDAY" "$day_tokens_query" <<<"$codex")" 'codex：昨天用量归属到昨天'
-assert_equal '1050' "$(jq -r --arg d "$TODAY" "$day_tokens_query" <<<"$codex")" 'codex：今天用量归属到今天'
+assert_equal '1570' "$(jq -r --arg d "$TODAY" "$day_tokens_query" <<<"$codex")" 'codex：今天用量归属到今天'
 assert_equal "$TODAY" "$(field '.stats.recentDays[-1].date' "$codex")" 'codex：recentDays 最后一项是今天'
 assert_equal '7' "$(field '.stats.recentDays | length' "$codex")" 'codex：recentDays 固定为 7 天'
 
@@ -132,12 +147,27 @@ assert_equal 'inclusive' "$(field '.inputTokenSemantics' "$codex")" \
     'codex：input 语义标为 inclusive（缓存已含在 input 里）'
 # claude model-one：100*1000/1e6 + 10*2000/1e6 + 5*100/1e6 + 1*1000/1e6 = 0.1215
 # claude model-two：200*1000/1e6 + 20*2000/1e6 = 0.24
-assert_equal '0.3615' "$(field '.stats.costUsd' "$claude")" 'claude：四项分别计价，合计 0.3615'
+assert_close '0.4215' "$(field '.stats.costUsd' "$claude")" 'claude：四项分别计价（150/15/5/1 + 200/20）'
 # codex：input 1000 里含缓存 100 → 可计费输入 900*1000/1e6 + 50*2000/1e6 + 100*100/1e6 = 1.01
 #        昨天 7*1000/1e6 + 3*2000/1e6 = 0.013，合计 1.023
-assert_equal '1.023' "$(field '.stats.costUsd' "$codex")" \
-    'codex：缓存部分不按输入价重复计费，合计 1.023'
+assert_close '1.563' "$(field '.stats.costUsd' "$codex")" \
+    'codex：缓存部分不按输入价重复计费（1.55 + 0.013）'
 assert_equal 'true' "$(field '.stats.modelUsage["model-one"].priced' "$claude")" 'claude：标注模型是否有定价'
+
+# ---- 缓存版本：逻辑变了就不能继续吃旧缓存 --------------------------------
+CACHE_FILE="$HOME_DIR/.cache/cachyos-desktop/agent-usage/claude-files.json"
+if [[ -f $CACHE_FILE ]]; then
+    # 冒充"旧版本写下的缓存"：版本号对不上，且数据是错的。
+    jq '.cacheVersion = 1 | .files = {"bogus": {"stamp": "1:1", "perDay": {"2000-01-01": {"byModel": {"x": {"inputTokens": 999999}}}}}}' \
+        "$CACHE_FILE" > "$CACHE_FILE.stale" && mv "$CACHE_FILE.stale" "$CACHE_FILE"
+    stale_run="$(run_collector cachyos-agent-usage-claude)"
+    assert_equal '171' "$(field '.stats.todayTotalTokens' "$stale_run")" \
+        '缓存版本失配：旧缓存被整体作废，重新解析得到正确结果'
+    assert_equal '391' "$(field '(.stats.modelUsage | to_entries | map(.value.totalTokens) | add)' "$stale_run")" \
+        '缓存版本失配：不会把旧缓存里的伪造数据带进来'
+else
+    fail '没有生成缓存文件，无法验证缓存版本'
+fi
 
 # ---- 编排器 ----------------------------------------------------------------
 if HOME="$HOME_DIR" XDG_CACHE_HOME="$HOME_DIR/.cache" PATH="$PROJECT_DIR/bin:$PATH" \

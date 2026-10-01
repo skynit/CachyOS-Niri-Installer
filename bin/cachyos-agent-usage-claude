@@ -66,8 +66,11 @@ def scan_transcripts(cache: dict[str, Any]) -> tuple[dict[str, Any], dict[str, d
         cached = known.get(key)
         if cached and cached.get("stamp") == stamp:
             seen[key] = cached
+            # 缓存里按 (日期 → 模型 → 计数) 存；重放走与解析分支**完全相同**的合并函数，
+            # 两条路径才不会给出两种答案。
             for date, entry in (cached.get("perDay") or {}).items():
-                au.merge_day(per_day, date, entry.get("counters") or au.empty_counters(), entry.get("model") or "")
+                for model, counters in (entry.get("byModel") or {}).items():
+                    au.merge_day(per_day, date, counters, model)
                 if entry.get("session"):
                     sessions.add(entry["session"])
             for model, counters in (cached.get("models") or {}).items():
@@ -99,11 +102,10 @@ def scan_transcripts(cache: dict[str, Any]) -> tuple[dict[str, Any], dict[str, d
                 }
                 date = au.local_date(entry.get("timestamp"))
                 if date:
-                    file_per_day[date] = {
-                        "counters": counters,
-                        "model": model,
-                        "session": session_id,
-                    }
+                    # 必须**累加**：同一天同一文件通常有多条用量，覆盖式赋值只留下最后一条，
+                    # 而那份被覆盖的数据正是缓存里存的东西。
+                    day = file_per_day.setdefault(date, {"byModel": {}, "session": session_id})
+                    au.add_counters(day["byModel"].setdefault(model, au.empty_counters()), counters)
                     au.merge_day(per_day, date, counters, model)
                     au.add_counters(file_models.setdefault(model, au.empty_counters()), counters)
                     if session_id:

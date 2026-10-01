@@ -93,14 +93,8 @@ def scan_rollouts(cache: dict[str, Any]) -> tuple[dict[str, Any], dict[str, dict
         if cached and cached.get("stamp") == stamp:
             seen[key] = cached
             for date, entry in (cached.get("perDay") or {}).items():
-                au.merge_day(
-                    per_day,
-                    date,
-                    entry.get("counters") or au.empty_counters(),
-                    entry.get("model") or "",
-                    int(entry.get("prompts", 0)),
-                    entry.get("session") or "",
-                )
+                for model, counters in (entry.get("byModel") or {}).items():
+                    au.merge_day(per_day, date, counters, model, int(entry.get("prompts", 0)), entry.get("session") or "")
             for model, counters in (cached.get("models") or {}).items():
                 au.add_counters(model_usage.setdefault(model, au.empty_counters()), counters)
             prompts += int(cached.get("prompts", 0))
@@ -162,7 +156,9 @@ def scan_rollouts(cache: dict[str, Any]) -> tuple[dict[str, Any], dict[str, dict
             model = current_model or "unknown"
             au.merge_day(per_day, date, counters, model)
             au.add_counters(file_models.setdefault(model, au.empty_counters()), counters)
-            file_per_day[date] = {"counters": counters, "model": model, "session": session_id}
+            # 累加而不是覆盖：一天里通常有几十次 token_count 事件。
+            day = file_per_day.setdefault(date, {"byModel": {}, "session": session_id})
+            au.add_counters(day["byModel"].setdefault(model, au.empty_counters()), counters)
             if session_id:
                 sessions.add(session_id)
 
