@@ -70,13 +70,29 @@ read_default_agent() {
 
     local value
     IFS= read -r value < "$AGENT_FILE" || true
+
+    # 这个文件是给人手改的，可能带尾随空格或 CRLF；先去掉首尾空白再判断。
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+
     [[ -n $value ]] || return 1
     printf '%s\n' "$value"
 }
 
+# 让用户选一个默认 agent。
+#
+# 判据只能用 stdin（`-t 0`）：本函数总是被 `agent="$(pick_agent)"` 调用，命令替换会让
+# stdout 变成管道，`-t 1` 恒为假——曾经因此让内联分支变成永远走不到的死代码。
+#
+# kitty 分支也**不能**用 `$( )` 捕获：kitty 把子进程挂在新窗口的 pty 上，它的 stdout
+# 不会回到调用者（实测调用者拿到 0 字节）。所以让窗口里的命令把结果写进临时文件，
+# 再由调用者读回。
 pick_agent() {
-    local chosen
+    local chosen=""
     local picker_command
+    local inner
+    local selection_file
+    local save_status=0
 
     if command -v cachyos-agent >/dev/null 2>&1; then
         picker_command=cachyos-agent
@@ -84,18 +100,33 @@ pick_agent() {
         printf -v picker_command '%q' "$SELF_DIR/cachyos-agent"
     fi
 
-    # 选择器只显示名称，取回的仍是 id。
-    if [[ -t 0 && -t 1 ]]; then
-        chosen="$(cachyos_agent_list_display | fzf --delimiter='\t' --with-nth=2 --prompt='默认 AI agent> ' --reverse | cut -f1)"
+    # 两条分支共用同一条 pipeline，展示与取回保持一致；--list 会同时标注未安装项。
+    inner="$picker_command --list | fzf --delimiter='\t' --with-nth=2 --prompt='默认 AI agent> ' --reverse | cut -f1"
+
+    if [[ -t 0 ]]; then
+        # 有终端就直接在当前终端跑；stdout 被捕获不影响 fzf——它自己用 /dev/tty 画界面。
+        chosen="$(sh -c "$inner" 2>/dev/null)"
     else
-        chosen="$(kitty --class cachyos-agent-pick sh -lc \
-            "$picker_command --list | fzf --delimiter='\t' --with-nth=2 --prompt='默认 AI agent> ' --reverse | cut -f1")"
+        selection_file="$(mktemp)"
+        if kitty --class cachyos-agent-pick sh -c "$inner > $(printf '%q' "$selection_file")"; then
+            chosen="$(cat "$selection_file" 2>/dev/null || true)"
+        else
+            printf '无法打开 agent 选择器（kitty 启动失败；也可以直接执行 %s <agent>）。\n' "$SCRIPT_NAME" >&2
+        fi
+        rm -f "$selection_file"
     fi
 
     [[ -n $chosen ]] || return 1
 
-    if ! sibling_command cachyos-default-agent "$chosen" >/dev/null; then
+    # 区分"helper 不可用"(127) 与"helper 拒绝了这次设置"(1/2)：后者已经把真实原因写在
+    # stderr 上（例如"找不到命令 opencode"），再补一句"不可用"会把人带偏。
+    sibling_command cachyos-default-agent "$chosen" >/dev/null || save_status=$?
+    if ((save_status == 127)); then
         printf '无法保存默认 agent：cachyos-default-agent 不可用。\n' >&2
+        return 1
+    fi
+    if ((save_status != 0)); then
+        printf '没有把 %s 设为默认 agent（原因见上）。\n' "$chosen" >&2
         return 1
     fi
 
@@ -124,6 +155,13 @@ launch() {
 
     # -d ''：argv 是 NUL 分隔的，prompt 里的换行必须留在同一个参数内。
     mapfile -d '' -t command < <(cachyos_agent_command "$agent" "$prompt")
+
+    # bash ≥4.4 里 `exec "${empty[@]}"` 是空操作且返回 0，会表现成"启动成功但什么都没跑"。
+    # 正常情况下校验已经挡在前面，这里只是不让库与命令的列表万一漂移时静默通过。
+    if ((${#command[@]} == 0)); then
+        printf '无法为 %s 组装启动命令（agent 表与命令可能不同版本）。\n' "$agent" >&2
+        return 1
+    fi
 
     # agent 不记忆 $HOME 的信任，从家目录启动会让它每次都重新确认，因此改到工作目录。
     if [[ $PWD == "$HOME" && -d $HOME/Work ]]; then
@@ -172,6 +210,18 @@ main() {
                 usage
                 return 0
                 ;;
+            --)
+                # 选项终止符：之后的词一律当位置参数，便于传以 - 开头的 agent 名。
+                shift
+                while (($# > 0)); do
+                    if [[ -n $agent ]]; then
+                        printf '只能指定一个 agent。\n' >&2
+                        return 2
+                    fi
+                    agent="$1"
+                    shift
+                done
+                ;;
             -*)
                 printf '未知选项：%s\n' "$1" >&2
                 return 2
@@ -208,10 +258,16 @@ main() {
             ;;
     esac
 
+    # 默认值可能被手工改坏（拼错、尾随空格、CRLF），也可能压根没设置。两种情况都
+    # 走选择器：对一个启动器来说，询问比报错有用。
+    if [[ -n $agent ]] && ! cachyos_agent_supported | grep -qx -- "$agent"; then
+        printf '%s 里的默认 agent "%s" 不受支持，改为重新选择。\n' "$AGENT_FILE" "$agent" >&2
+        agent=""
+    fi
+
     if [[ -z $agent ]]; then
         if [[ $pick == true ]] || ! agent="$(read_default_agent)"; then
-            # --pick 强制弹出选择器；没有默认值时也走这里——对一个启动器来说，
-            # 询问比报错有用，快捷键因此可以直接不带参数调用。
+            # --pick 强制弹出选择器；没有默认值时也走这里——快捷键因此可以直接不带参数调用。
             if ! agent="$(pick_agent)"; then
                 printf '没有选择 agent。\n' >&2
                 return 1

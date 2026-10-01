@@ -98,6 +98,68 @@ assert_equal '4' "$(argv_count codex 'a|b')" \
 assert_equal '4' "$(argv_count codex '含 制表	符')" \
     'prompt 含制表符时参数个数不变'
 
+# --------------------------------------------------------------- 端到端（launcher）
+#
+# 只测 lib 是不够的：多行 prompt 被拆参那个缺陷正是在"全部通过"的情况下漏过去的，
+# 因为收集端（bin/cachyos-agent 的 mapfile）从来没有被测过。
+
+RUN_DIR="$(mktemp -d)"
+trap 'rm -rf -- "$RUN_DIR"' EXIT
+mkdir -p "$RUN_DIR/bin" "$RUN_DIR/home"
+
+cat > "$RUN_DIR/bin/codex" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\0' "$@" > "$AGENT_TEST_ARGV"
+STUB
+
+# 模拟 kitty：带 -c 时在"新窗口"里真的执行那段命令——真实 kitty 正是这么做的，
+# 区别只是输出留在窗口的 pty 上、不会回传给调用者（这曾经让选择器永远拿到空值）。
+cat > "$RUN_DIR/bin/kitty" <<'STUB'
+#!/usr/bin/env bash
+for arg in "$@"; do
+    if [[ $arg == "-c" ]]; then
+        exec sh -c "${@: -1}"
+    fi
+done
+if [[ -n ${AGENT_TEST_KITTY_ARGV:-} ]]; then
+    printf '%s\0' "$@" > "$AGENT_TEST_KITTY_ARGV"
+fi
+STUB
+chmod +x "$RUN_DIR/bin/codex" "$RUN_DIR/bin/kitty"
+
+# 用仓库版 launcher 跑一次，回显 stub harness 收到的 argv（用 | 连接）。
+# 注意 harness 的 argv 里不含程序名本身。
+launcher_argv() {
+    rm -f "$RUN_DIR/argv.bin"
+    AGENT_TEST_ARGV="$RUN_DIR/argv.bin" \
+        HOME="$RUN_DIR/home" \
+        CACHYOS_DESKTOP_SHARE_DIR="$RUN_DIR/no-share" \
+        PATH="$RUN_DIR/bin:$PROJECT_DIR/bin:$PATH" \
+        "$PROJECT_DIR/bin/cachyos-agent" --inline "$@" >/dev/null 2>&1 || true
+
+    local -a argv=()
+    mapfile -d '' -t argv < "$RUN_DIR/argv.bin" 2>/dev/null
+    local IFS='|'
+    printf '%s' "${argv[*]}"
+}
+
+assert_equal '--approve-for-me|--|hello world' "$(launcher_argv --prompt 'hello world' codex)" \
+    'launcher 往返：普通 prompt 逐字到达 harness'
+assert_equal "$(printf -- '--approve-for-me|--|第一行\n\n第三行')" \
+    "$(launcher_argv --prompt "$(printf '第一行\n\n第三行')" codex)" \
+    'launcher 往返：多行 prompt 仍是单个参数（曾因按行收集被拆开）'
+
+# 选择器：kitty 分支必须把结果回传（曾用 $( ) 捕获 kitty 的 stdout，永远为空）。
+# PATH 里仓库 bin/ 优先，内层命令才会用同一个仓库版命令与库，测试才是自洽的。
+rm -f "$RUN_DIR/home/.config/cachyos-desktop/agent"
+FZF_DEFAULT_OPTS='--filter=codex' \
+    HOME="$RUN_DIR/home" \
+    CACHYOS_DESKTOP_SHARE_DIR="$RUN_DIR/no-share" \
+    PATH="$RUN_DIR/bin:$PROJECT_DIR/bin:$PATH" \
+    "$PROJECT_DIR/bin/cachyos-agent" --pick >/dev/null 2>&1 || true
+assert_equal 'codex' "$(cat "$RUN_DIR/home/.config/cachyos-desktop/agent" 2>/dev/null)" \
+    '选择器（kitty 分支）：选中的 agent 被写回默认值'
+
 assert_equal '.codex/skills' "$(cachyos_agent_skill_relpaths codex)" 'codex 的技能目录'
 assert_equal '.claude/skills' "$(cachyos_agent_skill_relpaths claude)" 'claude 的技能目录'
 assert_equal '.agents/skills' "$(cachyos_agent_skill_relpaths opencode)" \

@@ -11,7 +11,15 @@ readonly SCRIPT_NAME="${0##*/}"
 readonly COREDUMP_MESSAGE_ID=fc2e22bc6ee647b6b90729ab34a250b1
 
 # 崩溃循环会反复转储，同一程序在一个窗口内只提醒一次。
-readonly DEDUPE_SECONDS="${CACHYOS_CRASH_DEDUPE_SECONDS:-60}"
+#
+# 必须校验：这个值参与算术运算，`set -u` 下非数字（例如设成 abc）会让整个 watcher
+# 立刻退出；叠加 Restart=always 就变成"每次崩溃重启一次服务"，功能整体静默失效。
+dedupe_seconds="${CACHYOS_CRASH_DEDUPE_SECONDS:-60}"
+if [[ ! $dedupe_seconds =~ ^[0-9]+$ ]]; then
+    printf '%s: CACHYOS_CRASH_DEDUPE_SECONDS 不是非负整数（%s），回退到 60\n' "$SCRIPT_NAME" "$dedupe_seconds" >&2
+    dedupe_seconds=60
+fi
+readonly DEDUPE_SECONDS="$dedupe_seconds"
 
 # 匹配这个扩展正则的程序名永不提醒。
 readonly IGNORE_PATTERN="${CACHYOS_CRASH_IGNORE:-}"
@@ -105,6 +113,8 @@ notification_is_pending() {
 send_notification() {
     local pid="$1"
     local comm="$2"
+    local exe="$3"
+    local signal="$4"
     local summary="进程崩溃：$comm"
     local body="点击诊断，或执行 cachyos-agent-crash --latest"
 
@@ -124,7 +134,9 @@ send_notification() {
             #（已实测 DMS 接受 0）。
             if action="$(notify-send --urgency=critical -t 0 -A diagnose="用 AI 诊断" -w "$summary" "$body" 2>/dev/null)"; then
                 if [[ $action == "diagnose" ]]; then
-                    cachyos-agent-crash "$pid" >/dev/null 2>&1 || true
+                    # 四个字段都在手上，一并传下去：只传 PID 会让提示词里全是 unknown，
+                    # 而通知可能挂几小时，期间 PID 可能已被复用。
+                    cachyos-agent-crash "$pid" "$comm" "$exe" "$signal" >/dev/null 2>&1 || true
                 fi
                 exit 0
             fi
@@ -152,15 +164,17 @@ handle_entry() {
     local now
     local previous
 
-    # IFS 必须是单个制表符：默认 IFS 会把空字段（例如缺失的 COREDUMP_EXE）折叠掉，
-    # 后面的列会整体错位。jq 失败（残缺记录）就跳过，不能让常驻进程退出。
-    IFS=$'\t' read -r pid comm exe signal < <(
+    # IFS 用**非空白**分隔符（US，0x1f）。制表符看着够用，其实不行：它属于 IFS 空白
+    # 字符，read 会把连续分隔符折叠成一个，缺失的 COREDUMP_EXE 会让 signal 顶到 exe
+    # 列，崩溃事实整体错位。非空白分隔符才保留空字段。
+    # jq 失败（残缺记录）就跳过，不能让常驻进程退出。
+    IFS=$'\x1f' read -r pid comm exe signal < <(
         jq -r '[
             (.COREDUMP_PID // ""),
             (.COREDUMP_COMM // ""),
             (.COREDUMP_EXE // ""),
             (.COREDUMP_SIGNAL // "")
-        ] | @tsv' <<<"$entry" 2>/dev/null
+        ] | join("\u001f")' <<<"$entry" 2>/dev/null
     ) || return 0
 
     [[ -n $comm ]] || return 0
@@ -181,7 +195,7 @@ handle_entry() {
 
     when="$(date '+%Y-%m-%d %H:%M:%S')"
     record_crash "$pid" "$comm" "$exe" "$signal" "$when"
-    send_notification "$pid" "$comm"
+    send_notification "$pid" "$comm" "$exe" "$signal"
 }
 
 watch() {
@@ -191,10 +205,14 @@ watch() {
 
     # 进程替换而非管道：管道会把 while 放进子 shell，去重表会随之丢失。
     # 外层循环让 journalctl 因日志轮转退出后能自动重连。
+    #
+    # 不吞 journalctl 的 stderr：它永久失败时服务看着 active 却什么都不做，那条错误是
+    # 唯一线索。重连也记一行，便于区分"没有崩溃"和"根本没读到日志"。
     while true; do
         while IFS= read -r entry; do
             handle_entry "$entry" || true
-        done < <(journalctl -f -n 0 -o json "MESSAGE_ID=$COREDUMP_MESSAGE_ID" 2>/dev/null)
+        done < <(journalctl -f -n 0 -o json "MESSAGE_ID=$COREDUMP_MESSAGE_ID")
+        printf '%s: journalctl 已退出，2 秒后重连\n' "$SCRIPT_NAME" >&2
         sleep 2
     done
 }

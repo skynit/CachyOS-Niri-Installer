@@ -73,7 +73,10 @@ known_skill_relpaths() {
 link_into() {
     local directory="$1"
     local skill
+    local target
     local count=0
+    local skipped=0
+    local failed=0
 
     if [[ ! -d $directory ]]; then
         if [[ $quiet == false ]]; then
@@ -83,13 +86,37 @@ link_into() {
     fi
 
     while IFS= read -r skill; do
-        ln -sfn "$ASSET_DIR/agent-skills/$skill" "$directory/$skill"
-        count=$((count + 1))
+        target="$directory/$skill"
+
+        # 目标是真实文件/目录时 ln -sfn 不会替换它：会把软链塞进目录里（嵌套），技能在
+        # harness 期望的路径上依然不可见；对同名真实文件则更糟。所以显式跳过，不碰用户内容。
+        if [[ -e $target && ! -L $target ]]; then
+            printf '跳过：%s 已存在且不是软链（不覆盖你的内容）\n' "${target#"$HOME"/}" >&2
+            skipped=$((skipped + 1))
+            continue
+        fi
+
+        # 单个目标失败（例如目录不可写）不能中止其余 harness 的处理。
+        if ln -sfn "$ASSET_DIR/agent-skills/$skill" "$target"; then
+            count=$((count + 1))
+        else
+            printf '无法链接：%s\n' "${target#"$HOME"/}" >&2
+            failed=$((failed + 1))
+        fi
     done < <(skill_names)
 
     if [[ $quiet == false ]]; then
-        printf '已链接 %d 个技能到 %s\n' "$count" "${directory#"$HOME"/}"
+        printf '已链接 %d 个技能到 %s' "$count" "${directory#"$HOME"/}"
+        if ((skipped > 0)); then
+            printf '（跳过 %d 个已存在项）' "$skipped"
+        fi
+        if ((failed > 0)); then
+            printf '（%d 个失败）' "$failed"
+        fi
+        printf '\n'
     fi
+
+    ((failed == 0))
 }
 
 main() {
@@ -97,6 +124,7 @@ main() {
     local harness=""
     local relpath
     local relpaths
+    local status=0
 
     while (($# > 0)); do
         case "$1" in
@@ -113,6 +141,11 @@ main() {
                 usage
                 return 0
                 ;;
+            --)
+                # 选项终止符；本命令没有位置参数，停止解析即可。
+                shift
+                break
+                ;;
             *)
                 printf '未知选项：%s\n' "$1" >&2
                 return 2
@@ -120,11 +153,17 @@ main() {
         esac
     done
 
+    if (($# > 0)); then
+        printf '不接受位置参数：%s\n' "$1" >&2
+        return 2
+    fi
+
     if [[ ! -d $ASSET_DIR/agent-skills ]]; then
         printf '找不到技能资源目录：%s\n' "$ASSET_DIR/agent-skills" >&2
         return 1
     fi
 
+    # 单个目录失败不影响其余目录；全部处理完再汇总退出码。
     if [[ -n $harness ]]; then
         if ! relpaths="$(cachyos_agent_skill_relpaths "$harness")"; then
             printf '不支持的 agent：%s\n' "$harness" >&2
@@ -132,15 +171,17 @@ main() {
         fi
         while IFS= read -r relpath; do
             [[ -n $relpath ]] || continue
-            link_into "$HOME/$relpath"
+            link_into "$HOME/$relpath" || status=1
         done <<< "$relpaths"
-        return 0
+        return "$status"
     fi
 
     while IFS= read -r relpath; do
         [[ -n $relpath ]] || continue
-        link_into "$HOME/$relpath"
+        link_into "$HOME/$relpath" || status=1
     done < <(known_skill_relpaths)
+
+    return "$status"
 }
 
 main "$@"

@@ -56,7 +56,8 @@ main() {
             exit 0
             ;;
         --latest)
-            if [[ ! -r $LAST_CRASH_FILE ]]; then
+            # -f 而不是 -r：目标是目录时 -r 为真，crash_field 会静默失败。
+            if [[ ! -f $LAST_CRASH_FILE ]]; then
                 printf '没有记录到崩溃：%s\n' "$LAST_CRASH_FILE" >&2
                 exit 1
             fi

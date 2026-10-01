@@ -24,12 +24,25 @@ EOF
 
 normalize_program() {
     local name
+    local byte_length
+
     name="$(basename -- "$1")"
     name="${name%$'\r'}"
     if [[ -z $name || $name == "." || $name == ".." || $name == *$'\n'* ]]; then
         printf '不是有效的程序名：%s\n' "$1" >&2
         return 1
     fi
+
+    # 内核把 comm 截到 15 字节（TASK_COMM_LEN），COREDUMP_COMM 就是截断后的名字。
+    # 不跟着截断的话，gnome-keyring-daemon、xdg-desktop-portal 这类长名字永远匹配
+    # 不上，也就永远静音不了。按**字节**截断（LC_ALL=C）才和内核对齐；可能切断一个
+    # 多字节字符，但那正是内核记录的东西。
+    byte_length="$(LC_ALL=C printf '%s' "$name" | wc -c)"
+    if ((byte_length > 15)); then
+        name="$(LC_ALL=C printf '%s' "$name" | cut -c1-15)"
+        printf '注意：内核只记录程序名的前 15 字节，按 "%s" 静音。\n' "$name" >&2
+    fi
+
     printf '%s\n' "$name"
 }
 

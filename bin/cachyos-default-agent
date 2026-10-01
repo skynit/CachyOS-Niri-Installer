@@ -63,6 +63,12 @@ main() {
         return 1
     fi
 
+    # 目标若恰好是个目录，mv 会把临时文件移进目录里、还照样退出 0，默认值其实没写进去。
+    if [[ -d $AGENT_FILE ]]; then
+        printf '%s 是一个目录，无法写入默认 agent（请先移走它再重试）。\n' "$AGENT_FILE" >&2
+        return 1
+    fi
+
     install -d -m 0700 "$(dirname -- "$AGENT_FILE")"
     temporary_file="$(mktemp "$(dirname -- "$AGENT_FILE")/.agent.XXXXXX")"
     trap 'rm -f -- "$temporary_file"' EXIT
