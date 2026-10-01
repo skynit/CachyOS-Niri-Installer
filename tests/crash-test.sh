@@ -60,6 +60,18 @@ sleep 600
 STUB
     chmod +x "$case_dir/bin/journalctl"
 
+    # stub notify-send / dms：这条测试绝不能往真实桌面发通知。动作式通知会等到用户
+    # 处理为止（-t 0），一旦漏挂就会在你桌上堆出假的崩溃提示，并留下常驻等待进程。
+    cat > "$case_dir/bin/notify-send" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+    cat > "$case_dir/bin/dms" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+    chmod +x "$case_dir/bin/notify-send" "$case_dir/bin/dms"
+
     HOME="$case_dir/home" \
         CACHYOS_CRASH_DEDUPE_SECONDS=0 \
         CACHYOS_DESKTOP_SHARE_DIR="$case_dir/no-share" \
