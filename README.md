@@ -385,7 +385,35 @@ cachyos-crash-mute SomeApp off      # 恢复提醒
 - **`cachyos-agent-crash` 只把事实交给 agent**，诊断方法本身写在 `diagnose-crash` 技能里，
   因此换任何默认 agent 都适用，方法也只维护一份。
 
-同一个程序最多保留一条待处理通知：崩溃循环不会把通知和等待进程堆起来。
+#### 用量统计
+
+安装器会装上 DMS 面板插件 **CachyOS Agents 用量**：状态栏显示三个 agent 的 token 与费用，
+点开是每个 agent 的明细（今天/累计、会话与提示数、按费用排序的模型、最近 7 天柱状图）。
+
+```bash
+cachyos-agent-usage-update            # 重新采集（面板每 15 分钟也会自己调一次）
+cachyos-agent-usage-update claude     # 只跑某一个采集器
+cachyos-agent-usage-claude            # 采集器直接输出一条 JSON 记录
+```
+
+数据链路：采集器 → `~/.local/state/cachyos-desktop/agents/usage/<agent>.json` → 面板读取。
+面板只读目录，所以**加一个 agent 只需要加一个采集器，面板不用改**。
+
+- 全部在本机取数：Claude 读 `~/.claude/projects/**` 的会话转录，Codex 读
+  `~/.codex/sessions/**` 的 rollout。不联网。
+- **费用**取自 cc-switch 的 `model_pricing` 表（装了 cc-switch 才有）；没有定价时只显示
+  token，未定价的模型会标注「未定价」。
+- **token 语义按各家对齐**：Claude 的 `input_tokens` 不含缓存，Codex 的已含缓存。记录里用
+  `inputTokenSemantics` 标明，总量与费用都据此拆分，避免缓存被重复计算。
+- **缓存按源文件 `(mtime, size)` 增量**，并带 `CACHE_VERSION`：解析逻辑一变缓存整体作废，
+  否则会出现"代码修好了、屏幕上的数字还是旧的"。
+- 缺数据显示「未采集 / 无数据」，绝不把没采到渲染成 0；今天没有用量时回落到最近有数据的
+  一天并标出日期（例如 `10-01 12.0M · $0.367`）。
+
+插件的源码真源在 <https://github.com/skynit/dms-plugins>，安装器里放的是随包副本
+（`assets/dms-plugins/CachyosAgents/`），这样全新机器离线也能复刻。面板纯逻辑由
+`node --test` 覆盖；接线用的两个 jq 程序（只增不覆盖、幂等、尊重用户已关掉的开关）由
+`tests/dms-plugin-test.sh` 覆盖。
 
 #### 新增一个 agent
 
@@ -562,7 +590,16 @@ cachyos-agent --list        # 确认三个 agent 的安装状态
 
 - `tests/agent-test.sh` —— agent 表、argv 逐字保真、以及 launcher 与选择器的端到端往返。
 - `tests/crash-test.sh` —— 崩溃字段解析（含缺失字段的对齐）与静音名单的名字截断。
+- `tests/usage-test.sh` —— 用量采集：同日多条用量必须累加、缓存与全量结果一致、
+  缓存版本失配要作废、两种 input 语义下的计费。
+- `tests/dms-plugin-test.sh` —— 状态栏接线：只增不覆盖、幂等、尊重用户关掉的插件开关。
 - `tests/hardware-test.sh` —— CPU/GPU 检测与包选择。
+
+插件自身的纯逻辑另有独立测试（在插件目录里）：
+
+```bash
+node --test assets/dms-plugins/CachyosAgents/tests/usage.test.cjs
+```
 
 硬件进一步检查：
 

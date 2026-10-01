@@ -581,6 +581,65 @@ configure_dms_settings() {
     dms auth resolve-lock --quiet
 }
 
+# 安装 DMS 用量面板插件（agents 的 token 与费用统计）。
+#
+# 插件源码的真源是 skynit/dms-plugins 仓库；这里放的是随包副本，因为本仓库的用途是
+# "新电脑复刻"，安装过程要能离线、自包含。上游改动后需要把文件同步进 assets/dms-plugins/。
+install_dms_plugins() {
+    local settings_dir="$HOME/.config/DankMaterialShell"
+    local plugin_dir="$settings_dir/plugins/CachyosAgents"
+    local source_dir="$SCRIPT_DIR/assets/dms-plugins/CachyosAgents"
+    local settings_file="$settings_dir/settings.json"
+    local plugin_settings="$settings_dir/plugin_settings.json"
+    local asset
+    local temporary_file
+
+    run install -d -m 0755 "$plugin_dir" "$plugin_dir/tests"
+
+    for asset in "$source_dir"/*.qml "$source_dir"/*.js "$source_dir"/plugin.json "$source_dir"/README.md; do
+        [[ -f "$asset" ]] || continue
+        run install -m 0644 "$asset" "$plugin_dir/${asset##*/}"
+    done
+    run install -m 0644 "$source_dir/tests/usage.test.cjs" "$plugin_dir/tests/usage.test.cjs"
+
+    if [[ "$DRY_RUN" == true ]]; then
+        print_command jq --arg plugin cachyosAgents -f "$SCRIPT_DIR/assets/dms/enable-dms-plugin.jq" "$plugin_settings"
+        print_command jq -f "$SCRIPT_DIR/assets/dms/add-agents-bar-widget.jq" "$settings_file"
+        return 0
+    fi
+
+    # 启用插件。只在用户还没有表达过意愿时写入：他之后在设置界面关掉了，重装不该又给打开。
+    temporary_file="$(mktemp)"
+    if [[ -s "$plugin_settings" ]]; then
+        if jq --arg plugin cachyosAgents -f "$SCRIPT_DIR/assets/dms/enable-dms-plugin.jq" \
+            "$plugin_settings" > "$temporary_file"; then
+            install -m 0600 "$temporary_file" "$plugin_settings"
+        else
+            warn "could not enable the usage plugin in plugin_settings.json"
+        fi
+    else
+        if printf '%s\n' '{}' | jq --arg plugin cachyosAgents \
+            -f "$SCRIPT_DIR/assets/dms/enable-dms-plugin.jq" > "$temporary_file"; then
+            install -m 0600 "$temporary_file" "$plugin_settings"
+        else
+            warn "could not create plugin_settings.json for the usage plugin"
+        fi
+    fi
+    rm -f -- "$temporary_file"
+
+    # 接线到状态栏。这个 jq 程序只增不覆盖且幂等——绝不能走 desktop-settings.json 的浅合并，
+    # 那会把整个 barConfigs 数组替换掉，用户的布局就没了。
+    if [[ -s "$settings_file" ]]; then
+        temporary_file="$(mktemp)"
+        if jq -f "$SCRIPT_DIR/assets/dms/add-agents-bar-widget.jq" "$settings_file" > "$temporary_file"; then
+            install -m 0600 "$temporary_file" "$settings_file"
+        else
+            warn "could not add the usage widget to the DankBar configuration"
+        fi
+        rm -f -- "$temporary_file"
+    fi
+}
+
 service_enabled_or_active() {
     systemctl is-enabled --quiet "$1" 2>/dev/null || systemctl is-active --quiet "$1" 2>/dev/null
 }
@@ -677,6 +736,7 @@ post_install() {
         print_command systemctl --user add-wants niri.service dms.service
         print_command systemctl --user enable cachyos-crash-watch.service
         print_command systemctl --user restart cachyos-crash-watch.service
+        print_command systemctl --user restart dms.service
         return 0
     fi
 
@@ -696,6 +756,13 @@ post_install() {
     if ! systemctl --user restart cachyos-crash-watch.service; then
         warn "could not start cachyos-crash-watch.service; run this after logging in:"
         warn "  systemctl --user restart cachyos-crash-watch.service"
+    fi
+
+    # DMS 只在启动时读 settings.json：用量面板插件与状态栏接线要重启一次才生效。
+    if systemctl --user is-active --quiet dms.service; then
+        if ! systemctl --user restart dms.service; then
+            warn "could not restart dms.service; the usage widget appears after the next login"
+        fi
     fi
 }
 
@@ -731,6 +798,7 @@ main() {
     install_desktop_assets
     install_agent_skills
     configure_dms_settings
+    install_dms_plugins
     sync_ai_configs
     post_install
 

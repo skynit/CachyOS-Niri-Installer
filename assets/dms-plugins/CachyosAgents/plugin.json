@@ -1,0 +1,15 @@
+{
+  "id": "cachyosAgents",
+  "name": "CachyOS Agents 用量",
+  "description": "Claude Code / Codex / OpenCode 的 token 与费用统计，数据由本机采集",
+  "version": "1.0.0",
+  "author": "skynit",
+  "type": "widget",
+  "capabilities": ["dankbar-widget"],
+  "component": "./CachyosAgents.qml",
+  "settings": "./CachyosAgentsSettings.qml",
+  "icon": "smart_toy",
+  "requires_dms": ">=1.5.3",
+  "dependencies": ["jq", "python3"],
+  "permissions": ["settings_read", "settings_write", "process"]
+}

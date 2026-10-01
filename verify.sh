@@ -441,6 +441,49 @@ check_ai_agent_stack() {
     fi
 }
 
+check_dms_plugin_stack() {
+    local share_dir="${CACHYOS_DESKTOP_SHARE_DIR:-/usr/local/share/cachyos-desktop}"
+    local plugin_dir="$HOME/.config/DankMaterialShell/plugins/CachyosAgents"
+    local settings_file="$HOME/.config/DankMaterialShell/settings.json"
+    local plugin_settings="$HOME/.config/DankMaterialShell/plugin_settings.json"
+    local asset
+
+    # 随包副本：用户目录里的插件被改坏时，重跑安装器就能修回来。
+    for asset in plugin.json Usage.js UsageSource.qml CachyosAgents.qml UsageDetails.qml CachyosAgentsSettings.qml; do
+        check_file "$share_dir/assets/dms-plugins/CachyosAgents/$asset"
+    done
+    check_file "$share_dir/assets/dms/add-agents-bar-widget.jq"
+    check_file "$share_dir/assets/dms/enable-dms-plugin.jq"
+
+    # 运行副本。
+    for asset in plugin.json Usage.js UsageSource.qml CachyosAgents.qml UsageDetails.qml CachyosAgentsSettings.qml; do
+        check_file "$plugin_dir/$asset"
+    done
+
+    # 下面两处决定"装了但看不见"：插件没启用、或没接到状态栏上。
+    if [[ -f "$plugin_settings" ]] && jq -e '.cachyosAgents.enabled == true' "$plugin_settings" >/dev/null 2>&1; then
+        pass "DMS usage plugin is enabled"
+    else
+        warn "DMS usage plugin is not enabled (Settings > Plugins, or rerun the installer)"
+    fi
+
+    if [[ -f "$settings_file" ]] && jq -e '
+            [.barConfigs[]? | (.leftWidgets? // [])[], (.centerWidgets? // [])[], (.rightWidgets? // [])[]
+             | if type == "object" then .id else . end] | index("cachyosAgents") != null' \
+            "$settings_file" >/dev/null 2>&1; then
+        pass "DMS usage widget is placed on the DankBar"
+    else
+        warn "DMS usage widget is not placed on the DankBar"
+    fi
+
+    # 面板没有记录可读时会显示占位符，所以这里也确认采集器至少跑成功过一次。
+    if compgen -G "$HOME/.local/state/cachyos-desktop/agents/usage/*.json" >/dev/null; then
+        pass "agent usage records exist"
+    else
+        warn "no agent usage records yet (run cachyos-agent-usage-update)"
+    fi
+}
+
 check_lock_screen() {
     local command_name
     local settings_file="$HOME/.config/DankMaterialShell/settings.json"
@@ -522,6 +565,7 @@ main() {
     check_applications
     check_desktop_extras
     check_ai_agent_stack
+    check_dms_plugin_stack
     check_lock_screen
     check_neutral_install
 
