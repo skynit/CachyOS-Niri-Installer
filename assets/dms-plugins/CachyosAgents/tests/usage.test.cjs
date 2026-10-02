@@ -83,8 +83,11 @@ test('有限额但没有本地统计时仍算 ready', () => {
 });
 
 test('按设置隐藏 agent', () => {
-    const rows = usage.summarise([record()], { show_claude: false, show_codex: false });
-    assert.deepEqual(arr(rows.map(row => row.id)), ['opencode']);
+    // 期望值从 agents 表演绎，而不是写死一份名单：否则每加一个 agent 这条测试就"坏"一次。
+    const rows = usage.summarise([record()], { show_claude: false });
+    const expected = usage.agents.map(agent => agent.id).filter(id => id !== 'claude');
+    assert.deepEqual(arr(rows.map(row => row.id)), arr(expected));
+    assert.ok(!rows.some(row => row.id === 'claude'), '被隐藏的 agent 不应出现');
 });
 
 test('状态栏只显示 token，不显示价格', () => {
@@ -107,8 +110,12 @@ test('没有数据时状态条是占位符，全部隐藏时才为空', () => {
     assert.equal(usage.barText([record({ hasLocalStats: false, stats: {} })], {}), '—');
     // 采集器从未跑过：显示占位符而不是空，否则控件会隐形、用户根本点不到。
     assert.equal(usage.barText([], {}), '—');
-    // 三个 agent 全被隐藏：这时才应该什么都不显示。
-    assert.equal(usage.barText([], { show_claude: false, show_codex: false, show_opencode: false }), '');
+    // 全部隐藏：这时才应该什么都不显示（同样从 agents 表演绎，不写死名单）。
+    const noneShown = {};
+    usage.agents.forEach(agent => {
+        noneShown['show_' + agent.id] = false;
+    });
+    assert.equal(usage.barText([], noneShown), '');
 });
 
 test('week / total / bare 三种模式', () => {

@@ -9,7 +9,8 @@
 var agents = [
     { id: "claude", label: "Claude Code", short: "Claude", icon: "smart_toy" },
     { id: "codex", label: "Codex", short: "Codex", icon: "terminal" },
-    { id: "opencode", label: "OpenCode", short: "OpenCode", icon: "code" }
+    { id: "opencode", label: "OpenCode", short: "OpenCode", icon: "code" },
+    { id: "fireworks", label: "Fireworks", short: "Fireworks", icon: "local_fire_department" }
 ];
 
 var MODES = ["today", "week", "total", "bare"];

@@ -122,4 +122,42 @@ HOME="$mute_home" "$PROJECT_DIR/bin/cachyos-crash-mute" /usr/bin/short >/dev/nul
 HOME="$mute_home" "$PROJECT_DIR/bin/cachyos-crash-mute" short off >/dev/null
 assert_equal 'verylongprocess' "$(cat "$mute_file")" '短名字增删不影响已截断项'
 
+# ---- 崩溃捕获开关（cachyos-toggle-crash-capture）-------------------------------
+# 关掉要"两层"生效：标记文件（下次登录也不启动）+ 立刻停掉当前服务。
+toggle_home="$WORK_DIR/toggle-home"
+mkdir -p "$toggle_home" "$WORK_DIR/toggle-bin"
+printf '#!/usr/bin/env bash\nprintf "systemctl %%s\\n" "$*" >> "%s"\n' "$WORK_DIR/toggle-calls" > "$WORK_DIR/toggle-bin/systemctl"
+chmod +x "$WORK_DIR/toggle-bin/systemctl"
+for name in dms notify-send; do
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$WORK_DIR/toggle-bin/$name"
+    chmod +x "$WORK_DIR/toggle-bin/$name"
+done
+flag="$toggle_home/.local/state/cachyos-desktop/toggles/crash-capture-off"
+
+: > "$WORK_DIR/toggle-calls"
+HOME="$toggle_home" PATH="$WORK_DIR/toggle-bin:$PATH" "$PROJECT_DIR/bin/cachyos-toggle-crash-capture" off >/dev/null 2>&1
+assert_equal 'true' "$([[ -e $flag ]] && echo true || echo false)" '关闭后写下标记文件（下次登录也不启动）'
+grep -q 'stop cachyos-crash-watch.service' "$WORK_DIR/toggle-calls" \
+    && pass '关闭时立即停掉本次会话的服务' || fail '关闭时没有停服务'
+
+: > "$WORK_DIR/toggle-calls"
+HOME="$toggle_home" PATH="$WORK_DIR/toggle-bin:$PATH" "$PROJECT_DIR/bin/cachyos-toggle-crash-capture" toggle >/dev/null 2>&1
+assert_equal 'false' "$([[ -e $flag ]] && echo true || echo false)" 'toggle 把关闭状态切回开启'
+grep -q 'start cachyos-crash-watch.service' "$WORK_DIR/toggle-calls" \
+    && pass '开启时启动服务' || fail '开启时没有启动服务'
+
+if HOME="$toggle_home" PATH="$WORK_DIR/toggle-bin:$PATH" "$PROJECT_DIR/bin/cachyos-toggle-crash-capture" --bogus >/dev/null 2>&1; then
+    fail '未知选项不该返回成功'
+else
+    pass '未知选项返回非 0'
+fi
+
+# 单元必须真的读这个标记，否则"关闭"只在本次会话有效
+if grep -q 'ConditionPathExists=!.*crash-capture-off' "$PROJECT_DIR/assets/systemd/user/cachyos-crash-watch.service"; then
+    pass '单元用 ConditionPathExists=! 读标记（关闭能跨登录保持）'
+else
+    fail '单元没有读标记文件，关闭无法跨登录保持'
+fi
+
+
 printf '\n%s 项检查通过。\n' "$PASS_COUNT"

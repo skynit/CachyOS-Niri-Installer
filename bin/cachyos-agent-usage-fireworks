@@ -1,0 +1,363 @@
+#!/usr/bin/env python3
+"""采集 Fireworks 的用量，输出一条 display-ready JSON 记录。
+
+数据源是 Fireworks 的 REST API（与上游 Omarchy 的采集器同一套端点）：
+
+  GET  /v1/accounts?pageSize=100                 列出账号
+  GET  /v1/accounts/{id}/billingUsage?...        按天/模型分组的 token（SERVERLESS）
+  POST /v1/accounts/{id}/usageCosts:query        已花费金额与余额
+
+凭据解析顺序与上游一致：`FIREWORKS_API_KEY` → `firectl` 的配置文件 → opencode 里的
+Fireworks 登录。**拿不到凭据时不编造**：输出 ready=false 与一句说明，本地统计为空。
+
+余额是**估算**：Fireworks 不暴露预付账本，所以用配置的额度减去计费起点以来的花费
+（额度与起点写在 `~/.config/cachyos-desktop/agents/fireworks.json` 的 credits / fundedAt）。
+
+为了能真正测试解析与聚合，base URL 可用 `FIREWORKS_API_BASE` 覆盖——测试里跑一个本地
+stub 服务器，就能在**没有账号**的情况下验证整条链路，而不是只能"看看代码对不对"。
+
+Token 语义：`promptTokens` 已包含 `cachedPromptTokens`（因此标为 inclusive，
+总额不再单独加缓存读；计费时才把缓存部分拆出来）。
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+from typing import Any
+
+AGENT_ID = "fireworks"
+AGENT_NAME = "Fireworks"
+API_BASE_URL = "https://api.fireworks.ai"
+AUTH_HELP = (
+    "设置 FIREWORKS_API_KEY，或运行 `firectl set-api-key`，"
+    "或在 opencode 里登录 Fireworks。"
+)
+
+
+def lib_dir() -> Path:
+    sibling = Path(__file__).resolve().parent.parent / "assets" / "lib"
+    if (sibling / "agent_usage.py").is_file():
+        return sibling
+    share = os.environ.get("CACHYOS_DESKTOP_SHARE_DIR") or "/usr/local/share/cachyos-desktop"
+    return Path(share) / "assets" / "lib"
+
+
+sys.path.insert(0, str(lib_dir()))
+import agent_usage as au  # noqa: E402
+
+
+class FireworksError(Exception):
+    """凭证、网络或响应结构的问题；调用方据此给出说明而不是崩掉。"""
+
+
+# --------------------------------------------------------------------- 凭据
+
+def config_dir() -> Path:
+    return Path(os.environ.get("CACHYOS_DESKTOP_CONFIG_DIR") or (Path.home() / ".config" / "cachyos-desktop"))
+
+
+def agent_config() -> dict[str, Any]:
+    """本项目的 Fireworks 配置（额度与计费起点）。读不到就当空。"""
+    path = config_dir() / "agents" / "fireworks.json"
+    try:
+        with path.open(encoding="utf-8") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def firectl_config() -> dict[str, Any]:
+    """firectl 的配置（用户可能已经用它存过 API key）。"""
+    candidates = [
+        Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")) / "firectl" / "config.json",
+        Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")) / "firectl" / "config.yaml",
+    ]
+    for path in candidates:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if path.suffix == ".json":
+            try:
+                data = json.loads(text)
+                if isinstance(data, dict):
+                    return data
+            except ValueError:
+                continue
+        else:
+            # 极简 YAML：只认 `key: value` 两列，够用且不引入依赖。
+            result: dict[str, Any] = {}
+            for line in text.splitlines():
+                if ":" in line and not line.lstrip().startswith("#"):
+                    key, _, value = line.partition(":")
+                    result[key.strip()] = value.strip().strip("\"'")
+            if result:
+                return result
+    return {}
+
+
+def opencode_auth_key() -> str:
+    """opencode 登录 Fireworks 后把 key 存在自己的 auth 文件里。"""
+    candidates = [
+        Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")) / "opencode" / "auth.json",
+        Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")) / "opencode" / "auth.json",
+    ]
+    for path in candidates:
+        try:
+            with path.open(encoding="utf-8") as handle:
+                data = json.load(handle)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        for provider, entry in data.items():
+            if "fireworks" not in str(provider).lower():
+                continue
+            if isinstance(entry, dict):
+                for key_name in ("key", "apiKey", "api_key", "token"):
+                    value = entry.get(key_name)
+                    if isinstance(value, str) and value:
+                        return value.strip()
+    return ""
+
+
+def resolve_credentials() -> tuple[str, str]:
+    config = agent_config()
+    firectl = firectl_config()
+    api_key = (
+        str(os.environ.get("FIREWORKS_API_KEY") or "").strip()
+        or str(firectl.get("apiKey") or firectl.get("api_key") or "").strip()
+        or opencode_auth_key()
+    )
+    account_id = (
+        str(os.environ.get("FIREWORKS_ACCOUNT_ID") or "").strip()
+        or str(config.get("accountId") or "").strip()
+        or str(firectl.get("accountId") or "").strip()
+    )
+    return api_key, account_id
+
+
+# --------------------------------------------------------------------- 客户端
+
+class FireworksClient:
+    def __init__(self, api_key: str, base_url: str | None = None) -> None:
+        self.api_key = api_key
+        self.base_url = (base_url or os.environ.get("FIREWORKS_API_BASE") or API_BASE_URL).rstrip("/")
+
+    def request(self, path: str, query: dict[str, Any] | None = None, body: Any = None) -> Any:
+        url = self.base_url + path
+        if query:
+            pairs: list[tuple[str, str]] = []
+            for key, value in query.items():
+                if isinstance(value, (list, tuple)):
+                    pairs.extend((key, str(item)) for item in value)
+                else:
+                    pairs.append((key, str(value)))
+            url += "?" + urllib.parse.urlencode(pairs)
+
+        data = None
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Accept": "application/json",
+        }
+        if body is not None:
+            data = json.dumps(body).encode()
+            headers["Content-Type"] = "application/json"
+
+        request = urllib.request.Request(url, data=data, headers=headers,
+                                         method="POST" if data else "GET")
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                payload = json.load(response)
+        except urllib.error.HTTPError as error:
+            if error.code in (401, 403):
+                raise FireworksError("Fireworks 拒绝了这个 API key（无法读取计费数据）") from error
+            raise FireworksError(f"Fireworks 返回 HTTP {error.code}") from error
+        except (urllib.error.URLError, ValueError, OSError, TimeoutError) as error:
+            raise FireworksError(f"无法访问 Fireworks API：{error}") from error
+        return payload
+
+
+def first_account_id(client: FireworksClient) -> str:
+    payload = client.request("/v1/accounts", query={"pageSize": 100})
+    accounts = payload.get("accounts") if isinstance(payload, dict) else None
+    if not isinstance(accounts, list) or not accounts:
+        raise FireworksError("这个 key 下没有可读的 Fireworks 账号")
+    for entry in accounts:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name") or entry.get("id") or "").strip()
+        if name:
+            return name.removeprefix("accounts/").strip("/")
+    raise FireworksError("Fireworks 账号列表里没有可用的 id")
+
+
+def account_rows(client: FireworksClient, account_id: str, days: int) -> list[dict[str, Any]]:
+    """按天（本地日期）取 SERVERLESS 用量，自动翻页。"""
+    import datetime as dt
+
+    end = dt.datetime.now().astimezone()
+    start = end - dt.timedelta(days=days)
+    query: dict[str, Any] = {
+        "startTime": start.replace(hour=0, minute=0, second=0, microsecond=0).isoformat(),
+        "endTime": end.isoformat(),
+        "usageType": "SERVERLESS",
+        "timezone": str(end.tzinfo) if end.tzinfo else "UTC",
+        "groupBy": ["model_name"],
+    }
+    quoted = urllib.parse.quote(account_id, safe="")
+    rows: list[dict[str, Any]] = []
+    # 30 天按模型分组可能超过一页；不跟 nextPageToken 会丢掉尾部用量。上限是防跑飞。
+    for _ in range(20):
+        payload = client.request(f"/v1/accounts/{quoted}/billingUsage", query=query)
+        page = payload.get("serverlessCosts") if isinstance(payload, dict) else None
+        if isinstance(page, list):
+            rows.extend(entry for entry in page if isinstance(entry, dict))
+        token = str((payload or {}).get("nextPageToken") or "") if isinstance(payload, dict) else ""
+        if not token:
+            break
+        query = dict(query, pageToken=token)
+    return rows
+
+
+def spent_usd(client: FireworksClient, account_id: str, days: int) -> float:
+    """计费起点以来（最多 days 天）的花费。拿不到就返回 0，不编造。"""
+    import datetime as dt
+
+    end = dt.datetime.now().astimezone()
+    start = end - dt.timedelta(days=days)
+    quoted = urllib.parse.quote(account_id, safe="")
+    try:
+        payload = client.request(
+            f"/v1/accounts/{quoted}/usageCosts:query",
+            body={"startTime": start.isoformat(), "endTime": end.isoformat(), "scope": "ACCOUNT"},
+        )
+    except FireworksError:
+        return 0.0
+    if not isinstance(payload, dict):
+        return 0.0
+    return money(payload.get("totalCost") or payload.get("cost") or payload.get("balance"))
+
+
+def money(value: Any) -> float:
+    """Fireworks 的金额是 {units, nanos}；也容忍直接给数字/字符串。"""
+    if isinstance(value, dict):
+        try:
+            units = float(value.get("units", 0) or 0)
+            nanos = float(value.get("nanos", 0) or 0) / 1_000_000_000
+            return round(units + nanos, 6)
+        except (TypeError, ValueError):
+            return 0.0
+    try:
+        return round(float(value or 0), 6)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def counters_from_row(row: dict[str, Any]) -> dict[str, int]:
+    return {
+        "inputTokens": au.as_int(row.get("promptTokens") or row.get("uncachedPromptTokens")),
+        "outputTokens": au.as_int(row.get("completionTokens")),
+        "cacheReadInputTokens": au.as_int(row.get("cachedPromptTokens")),
+        "cacheCreationInputTokens": 0,
+    }
+
+
+def model_from_row(row: dict[str, Any]) -> str:
+    group = row.get("group") if isinstance(row.get("group"), dict) else {}
+    return str(group.get("model_name") or row.get("modelName") or "unknown")
+
+
+def aggregate(rows: list[dict[str, Any]]) -> tuple[dict[str, Any], dict[str, dict[str, int]]]:
+    per_day: dict[str, Any] = {}
+    model_usage: dict[str, dict[str, int]] = {}
+    for row in rows:
+        date = au.local_date(row.get("startTime"))
+        if not date:
+            continue
+        counters = counters_from_row(row)
+        model = model_from_row(row)
+        au.merge_day(per_day, date, counters, model)
+        au.add_counters(model_usage.setdefault(model, au.empty_counters()), counters)
+    return per_day, model_usage
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="采集 Fireworks 用量")
+    parser.add_argument("--force", action="store_true", help="忽略缓存（本采集器无缓存，接受此参数以统一接口）")
+    parser.add_argument("--limits-only", action="store_true", help="只取额度（Fireworks 无速率限额，等同空记录）")
+    parser.add_argument("--days", type=int, default=30, help="统计最近多少天（默认 30）")
+    args = parser.parse_args()
+
+    limits: list[dict[str, Any]] = []
+    status = ""
+    tier = ""
+    per_day: dict[str, Any] = {}
+    model_usage: dict[str, dict[str, int]] = {}
+    sessions: set[str] = set()
+    prompts = 0
+
+    api_key, account_id = resolve_credentials()
+    if not api_key:
+        status = f"未配置 Fireworks 凭据。{AUTH_HELP}"
+    else:
+        try:
+            client = FireworksClient(api_key)
+            if not account_id:
+                account_id = first_account_id(client)
+            rows = account_rows(client, account_id, args.days)
+            per_day, model_usage = aggregate(rows)
+            config = agent_config()
+            credits = config.get("credits")
+            if isinstance(credits, (int, float, str)):
+                try:
+                    remaining = float(credits) - spent_usd(client, account_id, args.days)
+                    limits.append({
+                        "label": "余额（估算）",
+                        "percent": 0.0,
+                        "resetsAt": "",
+                    })
+                    tier = f"约 ${max(0.0, remaining):.2f} 可用"
+                except (TypeError, ValueError):
+                    pass
+            if not per_day:
+                status = "Fireworks 账号可读，但最近没有 SERVERLESS 用量"
+        except FireworksError as error:
+            status = str(error)
+        # billing API 不提供提示数与会话数：保持为空，而不是编一个数出来。
+        prompts = 0
+
+    record = {
+        "schemaVersion": au.SCHEMA_VERSION,
+        "id": AGENT_ID,
+        "name": AGENT_NAME,
+        "ready": bool(per_day) or bool(limits),
+        "hasLocalStats": bool(per_day),
+        "tierLabel": tier,
+        "limits": limits,
+        "usageStatusText": status,
+        "inputTokenSemantics": "inclusive",
+        "stats": au.build_stats(
+            per_day,
+            model_usage,
+            sessions,
+            prompts,
+            input_includes_cache=True,
+            pricing=au.ccswitch_pricing(),
+        ),
+        "updatedAt": au.dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+    au.write_record(AGENT_ID, record)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

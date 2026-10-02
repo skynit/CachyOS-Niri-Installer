@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+
+# 开关"崩溃捕获"（崩溃监听 + 通知）。
+#
+# 关闭是**两层**的：写一个标记文件，单元里的 `ConditionPathExists=!` 会让它在下次登录时
+# 也不再启动；同时立刻 stop 掉当前会话的服务，不用等到重新登录。
+# 这样"关掉"是一次性动作，而不是每次登录都要再关一遍。
+
+set -Eeuo pipefail
+
+readonly SCRIPT_NAME="${0##*/}"
+readonly FLAG="$HOME/.local/state/cachyos-desktop/toggles/crash-capture-off"
+readonly SERVICE="cachyos-crash-watch.service"
+
+usage() {
+    cat <<EOF
+Usage: $SCRIPT_NAME [toggle|off|on]
+
+关闭/开启崩溃捕获。关闭后本次会话立即停止监听，且下次登录也不会启动。
+
+  （无参数）  在开与关之间切换
+  off        关闭
+  on         开启
+  -h, --help 显示本帮助
+EOF
+}
+
+notify() {
+    if command -v dms >/dev/null 2>&1; then
+        dms notify "$1" >/dev/null 2>&1 || true
+    else
+        notify-send "崩溃捕获" "$1" 2>/dev/null || true
+    fi
+}
+
+disable() {
+    install -d -m 0700 "$(dirname -- "$FLAG")"
+    : > "$FLAG"
+}
+
+enabled() {
+    [[ ! -e $FLAG ]]
+}
+
+case "${1:-toggle}" in
+    toggle)
+        if enabled; then
+            action=off
+        else
+            action=on
+        fi
+        ;;
+    off | disable) action=off ;;
+    on | enable) action=on ;;
+    -h | --help)
+        usage
+        exit 0
+        ;;
+    *)
+        usage >&2
+        exit 2
+        ;;
+esac
+
+if [[ $action == off ]]; then
+    disable
+    # stop 是安全的：Restart=always 不会把被手动停止的单元拉起来。
+    systemctl --user stop "$SERVICE" >/dev/null 2>&1 || true
+    printf '崩溃捕获已关闭（本次会话停止监听，下次登录也不启动）。\n'
+    notify "崩溃捕获已关闭（下次登录也不启动）"
+else
+    rm -f -- "$FLAG"
+    systemctl --user start "$SERVICE" >/dev/null 2>&1 || true
+    printf '崩溃捕获已开启。\n'
+    notify "崩溃捕获已开启"
+fi

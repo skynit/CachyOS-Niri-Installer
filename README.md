@@ -354,7 +354,11 @@ cachyos-agent-skills --harness codex   # 只同步某一个 harness
 
 #### 崩溃诊断
 
-`cachyos-crash-watch.service` 常驻监听 systemd-coredump。进程崩溃后会：
+`cachyos-crash-watch.service` 常驻监听 systemd-coredump。`cachyos-toggle-crash-capture` 可以整体关掉它：
+关闭时写一个标记文件（单元里的 `ConditionPathExists=!` 让它在下次登录时也不启动），并立刻停掉当前会话的
+监听——所以"关掉"是一次性动作，不用每次登录再关一遍。
+
+进程崩溃后会：
 
 1. 把 `pid`/`comm`/`exe`/`signal`/时间写入
    `~/.local/state/cachyos-desktop/agents/last-crash`；
@@ -398,6 +402,7 @@ cachyos-agent-usage-update            # 重新采集（面板每 15 分钟也会
 cachyos-agent-usage-update claude     # 只跑某一个采集器
 cachyos-agent-usage-claude            # 采集器直接输出一条 JSON 记录
 cachyos-agent-usage-codex             # 每个 agent 一个采集器，各自输出一条 JSON 记录
+cachyos-agent-usage-fireworks         # 需要 FIREWORKS_API_KEY（或 firectl / opencode 登录）
 ```
 
 数据链路：采集器 → `~/.local/state/cachyos-desktop/agents/usage/<agent>.json` → 面板读取。
@@ -453,7 +458,7 @@ Niri 没有条件绑定，用可选 include 才能做到"**装了听写才有这
 DMS 换壁纸或切明暗后，把当前的**明暗模式**同步给各 agent，省得每次都要手动去各家设置里改：
 
 ```bash
-cachyos-agent-theme-sync            # 同步一次
+cachyos-agent-theme-sync            # 同步一次（生成 Claude 自定义主题 + Hermes skin 并接线）
 cachyos-agent-theme-sync --status   # 只看当前模式与各 agent 状态，不写文件
 cachyos-agent-theme-sync --dry-run  # 只显示会改什么
 ```
@@ -470,6 +475,12 @@ cachyos-agent-theme-sync --dry-run  # 只显示会改什么
 **为什么不做完整配色主题**：Claude Code 支持自定义主题文件，但它的 schema 无法在本机可靠
 核实（发行的是打包过的二进制，从中提取只会拿到 minified JS 的噪声）。本项目宁可少做，
 也不写一份"看起来对、实际不生效"的主题文件——这正是审核阶段反复出现的问题类型。
+同步做两件事：把 DMS 的 Material 3 调色板渲染成 **Claude Code 自定义主题**
+（`~/.claude/themes/cachyos.json`，键集取自 Omarchy 的 `claude.json.tpl`）与 **Hermes skin**
+（`~/.hermes/skins/cachyos.yaml`，装了 Hermes 才写），再把 `settings.json` 的 `theme` 指向它。
+渲染与校验都在 `assets/lib/agent_theme.py`：校验不过就完全不写、并且不改 `settings.json`——
+宁可不换主题，也不能让 agent 去读一个它认不出的文件。
+
 想补的话，只需要在 `bin/cachyos-agent-theme-sync` 的取值表里加一行。
 
 #### 新增一个 agent
@@ -702,6 +713,9 @@ AI Agent 这一层是**借鉴 [Omarchy](https://omarchy.org/) 的设计**做的�
 | 470 个命令的 CLI 路由器（元数据头 + 最长前缀匹配） | 显式 `cachyos-*` 命令 + `verify.sh` 遍历 | 48 个命令用不上路由层 |
 | mise stub 按需安装 agent | 用 pacman / AUR 安装 | 不引入第二套包管理器 |
 | `omarchy-shell` 的 QML 插件 | DMS 插件（`plugin.json`） | 宿主不同，插件 API 完全不同 |
+| `omarchy-agent-usage-fireworks` | `cachyos-agent-usage-fireworks` | 同一套 Fireworks 计费 API；本机的 HTTP 链路用 stub 服务器验证过 |
+| `omarchy-theme-set-hermes` | `cachyos-agent-theme-sync` 的 Hermes 分支 | skin 格式相同（`name`/`description`/`colors` 44 键），配色来自 DMS 而不是静态主题 |
+| `omarchy-toggle-crash-capture` | `cachyos-toggle-crash-capture` | 同样用"标记文件 + 单元条件"实现跨登录关闭 |
 | 用 `--exec` 绕开"shell 不回发 ActionInvoked" | 直接用 `notify-send -A -w` | 在本项目实测 DMS（quickshell）**会**回发 `ActionInvoked`，不需要绕 |
 
 ### 已知限制

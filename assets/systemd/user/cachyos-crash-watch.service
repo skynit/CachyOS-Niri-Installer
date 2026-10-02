@@ -1,5 +1,8 @@
 [Unit]
 Description=Watch systemd-coredump and offer an AI diagnosis
+# 被 cachyos-toggle-crash-capture 关闭时，标记文件存在 → 连启动都不启动，
+# 于是关闭能跨登录保持，而不是每次登录都要再关一遍。
+ConditionPathExists=!%h/.local/state/cachyos-desktop/toggles/crash-capture-off
 Documentation=man:coredumpctl(1) man:systemd.journal-fields(7)
 After=dms.service
 # 默认限流是 10 秒内 5 次，而 RestartSec=5 时 10 秒最多重启 2 次，永远凑不满 →

@@ -397,6 +397,7 @@ check_ai_agent_stack() {
 
     check_file "$share_dir/assets/lib/agent.sh"
     check_file "$share_dir/assets/lib/agent_usage.py"
+    check_file "$share_dir/assets/lib/agent_theme.py"
     for skill in cachyos diagnose-crash; do
         check_file "$skill_root/$skill/SKILL.md"
     done
@@ -434,6 +435,14 @@ check_ai_agent_stack() {
     done
 
     # 崩溃监听跟随 niri 会话；安装时用户管理器可能不可达，所以只警告。
+    # 关闭标记必须被单元读取，否则"关闭崩溃捕获"只在本次会话有效。
+    if grep -q 'ConditionPathExists=!.*crash-capture-off' \
+        "$SCRIPT_DIR/assets/systemd/user/cachyos-crash-watch.service"; then
+        pass "crash watch honours the disable flag across logins"
+    else
+        fail "crash watch does not read the crash-capture-off flag"
+    fi
+
     if systemctl --user is-enabled --quiet cachyos-crash-watch.service 2>/dev/null; then
         pass "cachyos-crash-watch.service is enabled"
     else
@@ -442,6 +451,7 @@ check_ai_agent_stack() {
 }
 
 check_dms_plugin_stack() {
+    local collector agent
     local share_dir="${CACHYOS_DESKTOP_SHARE_DIR:-/usr/local/share/cachyos-desktop}"
     local plugin_dir="$HOME/.config/DankMaterialShell/plugins/CachyosAgents"
     local settings_file="$HOME/.config/DankMaterialShell/settings.json"
@@ -486,6 +496,19 @@ check_dms_plugin_stack() {
     fi
 
     # 面板没有记录可读时会显示占位符，所以这里也确认采集器至少跑成功过一次。
+    # 每个采集器都必须在面板的 agents 表里登记：加了采集器却忘了登记，面板永远不会显示它
+    # （README 提醒过、我自己也踩过一次）。
+    for collector in "$SCRIPT_DIR"/bin/cachyos-agent-usage-*; do
+        [[ -f $collector ]] || continue
+        agent="${collector##*/cachyos-agent-usage-}"
+        [[ $agent == update ]] && continue
+        if grep -q "id: \"$agent\"" "$SCRIPT_DIR/assets/dms-plugins/CachyosAgents/Usage.js"; then
+            pass "usage collector is registered in the panel: $agent"
+        else
+            fail "usage collector is missing from the panel agents table: $agent"
+        fi
+    done
+
     if compgen -G "$HOME/.local/state/cachyos-desktop/agents/usage/*.json" >/dev/null; then
         pass "agent usage records exist"
     else

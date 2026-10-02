@@ -90,6 +90,7 @@ bash tests/run-all.sh # 纯函数测试，不需要桌面环境
 | Niri 主配置（输入、布局、include） | `~/.config/niri/config.kdl` | 同上 | 是 |
 | 动态配色 / 布局 / 光标 / 模糊 | `~/.config/niri/dms/{colors,layout,alttab,outputs,cursor,wpblur}.kdl` | **DMS 生成，不要手改**（会被重写） | 否 |
 | 面板、启动器、锁屏等 DMS 行为 | `~/.config/DankMaterialShell/settings.json`（或用设置界面） | 界面改自动生效；手工改后可能要 `dms restart` | 否 |
+| agent 主题产物 | `~/.claude/themes/cachyos.json`、`~/.hermes/skins/cachyos.yaml` | 由 `cachyos-agent-theme-sync` 从 DMS 调色板生成；不要手改，重跑同步即可 |
 | DMS 插件 | `~/.config/DankMaterialShell/plugins/<id>/` | `dms ipc call plugin-scan scan`（重扫全部）或 `rescan <插件 id>` | 否 |
 | Waybar 顶/底栏与样式 | `~/.config/waybar/{top,bottom}.jsonc`、`style.css` | `cachyos-waybar-top` / `-bottom` / `-toggle`（内部 `pkill -x waybar` 再启动） | 是 |
 | Kitty 字体等 | `~/.config/kitty/cachyos-font.conf`（由 `kitty.conf` include） | 开新窗口生效 | 是 |

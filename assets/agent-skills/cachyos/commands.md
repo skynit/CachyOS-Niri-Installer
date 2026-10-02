@@ -16,6 +16,7 @@ cachyos-agent-skills [--quiet] [--harness <agent>]
 cachyos-agent-crash <pid>|--latest
                               把一次进程崩溃交给默认 agent 诊断
 cachyos-crash-mute [<程序> [off]]     按程序静默崩溃提醒（只支持 off，没有 on）
+cachyos-toggle-crash-capture [off|on]  关闭/开启崩溃捕获（关闭会跨登录保持）
 cachyos-ai-config-sync status|backup|sync
                               在 CC Switch 数据库与 Codex 配置之间同步 provider
 ```

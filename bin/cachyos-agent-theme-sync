@@ -14,6 +14,8 @@ set -Eeuo pipefail
 readonly SCRIPT_NAME="${0##*/}"
 readonly COLORS_FILE_DEFAULT="$HOME/.cache/DankMaterialShell/dms-colors.json"
 
+readonly THEME_NAME="cachyos"
+
 DRY_RUN=false
 QUIET=false
 
@@ -45,6 +47,9 @@ say() {
     [[ $QUIET == true ]] && return 0
     printf '%s\n' "$1"
 }
+
+SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SELF_DIR
 
 colors_file="${CACHYOS_DMS_COLORS_FILE:-$COLORS_FILE_DEFAULT}"
 
@@ -99,19 +104,71 @@ apply_json_key() {
 synced=0
 skipped=()
 
-# Claude Code：settings.json 的 theme 字段。
+# ---- 生成主题文件（Claude Code 自定义主题 + Hermes skin）------------------------
+#
+# 键集取自 Omarchy 的 default/themed/{claude.json,hermes.yaml}.tpl——那是这两种格式的权威真源。
+# 渲染与校验都在 assets/lib/agent_theme.py 里（纯计算，可被测试覆盖）；校验不过就完全不写，
+# 宁可不换主题，也不能塞一个 agent 读不懂的文件进去。
+theme_helper=""
+for candidate in "$SELF_DIR/../assets/lib/agent_theme.py" \
+    "${CACHYOS_DESKTOP_SHARE_DIR:-/usr/local/share/cachyos-desktop}/assets/lib/agent_theme.py"; do
+    if [[ -f $candidate ]]; then
+        theme_helper="$(cd -- "$(dirname -- "$candidate")" && pwd)/$(basename -- "$candidate")"
+        break
+    fi
+done
+
 claude_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 claude_settings="$claude_dir/settings.json"
-if [[ -n $claude_theme ]]; then
+hermes_home="${HERMES_HOME:-$HOME/.hermes}"
+hermes_present=false
+[[ -d $hermes_home ]] && hermes_present=true
+
+theme_target="$claude_theme"
+theme_note=""
+
+if [[ -n $theme_helper ]]; then
+    helper_args=(--colors "$colors_file")
+    [[ $hermes_present == false ]] && helper_args+=(--no-hermes)
+    [[ $status_only == true ]] && helper_args+=(--validate-only)
+    [[ $DRY_RUN == true && $status_only == false ]] && helper_args+=(--dry-run)
+    helper_args+=(--quiet)
+
+    if helper_output="$(python3 "$theme_helper" "${helper_args[@]}" 2>&1)"; then
+        # 主题文件写成功才把 settings.json 指向它；否则回落到内建的 dark/light。
+        if [[ $status_only == false ]]; then
+            theme_target="$THEME_NAME"
+            say "  主题文件：$(jq -r '.claudeTheme' <<<"$helper_output" 2>/dev/null || echo 已处理)"
+            if [[ $hermes_present == true ]]; then
+                say "  Hermes skin：$(jq -r '.hermesSkin // "（未生成）"' <<<"$helper_output" 2>/dev/null || echo 已处理)"
+            fi
+        else
+            theme_target="$THEME_NAME"
+            if [[ $hermes_present == true ]]; then
+                say "  主题渲染校验通过：Claude 主题 + Hermes skin"
+            else
+                say "  主题渲染校验通过：Claude 主题（Hermes 未安装）"
+            fi
+        fi
+    else
+        theme_note="主题文件渲染失败，回落到内建 dark/light"
+        [[ $status_only == false ]] && say "  $theme_note：$helper_output"
+    fi
+else
+    theme_note="找不到 agent_theme.py，只同步明暗模式"
+fi
+
+# Claude Code：settings.json 的 theme 字段。
+if [[ -n $theme_target ]]; then
     if [[ -d $claude_dir ]]; then
         if [[ -s $claude_settings ]]; then
             current="$(jq -r '.theme // empty' "$claude_settings" 2>/dev/null || true)"
             if [[ $status_only == true ]]; then
-                say "  Claude Code：当前 theme=${current:-（未设置）}，目标 $claude_theme"
-            elif [[ $current == "$claude_theme" ]]; then
-                say "  Claude Code 已是 $claude_theme，无需改动。"
+                say "  Claude Code：当前 theme=${current:-（未设置）}，目标 $theme_target"
+            elif [[ $current == "$theme_target" ]]; then
+                say "  Claude Code 已是 $theme_target，无需改动。"
             else
-                apply_json_key "$claude_settings" theme "$claude_theme"
+                apply_json_key "$claude_settings" theme "$theme_target"
             fi
             synced=$((synced + 1))
         else
@@ -121,6 +178,13 @@ if [[ -n $claude_theme ]]; then
     else
         skipped+=("Claude Code（未安装）")
     fi
+fi
+
+# Hermes：skin 文件由 agent_theme.py 写进 $HERMES_HOME/skins，这里只汇报。
+if [[ $hermes_present == true ]]; then
+    synced=$((synced + 1))
+elif [[ -n $theme_helper ]]; then
+    skipped+=("Hermes（未安装，没有 $hermes_home）")
 fi
 
 # Codex 与 OpenCode：本轮不同步，理由写在这里，免得以后有人以为是漏了。
@@ -137,5 +201,5 @@ if ((${#skipped[@]} > 0)); then
 fi
 
 if [[ $status_only == false ]]; then
-    say "已同步 $synced 个 agent 到 $mode 模式。"
+    say "已同步 $synced 个 agent 到 $mode 模式${theme_note:+（$theme_note）}。"
 fi
