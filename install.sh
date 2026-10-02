@@ -899,12 +899,12 @@ post_install() {
         done < <(cachyos_agent_supported 2>/dev/null || true)
         if ((${#available_agents[@]} == 1)); then
             if cachyos-default-agent "${available_agents[0]}" >/dev/null 2>&1; then
-                tui_ok "默认 AI agent：${available_agents[0]}（只探测到这一个）"
+                tui_ok "默认 AI 编程助手：${available_agents[0]}（只探测到这一个）"
             fi
         elif ((${#available_agents[@]} > 1)); then
             info "several AI agents found; press Super+grave and pick one (the choice is remembered)"
         else
-            tui_skip "没有探测到可用的 agent CLI，先不设默认值"
+            tui_skip "没有装 AI 编程助手，先不设默认值"
         fi
     fi
 
@@ -918,7 +918,7 @@ post_install() {
     if ! cachyos-agent-theme-sync --quiet; then
         warn "could not sync the light/dark mode to the AI agents (see cachyos-agent-theme-sync --status)"
     else
-        tui_ok "已把当前主题同步给 agent（并挂上 path 单元跟随配色变化）"
+        tui_ok "已把当前明暗主题同步给 AI 助手，之后跟随配色变化"
     fi
 }
 
@@ -929,8 +929,8 @@ main() {
     TUI_PHASE_TOTAL=6
 
     tui_banner "CachyOS · Niri · DankMaterialShell" \
-        "一键把 CachyOS 装成 Niri + DMS 桌面，并接上 AI agent 层" \
-        "以普通用户运行；需要联网；不会动仓库/引导器/NetworkManager 连接/Secure Boot"
+        "帮你把 CachyOS 装成 Niri 桌面（DMS 顶栏），AI 编程助手也一起配好" \
+        "别用 root 跑；要联网；软件源、引导器、网络连接、Secure Boot 都不会动"
 
     tui_phase_start "检查环境"
     preflight
@@ -972,7 +972,7 @@ main() {
     remove_blocked_brand_components
     tui_phase_done
 
-    tui_phase_start "配置与 AI 层"
+    tui_phase_start "桌面配置与 AI 助手"
     install_desktop_assets
     install_agent_skills
     configure_dms_settings
