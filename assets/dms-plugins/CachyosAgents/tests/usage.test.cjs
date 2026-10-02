@@ -212,3 +212,54 @@ test('折线图与迷你条：两种数据形状都接受', () => {
     assert.equal(usage.chartPoints([{ totalTokens: 80 }], 100, 40, 0)[0].ratio, 1);
     assert.deepEqual(arr(usage.sparkline([{ totalTokens: 0 }, { totalTokens: 50 }])), [0, 1]);
 });
+
+test('折线图坐标：任何现实输入都不产生 NaN 或越界点', () => {
+    // 坐标一旦是 NaN/Infinity，Canvas 会静默什么都不画——所以这里逐个输入检查不变量。
+    const cases = [
+        [],
+        days([['2026-10-02', 0, 0]]),
+        days([['2026-10-01', 5, 0], ['2026-10-02', 0, 0]]),
+        days([['a', 1, 0], ['b', 2, 0], ['c', 3, 0], ['d', 4, 0], ['e', 5, 0], ['f', 6, 0], ['g', 7, 0]]),
+        days([['a', 0, 0], ['b', 0, 0], ['c', 0, 0]]),
+        days([['a', 1, 0], ['b', 999999999999, 0]]),   // 极端离群值
+        [{ tokens: 0 }, { totalTokens: 100 }, {}],      // 混合形状 + 缺字段
+        [{ tokens: 'x' }, { tokens: null }, { tokens: -5 }],  // 全是垃圾
+        // 正负混合：max 为正时负值会把 ratio 拉成负数，点会被画到画布下方
+        days([['a', 100, 0], ['b', -5, 0]])
+    ];
+
+    for (const input of cases) {
+        const points = usage.chartPoints(input, 300, 60, 6);
+        for (const point of points) {
+            assert.ok(Number.isFinite(point.x), `x 必须是有限值: ${point.x}`);
+            assert.ok(Number.isFinite(point.y), `y 必须是有限值: ${point.y}`);
+            assert.ok(point.x >= 0 && point.x <= 300, `x 越界: ${point.x}`);
+            assert.ok(point.y >= 0 && point.y <= 60, `y 越界: ${point.y}`);
+            assert.ok(point.ratio >= 0 && point.ratio <= 1, `ratio 越界: ${point.ratio}`);
+        }
+    }
+});
+
+test('折线图坐标：负数与垃圾值当 0 处理，不产生负坐标', () => {
+    const points = usage.chartPoints([{ tokens: -5 }, { tokens: 'x' }], 100, 40, 0);
+    assert.equal(points[0].tokens, 0);
+    assert.equal(points[0].y, 40);
+});
+
+test('hasRecord 区分"没记录"与"有记录但无数据"', () => {
+    const withRecord = usage.summarise([record({ hasLocalStats: false })], {}).find(r => r.id === 'claude');
+    assert.equal(withRecord.hasRecord, true, '有记录但无本地统计时仍算有记录');
+    assert.equal(withRecord.state, 'missing');
+
+    const withoutRecord = usage.summarise([record()], {}).find(r => r.id === 'opencode');
+    assert.equal(withoutRecord.hasRecord, false, '没有记录的 agent 不应被弹窗列出');
+    assert.equal(withoutRecord.state, 'waiting');
+});
+
+test('已删除的旧 displayMode 值会安全回落到 today', () => {
+    // 升级路径：老版本的设置里可能存着 "icon"（只显示图标）。它已不再是合法模式，
+    // 但绝不能因此让状态栏空掉或显示异常内容。
+    assert.equal(usage.barText([record()], { displayMode: 'icon' }), '今天 500');
+    assert.equal(usage.barText([record()], { displayMode: '' }), '今天 500');
+    assert.equal(usage.barText([record()], {}), '今天 500');
+});

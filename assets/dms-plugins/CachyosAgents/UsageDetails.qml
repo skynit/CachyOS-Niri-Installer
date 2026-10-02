@@ -16,6 +16,12 @@ Column {
     spacing: 12
 
     readonly property var rows: Usage.summarise(root.source.records, root.source.settings)
+    // 只列出真的有记录的 agent：没有任何采集器的 agent（例如还没实现的 opencode）
+    // 会一直停在 "未采集"，给它留一张永远空的卡片只是噪音。
+    readonly property var listedRows: root.rows.filter(function (row) {
+        return row.hasRecord === true;
+    })
+    readonly property int hiddenRows: root.rows.length - root.listedRows.length
     readonly property var fresh: Usage.freshness(root.source.updatedAt, Date.now(), (root.source.refreshSeconds + 60) * 1000)
 
     RowLayout {
@@ -93,7 +99,7 @@ Column {
             spacing: 10
 
             Repeater {
-                model: root.rows
+                model: root.listedRows
 
                 delegate: Rectangle {
                     id: card
@@ -264,6 +270,9 @@ Column {
                                 onPaint: {
                                     const ctx = getContext("2d");
                                     const inset = 6;
+                                    // 显式清屏，再 reset()：不依赖 reset() 是否顺带清空画布
+                                    // （Qt 头文件里没写这一点），否则重绘会留下上一次的折线。
+                                    ctx.clearRect(0, 0, width, height);
                                     ctx.reset();
                                     const points = Usage.chartPoints(card.agent.days, width, height, inset);
                                     if (points.length === 0)
@@ -315,9 +324,12 @@ Column {
 
     StyledText {
         width: root.width - root.leftPadding - root.rightPadding
-        text: root.rows.length === 0
-            ? "没有启用的 agent，可在设置里打开"
+        text: root.listedRows.length === 0
+            ? (root.rows.length === 0
+                ? "没有启用的 agent，可在设置里打开"
+                : "还没有采集到任何用量——先跑一次 cachyos-agent-usage-update")
             : "更新于 " + root.fresh.text + " · 数据由 cachyos-agent-usage-update 在本机采集"
+                + (root.hiddenRows > 0 ? "（" + root.hiddenRows + " 个 agent 还没有采集器，未显示）" : "")
         font.pixelSize: 11
         color: Theme.surfaceVariantText
         wrapMode: Text.WordWrap

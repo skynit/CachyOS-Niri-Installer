@@ -87,7 +87,11 @@ function dayTokens(day) {
     var value = num(day.tokens);
     if (value === null)
         value = num(day.totalTokens);
-    return value === null ? 0 : value;
+    if (value === null)
+        return 0;
+    // 负数在真实数据里不可能出现；但它会让 ratio 变负，把点画到画布外（Canvas 不报错，
+    // 只是视觉上"线掉出去了"）。这里一律当 0，边界处的防御成本最低。
+    return value < 0 ? 0 : value;
 }
 
 function daysOf(record) {
@@ -150,8 +154,11 @@ function summarise(records, settings) {
                 icon: agent.icon
             };
             if (!record) {
+                // hasRecord 区分"还没有记录"与"有记录但没数据"：前者是根本没装对应采集器，
+                // 弹窗据此不显示空卡片（否则 opencode 这类没有采集器的 agent 会永远挂着）。
                 return Object.assign(base, {
                     state: "waiting",
+                    hasRecord: false,
                     detail: "还没有采集过",
                     todayTokens: null,
                     todayCost: null,
@@ -174,6 +181,7 @@ function summarise(records, settings) {
             }) : [];
             return Object.assign(base, {
                 state: hasLocal || limits.length > 0 ? "ready" : "missing",
+                hasRecord: true,
                 detail: typeof record.usageStatusText === "string" ? record.usageStatusText : "",
                 todayTokens: today ? today.tokens : null,
                 todayCost: today ? today.cost : null,
