@@ -6,6 +6,16 @@
 
 set -Eeuo pipefail
 
+reload_niri() {
+    command -v niri >/dev/null 2>&1 || return 0
+    # 子命令名在不同 niri 版本间变过：当前版本是 load-config-file，旧版叫 reload-config。
+    # 两个都试一遍，都失败也无所谓——重载配置不是致命步骤（而且原来的写法在本机
+    # niri 上直接报 unrecognized subcommand，等于**从来没重载过**）。
+    niri msg action load-config-file >/dev/null 2>&1 && return 0
+    niri msg action reload-config >/dev/null 2>&1 || true
+}
+
+
 if [[ ! -t 0 || ! -t 1 ]]; then
     if [[ "${CACHYOS_VOXTYPE_TERMINAL:-0}" != 1 ]]; then
         command -v kitty >/dev/null 2>&1 || {
@@ -19,9 +29,7 @@ fi
 
 # 先撤快捷键并让 Niri 重新加载：这样即使后面的卸载失败，也不会留下指向不存在的命令的绑定。
 rm -f -- "$HOME/.config/niri/cachyos-voxtype.kdl"
-if command -v niri >/dev/null 2>&1; then
-    niri msg action reload-config >/dev/null 2>&1 || true
-fi
+reload_niri
 
 if command -v voxtype >/dev/null 2>&1; then
     systemctl --user disable --now voxtype.service >/dev/null 2>&1 || true

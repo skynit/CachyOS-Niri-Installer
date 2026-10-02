@@ -180,6 +180,16 @@ assert_equal 'true' "$(compgen -G "$WORK_DIR/home/.config/voxtype.bak-*" >/dev/n
 assert_equal '# 用户自己的改动' "$(cat "$WORK_DIR"/home/.config/voxtype.bak-*/config.toml)" \
     '卸载：备份里保留了用户的内容'
 
+# ---- niri 重载：必须用当前版本存在的子命令 --------------------------------------
+# 本机 niri 上 `niri msg action reload-config` 是 unrecognized subcommand，
+# 原来的脚本用 `|| true` 把它吞掉了 —— 等于装完听写从来没重载过配置，
+# 快捷键自然不会生效（实测就是这个问题）。现在应优先用 load-config-file。
+if grep -q 'niri msg action load-config-file' "$STUB_LOG"; then
+    pass 'niri：安装后按当前版本支持的子命令重载配置'
+else
+    fail 'niri：没有用 load-config-file 重载' "$(grep niri "$STUB_LOG" || true)"
+fi
+
 # ---- 安装参数：模型 / 语言 / 提示词，且顺序必须是"先写配置再下载" -----------------
 # 这条顺序是实测踩出来的：`voxtype setup --download` 下载的是配置里指定的模型，
 # 反过来先下载就会拿到默认的英文模型，中文直接输出乱码拼音。
@@ -251,6 +261,13 @@ if CACHYOS_VOXTYPE_TERMINAL=1 "$PROJECT_DIR/bin/cachyos-voxtype-install" --bogus
 else
     pass '安装：未知参数退出非 0'
 fi
+
+# 卸载同样要重载，否则会留下指向已删除快捷键文件的绑定
+: > "$STUB_LOG"
+CACHYOS_VOXTYPE_TERMINAL=1 CACHYOS_DESKTOP_SHARE_DIR="$PROJECT_DIR" HOME="$WORK_DIR/home" \
+    PATH="$stub_dir:$PATH" "$PROJECT_DIR/bin/cachyos-voxtype-remove" >/dev/null 2>&1 || true
+grep -q 'niri msg action load-config-file' "$STUB_LOG" \
+    && pass 'niri：卸载后重载配置' || fail 'niri：卸载后没有重载配置'
 
 # ---- 模型命令：带名字时非交互切换 ----------------------------------------------
 : > "$STUB_LOG"

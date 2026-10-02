@@ -59,6 +59,15 @@ parse_args() {
     done
 }
 
+reload_niri() {
+    command -v niri >/dev/null 2>&1 || return 0
+    # 子命令名在不同 niri 版本间变过：当前版本是 load-config-file，旧版叫 reload-config。
+    # 两个都试一遍，都失败也无所谓——重载配置不是致命步骤（而且原来的写法在本机
+    # niri 上直接报 unrecognized subcommand，等于**从来没重载过**）。
+    niri msg action load-config-file >/dev/null 2>&1 && return 0
+    niri msg action reload-config >/dev/null 2>&1 || true
+}
+
 notify() {
     if command -v dms >/dev/null 2>&1; then
         dms notify "$1" >/dev/null 2>&1 || true
@@ -131,9 +140,7 @@ voxtype setup systemd
 # 快捷键：Niri 没有条件绑定，所以用"可选 include"实现"装了听写才有这几个键"。
 # 直接写进 binds.kdl 会让没用听写的人白白失去它们（裸 F9 更是应用自己的功能键）。
 install -m 0644 "$SHARE_DIR/assets/niri/cachyos-voxtype.kdl" "$HOME/.config/niri/cachyos-voxtype.kdl"
-if command -v niri >/dev/null 2>&1; then
-    niri msg action reload-config >/dev/null 2>&1 || true
-fi
+reload_niri
 
 # 模型/语言/提示词都是启动时读取的，改过就重启一次，免得"改了没生效"。
 if [[ -n $MODEL || -n $LANGUAGE || -n $INITIAL_PROMPT ]]; then

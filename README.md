@@ -755,6 +755,27 @@ Niri 没有条件绑定，用可选 include 才能做到"**装了听写才有这
 `$XDG_RUNTIME_DIR/voxtype/state` 读取，由 `voxtype` 自己维护。用 `cachyos-voxtype-remove`
 卸载时会先把 `~/.config/voxtype` 备份成带时间戳的目录，不会静默丢掉你调过的设备或采样率。
 
+**快捷键按了没反应？** 按顺序查这三处（都是实际踩过的）：
+
+1. **主配置必须 include 那个快捷键文件**。装听写只写出 `~/.config/niri/cachyos-voxtype.kdl`，
+   真正让 Niri 认识这两个键的是 `~/.config/niri/config.kdl` 里的这一行：
+   `include optional=true "cachyos-voxtype.kdl"`。老机器上的 `config.kdl` 可能是早期版本、
+   没有这一行，于是文件在、键没绑。补上后重载：`niri msg action load-config-file`。
+2. **重载子命令的名字随 niri 版本变过**：当前版本是 `load-config-file`，旧版叫
+   `reload-config`。用错名字时 niri 只会报 `unrecognized subcommand`——安装脚本早期用
+   `|| true` 把它吞掉了，表现就是"装完了但快捷键永远不生效"。`cachyos-voxtype-install`
+   现在两个都试。
+3. **没有视觉反馈不等于没在录音**。栏上那个控件是 **Waybar 模块**：机器上跑的是 DMS 自带栏
+   （DMS 的栏与 Waybar 二选一）时它不会出现，此时靠通知反馈——
+   `voxtype config set output.notification.on_recording_start true`（录音开始提醒）与
+   `output.notification.on_transcription true`（转写完成时把文字发成通知）。想用栏上控件就
+   起 Waybar：`cachyos-waybar-bottom`（或 `Mod+Ctrl+F3`）。
+
+另外，文字是**键入当前焦点窗口**（`wtype`）。若通知里能看到识别结果、光标处却不出字，说明
+焦点窗口不接受合成按键，可把输出方式换成剪贴板粘贴：
+`voxtype config set output.mode paste`（或 `clipboard`），再 `systemctl --user restart voxtype`。
+
+
 
 ### 主题同步
 
