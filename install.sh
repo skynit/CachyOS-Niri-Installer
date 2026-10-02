@@ -22,6 +22,12 @@ source "$SCRIPT_DIR/packages.sh"
 # 再决定是否设置默认 agent。放在这里是为了不在安装器里复制一份映射。
 # shellcheck source=assets/lib/agent.sh
 source "$SCRIPT_DIR/assets/lib/agent.sh"
+
+# 终端界面：零依赖（不引入 gum/dialog），在真终端里画框、上色、显示进度；
+# 只要输出不是终端（管道、重定向到日志、CI）就自动退化成纯文本——verify.sh 与 tests/
+# 都在抓这些日志，界面不能污染它们。
+# shellcheck source=assets/lib/tui.sh
+source "$SCRIPT_DIR/assets/lib/tui.sh"
 # shellcheck source=hardware.sh
 source "$SCRIPT_DIR/hardware.sh"
 
@@ -44,16 +50,18 @@ readonly -a DMS_FEATURE_PACKAGES=(
     cups-pk-helper
 )
 
+# 下面三个仍然保留 [INFO]/[WARN]/[ERROR] 前缀：日志、verify.sh 与 tests/ 都在认这些标记，
+# 界面只负责给标记上色、并顺带统计条数。
 info() {
-    printf '[INFO] %s\n' "$*"
+    tui_info "$*"
 }
 
 warn() {
-    printf '[WARN] %s\n' "$*" >&2
+    tui_warn "$*"
 }
 
 die() {
-    printf '[ERROR] %s\n' "$*" >&2
+    tui_error "$*"
     exit 1
 }
 
@@ -93,7 +101,7 @@ ensure_temp_dir() {
 }
 
 print_command() {
-    printf '[DRY-RUN]'
+    printf '%s[DRY-RUN]%s' "$TUI_MUTED" "$TUI_RESET"
     printf ' %q' "$@"
     printf '\n'
 }
@@ -188,24 +196,30 @@ preflight() {
 }
 
 confirm_plan() {
-    cat <<EOF
+    local detected_hardware hardware_stack
+    if [[ "$SKIP_HARDWARE" == true ]]; then
+        detected_hardware="skipped"
+        hardware_stack="skipped"
+    else
+        detected_hardware="$(cachyos_hardware_summary)"
+        hardware_stack="auto-selected"
+    fi
 
-CachyOS + Niri + DMS installation plan
-  User:             $(id -un)
-  Terminal:         $TERMINAL
-  DMS release:      $DMS_VERSION
-  Full update:      $([[ "$SKIP_UPDATE" == true ]] && printf 'no' || printf 'yes')
-  Detected hardware: $(cachyos_hardware_summary)
-  Hardware stack:   $([[ "$SKIP_HARDWARE" == true ]] && printf 'skipped' || printf 'auto-selected')
-  Replace configs:  yes
-  DMS integrations: DankSearch, DankCalendar
-  Applications:     daily, Chinese, office, development, media, VM, gaming, tools
-  Display manager:  Ly
-  Dry run:          $DRY_RUN
-
-Preserved: CachyOS repositories/kernel, bootloader, NetworkManager connections,
-Secure Boot configuration, and Windows partitions.
-EOF
+    # 计划用框展示：这是用户做决定前唯一要读的一屏，字号对齐比散落的裸文本好读得多。
+    tui_banner "CachyOS + Niri + DMS 安装计划" \
+        "User              $(id -un)" \
+        "Terminal          $TERMINAL" \
+        "DMS release       $DMS_VERSION" \
+        "Full update       $([[ "$SKIP_UPDATE" == true ]] && printf 'no' || printf 'yes')" \
+        "Detected hardware $detected_hardware" \
+        "Hardware stack    $hardware_stack" \
+        "Replace configs   yes" \
+        "DMS integrations  DankSearch, DankCalendar" \
+        "Applications      daily, Chinese, office, development, media, VM, gaming, tools" \
+        "Display manager   Ly" \
+        "Dry run           $DRY_RUN" \
+        "Preserved         CachyOS repositories/kernel, bootloader, NetworkManager" \
+        "                  connections, Secure Boot configuration, Windows partitions"
 
     if [[ "$ASSUME_YES" == true || "$DRY_RUN" == true ]]; then
         return 0
@@ -317,12 +331,17 @@ install_hardware_stack() {
         warn "$note"
     done
     install_available_packages required true "${CACHYOS_HARDWARE_REQUIRED_PACKAGES[@]}"
+    tui_ok "必需硬件包（${#CACHYOS_HARDWARE_REQUIRED_PACKAGES[@]} 个）"
     install_available_packages optional false "${CACHYOS_HARDWARE_OPTIONAL_PACKAGES[@]}"
+    if ((${#CACHYOS_HARDWARE_OPTIONAL_PACKAGES[@]} > 0)); then
+        tui_ok "可选硬件包（${#CACHYOS_HARDWARE_OPTIONAL_PACKAGES[@]} 个，缺了只警告）"
+    fi
 
     if pacman -Q tuned-ppd >/dev/null 2>&1; then
         warn "preserving the installed tuned-ppd power-profile provider"
     else
         install_available_packages power-profile true power-profiles-daemon
+        tui_ok "电源配置服务 power-profiles-daemon"
     fi
 }
 
@@ -332,22 +351,24 @@ install_dms_features() {
 }
 
 install_applications() {
-    info "installing daily applications"
-    install_available_packages daily-app true "${DAILY_APP_PACKAGES[@]}"
-    info "installing Chinese input methods and fonts"
-    install_available_packages Chinese-support true "${CHINESE_PACKAGES[@]}"
-    info "installing office applications"
-    install_available_packages office-app true "${OFFICE_PACKAGES[@]}"
-    info "installing development tools"
-    install_available_packages development-tool true "${DEVELOPMENT_PACKAGES[@]}"
-    info "installing media applications"
-    install_available_packages media-app true "${MEDIA_PACKAGES[@]}"
-    info "installing virtualization applications"
-    install_available_packages virtualization-app true "${VIRTUALIZATION_PACKAGES[@]}"
-    info "installing gaming applications"
-    install_available_packages gaming-app true "${GAMING_PACKAGES[@]}"
-    info "installing system management tools"
-    install_available_packages system-tool true "${SYSTEM_TOOL_PACKAGES[@]}"
+    # 八组应用按顺序装，每组前打一条进度条：这是整次安装里最长的一段，
+    # 用户需要知道"现在到哪儿了、还剩几组"，而不是看着滚动的 pacman 输出猜。
+    local total=8 index name label
+    local -a labels=(每日应用 中文输入法与字体 办公应用 开发工具 影音应用 虚拟机工具 游戏应用 系统管理工具)
+    local -a groups=(DAILY_APP_PACKAGES CHINESE_PACKAGES OFFICE_PACKAGES DEVELOPMENT_PACKAGES
+                     MEDIA_PACKAGES VIRTUALIZATION_PACKAGES GAMING_PACKAGES SYSTEM_TOOL_PACKAGES)
+
+    for ((index = 0; index < total; index++)); do
+        name="${groups[index]}"
+        label="${labels[index]}"
+        # nameref 指向数组；shellcheck 看不到指向关系，会误报成"当字符串用"。
+        # shellcheck disable=SC2178
+        local -n packages="$name"
+        tui_progress $((index + 1)) "$total" "$label（${#packages[@]} 个包）"
+        install_available_packages "$label" true "${packages[@]}"
+        tui_ok "$label"
+        unset -n packages
+    done
 }
 
 install_aur_packages() {
@@ -369,11 +390,21 @@ install_niri_sidebar() {
         return 0
     fi
 
+    # 真终端里让 curl 闭嘴、由我们自己的转圈负责这一行：否则 curl 的进度条会和转圈
+    # 抢同一行，看起来是乱码。非终端（日志）保持 curl 原样，方便排查下载失败。
+    local -a curl_args=(--fail --location --proto '=https' --tlsv1.2 --retry 3)
+    [[ $TUI_TTY == true ]] && curl_args+=(--silent --show-error)
+
     info "installing pinned niri-sidebar $PINNED_NIRI_SIDEBAR_VERSION"
-    curl --fail --location --proto '=https' --tlsv1.2 --retry 3 "$base_url/$binary_name" -o "$destination"
+    tui_spin_start "下载 niri-sidebar $PINNED_NIRI_SIDEBAR_VERSION"
+    curl "${curl_args[@]}" "$base_url/$binary_name" -o "$destination"
     actual_sha="$(sha256sum "$destination" | awk '{print $1}')"
-    [[ "$actual_sha" == "$PINNED_NIRI_SIDEBAR_SHA256_AMD64" ]] || die "niri-sidebar checksum mismatch"
+    if [[ "$actual_sha" != "$PINNED_NIRI_SIDEBAR_SHA256_AMD64" ]]; then
+        tui_spin_stop warn "niri-sidebar 校验失败"
+        die "niri-sidebar checksum mismatch"
+    fi
     sudo install -o root -g root -m 0755 "$destination" /usr/local/bin/niri-sidebar
+    tui_spin_stop ok "niri-sidebar $PINNED_NIRI_SIDEBAR_VERSION（已校验 SHA256）"
 }
 
 remove_noctalia_profile() {
@@ -738,19 +769,33 @@ download_dankinstall() {
     fi
 
     info "downloading official DankMaterialShell installer $DMS_VERSION"
-    curl "${curl_args[@]}" "$base_url/$asset" -o "$archive"
-    curl "${curl_args[@]}" "$base_url/$asset.sha256" -o "$checksum_file"
+    # 同 niri-sidebar：真终端里让 curl 闭嘴、交给转圈，避免两条进度抢同一行。
+    local -a fetch_args=("${curl_args[@]}")
+    [[ $TUI_TTY == true ]] && fetch_args+=(--silent --show-error)
+    tui_spin_start "下载官方 DMS 安装器 $DMS_VERSION"
+    curl "${fetch_args[@]}" "$base_url/$asset" -o "$archive"
+    curl "${fetch_args[@]}" "$base_url/$asset.sha256" -o "$checksum_file"
 
     expected_sha="$(awk 'NF >= 1 && $1 ~ /^[0-9a-fA-F]{64}$/ { print tolower($1); exit }' "$checksum_file")"
-    [[ -n "$expected_sha" ]] || die "release checksum file is invalid"
+    if [[ -z "$expected_sha" ]]; then
+        tui_spin_stop warn "DMS 校验文件不可用"
+        die "release checksum file is invalid"
+    fi
     actual_sha="$(sha256sum "$archive" | awk '{print $1}')"
-    [[ "$actual_sha" == "$expected_sha" ]] || die "Dank installer checksum mismatch"
+    if [[ "$actual_sha" != "$expected_sha" ]]; then
+        tui_spin_stop warn "DMS 安装器校验失败"
+        die "Dank installer checksum mismatch"
+    fi
 
     if [[ "$DMS_VERSION" == "$PINNED_DMS_VERSION" ]]; then
-        [[ "$actual_sha" == "$PINNED_DMS_SHA256_AMD64" ]] || die "pinned Dank installer checksum mismatch"
+        if [[ "$actual_sha" != "$PINNED_DMS_SHA256_AMD64" ]]; then
+            tui_spin_stop warn "与钉住的 SHA256 不符"
+            die "pinned Dank installer checksum mismatch"
+        fi
     else
         warn "using an unpinned DMS release; verification relies on its GitHub release checksum"
     fi
+    tui_spin_stop ok "官方 DMS 安装器 $DMS_VERSION（已校验 SHA256）"
 
     gzip -dc "$archive" > "$installer"
     chmod 0755 "$installer"
@@ -791,9 +836,12 @@ post_install() {
     fi
 
     systemctl --user daemon-reload
+    tui_ok "systemd 用户单元已重新加载"
     if ! systemctl --user add-wants niri.service dms.service; then
         warn "could not bind dms.service to niri.service; run this after logging in:"
         warn "  systemctl --user add-wants niri.service dms.service"
+    else
+        tui_ok "DMS 已绑定到 Niri 会话"
     fi
 
     # 崩溃监听与 niri 会话同生命周期（unit 里 WantedBy=niri.service，与上面的 dms 一致）。
@@ -806,12 +854,16 @@ post_install() {
     if ! systemctl --user restart cachyos-crash-watch.service; then
         warn "could not start cachyos-crash-watch.service; run this after logging in:"
         warn "  systemctl --user restart cachyos-crash-watch.service"
+    else
+        tui_ok "崩溃监听已启用并重启（Super+\` 之外还能用 cachyos-agent-crash 诊断）"
     fi
 
     # DMS 只在启动时读 settings.json：用量面板插件与状态栏接线要重启一次才生效。
     if systemctl --user is-active --quiet dms.service; then
         if ! systemctl --user restart dms.service; then
             warn "could not restart dms.service; the usage widget appears after the next login"
+        else
+            tui_ok "已重启 DMS（用量面板与状态栏接线生效）"
         fi
     fi
 
@@ -820,12 +872,16 @@ post_install() {
     if ! systemctl --user enable --now cachyos-agent-usage.timer; then
         warn "could not enable cachyos-agent-usage.timer; run this after logging in:"
         warn "  systemctl --user enable --now cachyos-agent-usage.timer"
+    else
+        tui_ok "用量刷新定时器已启用（登录后 2 分钟 + 每 15 分钟）"
     fi
 
     # 先算一次并忽略失败：新用户一登录就该在面板里看到数字，而不是空面板；
     # 但采集失败（没登录过 agent、没有凭据）绝不能把安装判为失败。
     if ! cachyos-agent-usage-update --force >/dev/null 2>&1; then
         warn "could not collect agent usage yet (run cachyos-agent-usage-update after using an agent)"
+    else
+        tui_ok "已采集一次用量数据"
     fi
 
     # 只有一个 agent 可用时直接设为默认：新用户按下 Super+grave 就能用，而不是先面对选择器。
@@ -843,10 +899,12 @@ post_install() {
         done < <(cachyos_agent_supported 2>/dev/null || true)
         if ((${#available_agents[@]} == 1)); then
             if cachyos-default-agent "${available_agents[0]}" >/dev/null 2>&1; then
-                info "default AI agent: ${available_agents[0]}"
+                tui_ok "默认 AI agent：${available_agents[0]}（只探测到这一个）"
             fi
         elif ((${#available_agents[@]} > 1)); then
             info "several AI agents found; press Super+grave and pick one (the choice is remembered)"
+        else
+            tui_skip "没有探测到可用的 agent CLI，先不设默认值"
         fi
     fi
 
@@ -859,28 +917,49 @@ post_install() {
     fi
     if ! cachyos-agent-theme-sync --quiet; then
         warn "could not sync the light/dark mode to the AI agents (see cachyos-agent-theme-sync --status)"
+    else
+        tui_ok "已把当前主题同步给 agent（并挂上 path 单元跟随配色变化）"
     fi
 }
 
 main() {
     parse_args "$@"
+    # 界面要在任何输出之前初始化：它决定了本次跑是画框上色还是纯文本。
+    tui_init
+    TUI_PHASE_TOTAL=6
+
+    tui_banner "CachyOS · Niri · DankMaterialShell" \
+        "一键把 CachyOS 装成 Niri + DMS 桌面，并接上 AI agent 层" \
+        "以普通用户运行；需要联网；不会动仓库/引导器/NetworkManager 连接/Secure Boot"
+
+    tui_phase_start "检查环境"
     preflight
     cachyos_detect_hardware
     cachyos_select_hardware_packages
     confirm_plan
     authenticate
     save_package_snapshot
+    tui_phase_done
 
+    tui_phase_start "系统更新"
     if [[ "$SKIP_UPDATE" == false ]]; then
         info "performing full CachyOS package upgrade"
         run sudo pacman -Syu --noconfirm
+    else
+        tui_skip "已按 --skip-update 跳过全系统升级"
     fi
+    tui_phase_done
 
+    tui_phase_start "硬件与系统服务"
     if [[ "$SKIP_HARDWARE" == false ]]; then
         install_hardware_stack
         configure_system_services
+    else
+        tui_skip "已按 --skip-hardware 跳过驱动与硬件相关服务"
     fi
+    tui_phase_done
 
+    tui_phase_start "应用与桌面"
     install_dms_features
     install_applications
     install_aur_packages
@@ -891,29 +970,30 @@ main() {
     remove_noctalia_profile
     install_niri_dms
     remove_blocked_brand_components
+    tui_phase_done
+
+    tui_phase_start "配置与 AI 层"
     install_desktop_assets
     install_agent_skills
     configure_dms_settings
     install_dms_plugins
     sync_ai_configs
+    tui_phase_done
+
+    tui_phase_start "收尾"
     post_install
+    tui_phase_done
 
-    cat <<'EOF'
-
-安装完成，安装器没有自动重启。
-
-后续步骤：
-  1. 在方便时重启，并在 Ly 中选择 Niri 会话。
-  2. 至少退出并重新登录一次，使 Fish、Fcitx5、libvirt 和 i2c 组权限生效。
-  3. 首次进入 Niri 后会在后台初始化 Firefox、Code、Wine 和 agent 技能。
-  4. 执行：./verify.sh
-  5. 在 Niri 中执行：dms doctor
-  6. 执行：cachyos-lock-doctor
-
-DMS 安装器已替换受管理的 Niri 和 Kitty 配置，并创建了自己的备份。
-首次登录初始化日志：~/.local/state/cachyos-desktop/post-login.log
-指纹和安全密钥解锁会保持禁用，直到对应注册命令成功完成。
-EOF
+    tui_summary "安装完成（安装器不会自动重启）" \
+        "1. 在方便时重启，并在 Ly 中选择 Niri 会话" \
+        "2. 至少退出并重新登录一次，使 Fish、Fcitx5、libvirt 和 i2c 组权限生效" \
+        "3. 首次进入 Niri 后会在后台初始化 Firefox、Code、Wine 和 agent 技能" \
+        "4. 执行：./verify.sh" \
+        "5. 在 Niri 中执行：dms doctor" \
+        "6. 执行：cachyos-lock-doctor" \
+        "DMS 安装器已替换受管理的 Niri 和 Kitty 配置，并创建了自己的备份" \
+        "首次登录初始化日志：~/.local/state/cachyos-desktop/post-login.log" \
+        "指纹和安全密钥解锁会保持禁用，直到对应注册命令成功完成"
 }
 
 main "$@"

@@ -667,6 +667,13 @@ Snapper 快照和回滚仅在根文件系统为 Btrfs 时可用。`cachyos-grub-
 4. 在本项目目录执行：
 
 ```bash
+安装器的输出是一个**零依赖的终端界面**（`assets/lib/tui.sh`）：横幅、阶段标题（`阶段 n/6`）、
+每组应用的进度条、下载时的转圈、以及收尾的汇总框。它**一旦发现输出不是终端**（管道、`> log`、
+CI）就自动退化成纯文本——`verify.sh` 与测试都在抓这些日志，界面不会污染它们。想显式关掉颜色：
+`NO_COLOR=1`、`TERM=dumb`，或 `CACHYOS_TUI=plain`。界面不引入 `gum`/`dialog` 之类依赖：
+安装发生在刚装好的 CachyOS 上，任何外部依赖都可能是"还没装上"的状态。
+
+```bash
 bash tests/run-all.sh
 ./verify.sh
 dms doctor
@@ -682,6 +689,9 @@ cachyos-agent --list        # 确认三个 agent 的安装状态
 - `tests/usage-test.sh` —— 用量采集：同日多条用量必须累加、缓存与全量结果一致、
   缓存版本失配要作废、两种 input 语义下的计费。
 - `tests/dms-plugin-test.sh` —— 状态栏接线：只增不覆盖、幂等、尊重用户关掉的插件开关。
+- `tests/tui-test.sh` —— 终端界面：非终端必须退化成纯文本（无 ANSI/无 `\r`，但保留 `[INFO]`/`[WARN]` 标记）、
+  真终端要上色、`NO_COLOR`/`TERM=dumb`/`CACHYOS_TUI=plain` 要生效、中文按两列算、框线等宽、截断不超宽，
+  以及 `install.sh` 的集成（横幅、阶段、`[DRY-RUN]` 标记仍在）。
 - `tests/dsh-usage-test.sh` —— DSH 采集器：v4/v0 两种事件格式、token 语义（input 不含缓存读、
   reasoning 不重复计）、只认 `source.kind == "user"` 的提示，以及**命中缓存与全量重扫一致**
   （包含"只有会话元数据、没有任何用量"的文件——这里曾经丢过会话数）。
