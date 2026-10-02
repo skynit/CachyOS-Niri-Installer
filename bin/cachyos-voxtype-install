@@ -157,8 +157,8 @@ if [[ $active_model == *".en"* ]]; then
     printf '  systemctl --user restart voxtype\n'
 fi
 
-printf '本地听写已就绪：按 Super+Ctrl+X（或 Super+F9）开始/结束。\n'
-notify "本地听写已就绪：按 Super+Ctrl+X 开始/结束。"
+printf "本地听写已就绪：按 Super+'（或 Super+F9）开始/结束。\n"
+notify "本地听写已就绪：按 Super+' 开始/结束。"
 
 if [[ "${CACHYOS_VOXTYPE_TERMINAL:-0}" == 1 ]]; then
     printf '\n按 Enter 关闭窗口。'

@@ -25,12 +25,12 @@ state="${state//[$'\t\r\n ']/}"
 
 case "$state" in
     recording)
-        emit "听写中" "recording" "正在录音：再按 Super+Ctrl+X 结束并转写"
+        emit "听写中" "recording" "正在录音：再按 Super+' 结束并转写"
         ;;
     transcribing)
         emit "转写中" "transcribing" "正在把录音转成文字"
         ;;
     *)
-        emit "" "idle" "按 Super+Ctrl+X 开始听写"
+        emit "" "idle" "按 Super+' 开始听写"
         ;;
 esac

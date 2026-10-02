@@ -8,7 +8,10 @@
 // 上游 Omarchy 用 Hyprland 的"按下 start / 松开 stop"做按住说话；Niri **不支持按键
 // 释放绑定**（`F9 release { }` 会让 niri validate 直接解析报错），所以这里只能做
 // toggle：按一次开始，再按一次结束。
+//
+// 键位选择：主键用 `Super+'`（两键、右手小指，A–Z 的单字母键已被 Niri 与 DMS 占满，
+// 而 `Super+X` 是 DMS 的电源菜单）；`Super+F9` 作为备用。三键的 `Super+Ctrl+X` 已移除。
 binds {
-    Super+Ctrl+X hotkey-overlay-title="听写：开始/结束" { spawn "cachyos-voxtype-toggle"; }
+    Super+Apostrophe hotkey-overlay-title="听写：开始/结束" { spawn "cachyos-voxtype-toggle"; }
     Super+F9 hotkey-overlay-title="听写：开始/结束" { spawn "cachyos-voxtype-toggle"; }
 }

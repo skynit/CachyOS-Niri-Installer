@@ -170,6 +170,21 @@ CACHYOS_VOXTYPE_TERMINAL=1 CACHYOS_DESKTOP_SHARE_DIR="$PROJECT_DIR" HOME="$WORK_
 assert_equal '# 用户自己的改动' "$(cat "$WORK_DIR/home/.config/voxtype/config.toml")" \
     '安装：重复安装不覆盖用户改过的配置'
 
+# ---- 键位：两键就够，不要再绑三键 ----------------------------------------------
+kdl="$PROJECT_DIR/assets/niri/cachyos-voxtype.kdl"
+grep -q "Super+Apostrophe" "$kdl" \
+    && pass "键位：主键是两键 Super+'（Apostrophe）" || fail "键位：主键不是两键"
+grep -q "Super+F9" "$kdl" \
+    && pass '键位：保留 Super+F9 备用' || fail '键位：备用键丢失'
+if grep -qE '^\s*Super\+Ctrl\+' "$kdl"; then
+    fail '键位：不应再有三键绑定'
+else
+    pass '键位：没有三键绑定'
+fi
+# 提示文案也要跟着走，否则用户会照旧提示按错键
+grep -q "Super+'" "$PROJECT_DIR/bin/cachyos-voxtype-status" \
+    && pass "状态提示：tooltip 用的是新键位" || fail "状态提示：tooltip 仍是旧键位"
+
 # ---- 卸载：删快捷键、备份配置 --------------------------------------------------
 CACHYOS_VOXTYPE_TERMINAL=1 CACHYOS_DESKTOP_SHARE_DIR="$PROJECT_DIR" HOME="$WORK_DIR/home" \
     PATH="$stub_dir:$PATH" "$PROJECT_DIR/bin/cachyos-voxtype-remove" >/dev/null 2>&1 || true

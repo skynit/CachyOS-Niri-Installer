@@ -741,7 +741,7 @@ GPU 加速需要替换 `/usr/bin/voxtype`，因此必须由 `sudo` 执行：安�
 CPU 上，实测就是这个坑）。上游还编进了 9 个引擎（SenseVoice、Paraformer 等 CJK 专用引擎
 在其列），可用 `voxtype info engines` 查看、`voxtype config set engine <名字>` 切换。
 
-安装后快捷键是 **`Super+Ctrl+X`** 与 **`Super+F9`**（都是开始/结束切换）。这两个键
+安装后快捷键是 **`Super+'`** 与 **`Super+F9`**（都是开始/结束切换）。这两个键
 写在 `~/.config/niri/cachyos-voxtype.kdl`，由主配置用 `include optional=true` 引入——
 Niri 没有条件绑定，用可选 include 才能做到"**装了听写才有这几个键**"，而不是让没用听写的人
 白白失去它们。
