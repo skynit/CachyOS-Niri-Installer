@@ -97,4 +97,45 @@ assert_equal 'false' "$(jq -r '.cachyosAgents.enabled' "$WORK_DIR/ps-disabled-ou
 assert_equal 'week' "$(jq -r '.cachyosAgents.displayMode' "$WORK_DIR/ps-disabled-out.json")" \
     '插件设置：用户的视图选择被保留'
 
+# ---- 随包副本的完整性 ----------------------------------------------------------
+# 副本是"新电脑复刻"时真正被安装的东西；改名或漏文件不会报错，只会让插件静默失效。
+PLUGIN_SRC="$PROJECT_DIR/assets/dms-plugins/CachyosAgents"
+manifest="$PLUGIN_SRC/plugin.json"
+
+assert_equal 'cachyosAgents' "$(jq -r '.id' "$manifest")" '随包副本：plugin.json 的 id 与目录约定一致'
+assert_equal 'widget' "$(jq -r '.type' "$manifest")" '随包副本：类型是 widget'
+assert_equal 'true' "$(jq -e '.capabilities | index("dankbar-widget") != null' "$manifest")" \
+    '随包副本：声明了 dankbar-widget 能力'
+
+# plugin.json 里声明的组件与设置文件必须真的存在（改名最容易漏掉这里）。
+for key in component settings; do
+    declared="$(jq -r --arg key "$key" '.[$key]' "$manifest")"
+    target="$PLUGIN_SRC/${declared#./}"
+    assert_equal 'true' "$([[ -f $target ]] && echo true || echo false)" \
+        "随包副本：plugin.json 声明的 $key 文件存在（$declared）"
+done
+
+# 安装器必须有安装插件资产的逻辑：文件在包里但没进 $HOME，就是"装了但看不见"。
+if grep -q "dms-plugins/CachyosAgents" "$PROJECT_DIR/install.sh"; then
+    pass '随包副本：install.sh 有安装插件资产的逻辑'
+else
+    fail '随包副本：install.sh 没有安装插件资产的逻辑'
+fi
+
+# 逐个确认运行文件都在包里（改名或漏文件不会报错，只会让插件静默失效）。
+for asset in plugin.json Usage.js UsageSource.qml CachyosAgents.qml UsageDetails.qml CachyosAgentsSettings.qml; do
+    assert_equal 'true' "$([[ -f "$PLUGIN_SRC/$asset" ]] && echo true || echo false)" "随包副本：包含 $asset"
+done
+
+# Usage.js 必须能通过语法检查（没有 node 就跳过，不让测试环境依赖 node）。
+if command -v node >/dev/null 2>&1; then
+    if node --check "$PLUGIN_SRC/Usage.js" >/dev/null 2>&1; then
+        pass '随包副本：Usage.js 语法有效（node --check）'
+    else
+        fail '随包副本：Usage.js 语法无效'
+    fi
+else
+    pass '随包副本：没有 node，跳过 Usage.js 语法检查'
+fi
+
 printf '\n%s 项检查通过。\n' "$PASS_COUNT"

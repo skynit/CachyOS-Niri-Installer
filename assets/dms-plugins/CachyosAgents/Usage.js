@@ -12,7 +12,7 @@ var agents = [
     { id: "opencode", label: "OpenCode", short: "OpenCode", icon: "code" }
 ];
 
-var MODES = ["today", "week", "total"];
+var MODES = ["today", "week", "total", "bare"];
 
 function isNumber(value) {
     return typeof value === "number" && isFinite(value);
@@ -76,6 +76,18 @@ function recordFor(records, id) {
 function statsOf(record) {
     var stats = record && record.stats;
     return stats && typeof stats === "object" ? stats : {};
+}
+
+// 同时接受归一化后的 {tokens} 与记录原始格式的 {totalTokens}。
+// 这两种形状在本文件里混用过，并且已经因此出过 bug（把"没读到"当成 0、或整段算成 0），
+// 所以在入口处统一收敛，而不是要求每个调用方都记住该传哪种。
+function dayTokens(day) {
+    if (!day || typeof day !== "object")
+        return 0;
+    var value = num(day.tokens);
+    if (value === null)
+        value = num(day.totalTokens);
+    return value === null ? 0 : value;
 }
 
 function daysOf(record) {
@@ -246,6 +258,7 @@ function rangeFor(rows, mode) {
     return { tokens: 0, cost: 0, caption: "" };
 }
 
+// 状态栏只显示 token 用量：不带图标、不带价格（金额在弹窗里看）。
 function barText(records, settings) {
     settings = settings || {};
     var rows = summarise(records, settings);
@@ -255,19 +268,61 @@ function barText(records, settings) {
     if (withData.length === 0)
         return rows.length > 0 ? "—" : "";
 
-    var range = rangeFor(withData, MODES.indexOf(settings.displayMode) >= 0 ? settings.displayMode : "today");
+    var mode = MODES.indexOf(settings.displayMode) >= 0 ? settings.displayMode : "today";
+    var range = rangeFor(withData, mode === "bare" ? "today" : mode);
+
+    if (mode === "bare")
+        return range.tokens > 0 ? formatTokens(range.tokens) : "—";
     if (!range.caption)
         return "—";
-    if (settings.displayMode === "total")
-        return range.caption + " " + formatCost(range.cost);
-    return range.caption + " " + formatTokens(range.tokens) + " · " + formatCost(range.cost);
+    return range.caption + " " + formatTokens(range.tokens);
+}
+
+// 把最近几天的用量算成折线图坐标。放在这里而不是 QML 里，是为了能直接跑 node 测试。
+// width/height 是画布尺寸，inset 是四周留白；返回 [] 表示没有数据可画。
+function chartPoints(days, width, height, inset) {
+    var values = Array.isArray(days) ? days.map(dayTokens) : [];
+    if (values.length === 0)
+        return [];
+
+    var pad = num(inset);
+    pad = pad === null ? 0 : pad;
+    var canvasWidth = num(width) || 0;
+    var canvasHeight = num(height) || 0;
+    var usableWidth = Math.max(1, canvasWidth - pad * 2);
+    var usableHeight = Math.max(1, canvasHeight - pad * 2);
+    var max = values.reduce(function (best, value) {
+        return value > best ? value : best;
+    }, 0);
+    var step = values.length > 1 ? usableWidth / (values.length - 1) : 0;
+
+    return values.map(function (value, index) {
+        var ratio = max > 0 ? value / max : 0;
+        return {
+            index: index,
+            x: pad + (values.length > 1 ? step * index : usableWidth / 2),
+            y: pad + usableHeight * (1 - ratio),
+            ratio: ratio,
+            tokens: value,
+            date: days[index] && typeof days[index].date === "string" ? days[index].date : ""
+        };
+    });
+}
+
+// 折线图上要标注的最大值（用于纵轴说明）。全为 0 时返回 null。
+function chartMax(days) {
+    if (!Array.isArray(days) || days.length === 0)
+        return null;
+    var max = days.reduce(function (best, day) {
+        var value = dayTokens(day);
+        return value > best ? value : best;
+    }, 0);
+    return max > 0 ? max : null;
 }
 
 // 归一化成 0..1，供面板画迷你柱状图；全为 0 时返回全 0。
 function sparkline(days) {
-    var values = Array.isArray(days) ? days.map(function (day) {
-        return num(day && day.tokens) || 0;
-    }) : [];
+    var values = Array.isArray(days) ? days.map(dayTokens) : [];
     var max = values.reduce(function (best, value) {
         return value > best ? value : best;
     }, 0);

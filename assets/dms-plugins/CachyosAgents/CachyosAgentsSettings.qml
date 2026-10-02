@@ -35,13 +35,13 @@ PluginSettings {
     }
     SelectionSetting {
         settingKey: "displayMode"
-        label: "统计范围"
+        label: "状态栏显示"
         defaultValue: "today"
         options: [
             { label: "今天（无数据时显示最近一天）", value: "today" },
             { label: "近 7 天", value: "week" },
-            { label: "累计费用", value: "total" },
-            { label: "只显示图标", value: "icon" }
+            { label: "累计 token", value: "total" },
+            { label: "只显示数字（不带日期）", value: "bare" }
         ]
     }
     SelectionSetting {

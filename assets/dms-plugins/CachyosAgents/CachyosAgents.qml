@@ -10,7 +10,6 @@ PluginComponent {
     id: root
 
     readonly property string label: Usage.barText(sampler.records, root.pluginData)
-    readonly property bool showText: root.pluginData.displayMode !== "icon"
 
     UsageSource {
         id: sampler
@@ -20,9 +19,9 @@ PluginComponent {
     horizontalBarPill: Component {
         Item {
             id: pill
-            readonly property real iconPixels: Math.max(10, Math.min(18, root.widgetThickness - 8))
             readonly property real fontPixels: Math.max(8, Math.min(14, root.widgetThickness - 12))
-            implicitWidth: content.implicitWidth + 12
+            // 状态栏只放 token 数字：不要图标，也不要金额（金额看弹窗）。
+            implicitWidth: Math.max(16, content.implicitWidth + 12)
             implicitHeight: root.widgetThickness
             activeFocusOnTab: true
             Accessible.role: Accessible.Button
@@ -31,23 +30,12 @@ PluginComponent {
             Keys.onReturnPressed: root.triggerPopout()
             Keys.onSpacePressed: root.triggerPopout()
 
-            Row {
+            StyledText {
                 id: content
                 anchors.centerIn: parent
-                spacing: 4
-                DankIcon {
-                    name: "smart_toy"
-                    size: pill.iconPixels
-                    color: Theme.primary
-                    anchors.verticalCenter: parent.verticalCenter
-                }
-                StyledText {
-                    text: root.label
-                    visible: root.showText && text.length > 0
-                    font.pixelSize: pill.fontPixels
-                    color: Theme.widgetTextColor
-                    anchors.verticalCenter: parent.verticalCenter
-                }
+                text: root.label
+                font.pixelSize: pill.fontPixels
+                color: Theme.widgetTextColor
             }
 
             Rectangle {

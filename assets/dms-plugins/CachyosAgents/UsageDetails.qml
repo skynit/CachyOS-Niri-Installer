@@ -225,24 +225,78 @@ Column {
                             }
                         }
 
-                        Row {
-                            id: bars
+                        // 近 7 天折线图。用 Canvas 画而不是拼一堆矩形：折线要连线、要画点、
+                        // 要让最后一个点高亮，用布局元素拼会很别扭。坐标计算放在 Usage.js 里，
+                        // 因此可以做 node 测试（QML 部分只能靠 qmllint 与肉眼验收）。
+                        Column {
                             width: parent.width
-                            height: 24
-                            spacing: 3
-                            visible: card.agent.days.length > 0
-                            readonly property var values: Usage.sparkline(card.agent.days)
+                            spacing: 2
+                            visible: card.agent.days.length > 1
 
-                            Repeater {
-                                model: bars.values
-                                delegate: Rectangle {
-                                    required property var modelData
-                                    required property int index
-                                    width: Math.max(4, (bars.width - bars.spacing * (bars.values.length - 1)) / Math.max(1, bars.values.length))
-                                    height: Math.max(2, Math.round(bars.height * modelData))
-                                    radius: 2
-                                    color: index === bars.values.length - 1 ? Theme.primary : Theme.surfaceContainerHighest
-                                    anchors.bottom: parent.bottom
+                            RowLayout {
+                                width: parent.width
+                                StyledText {
+                                    text: "近 7 天（峰值 " + Usage.formatTokens(Usage.chartMax(card.agent.days)) + "）"
+                                    font.pixelSize: 10
+                                    color: Theme.surfaceVariantText
+                                    Layout.fillWidth: true
+                                }
+                                StyledText {
+                                    text: card.agent.days.length > 0 ? card.agent.days[0].date.slice(5) + " → " + card.agent.days[card.agent.days.length - 1].date.slice(5) : ""
+                                    font.pixelSize: 10
+                                    color: Theme.surfaceVariantText
+                                }
+                            }
+
+                            Canvas {
+                                id: chart
+                                width: parent.width
+                                height: 56
+                                onWidthChanged: requestPaint()
+                                onHeightChanged: requestPaint()
+                                // 数据换了要重画：agent 属性变化即意味着 days 变了。
+                                Connections {
+                                    target: card
+                                    function onAgentChanged() {
+                                        chart.requestPaint();
+                                    }
+                                }
+                                onPaint: {
+                                    const ctx = getContext("2d");
+                                    const inset = 6;
+                                    ctx.reset();
+                                    const points = Usage.chartPoints(card.agent.days, width, height, inset);
+                                    if (points.length === 0)
+                                        return;
+
+                                    // 基线
+                                    ctx.strokeStyle = Theme.surfaceContainerHighest;
+                                    ctx.lineWidth = 1;
+                                    ctx.beginPath();
+                                    ctx.moveTo(0, height - inset);
+                                    ctx.lineTo(width, height - inset);
+                                    ctx.stroke();
+
+                                    // 折线
+                                    ctx.strokeStyle = Theme.primary;
+                                    ctx.lineWidth = 2;
+                                    ctx.lineJoin = "round";
+                                    ctx.beginPath();
+                                    points.forEach(function (point, index) {
+                                        if (index === 0)
+                                            ctx.moveTo(point.x, point.y);
+                                        else
+                                            ctx.lineTo(point.x, point.y);
+                                    });
+                                    ctx.stroke();
+
+                                    // 数据点：最后一个高亮，其余弱化
+                                    points.forEach(function (point, index) {
+                                        ctx.beginPath();
+                                        ctx.arc(point.x, point.y, index === points.length - 1 ? 3 : 2, 0, Math.PI * 2);
+                                        ctx.fillStyle = index === points.length - 1 ? Theme.primary : Theme.surfaceVariantText;
+                                        ctx.fill();
+                                    });
                                 }
                             }
                         }

@@ -87,9 +87,10 @@ test('按设置隐藏 agent', () => {
     assert.deepEqual(arr(rows.map(row => row.id)), ['opencode']);
 });
 
-test('今天有数据时状态条显示今天', () => {
+test('状态栏只显示 token，不显示价格', () => {
     const text = usage.barText([record()], {});
-    assert.equal(text, '今天 500 · $0.500');
+    assert.equal(text, '今天 500');
+    assert.ok(!text.includes('$'), '状态栏文字里不应出现金额');
 });
 
 test('今天为 0 时回落到最近有数据的一天，并标出日期', () => {
@@ -99,7 +100,7 @@ test('今天为 0 时回落到最近有数据的一天，并标出日期', () =>
         })
     });
     const text = usage.barText([stale], {});
-    assert.equal(text, '09-22 12.0M · $73.50');
+    assert.equal(text, '09-22 12.0M');
 });
 
 test('没有数据时状态条是占位符，全部隐藏时才为空', () => {
@@ -110,9 +111,13 @@ test('没有数据时状态条是占位符，全部隐藏时才为空', () => {
     assert.equal(usage.barText([], { show_claude: false, show_codex: false, show_opencode: false }), '');
 });
 
-test('week 与 total 模式分别聚合', () => {
-    assert.equal(usage.barText([record()], { displayMode: 'week' }), '近 7 天 1.0K · $1.00');
-    assert.equal(usage.barText([record()], { displayMode: 'total' }), '累计 $1.00');
+test('week / total / bare 三种模式', () => {
+    assert.equal(usage.barText([record()], { displayMode: 'week' }), '近 7 天 1.0K');
+    // total 取 modelUsage 之和：1000 + 2000 + 500
+    assert.equal(usage.barText([record()], { displayMode: 'total' }), '累计 3.5K');
+    // bare：只留数字，连"今天/日期"前缀都不要
+    assert.equal(usage.barText([record()], { displayMode: 'bare' }), '500');
+    assert.equal(usage.barText([], { displayMode: 'bare' }), '—');
 });
 
 test('模型按费用降序、可限量、标出是否计价', () => {
@@ -154,4 +159,56 @@ test('畸形数据不抛异常', () => {
     const rows = usage.summarise([{ id: 'claude', stats: { recentDays: 'bad', modelUsage: [] } }], {});
     assert.equal(rows[0].days.length, 0);
     assert.equal(rows[0].models.length, 0);
+});
+
+test('折线图坐标：首尾贴边、峰值到顶、零值到底', () => {
+    const points = usage.chartPoints(days([['a', 0, 0], ['b', 50, 0], ['c', 100, 0]]), 100, 40, 0);
+    assert.equal(points.length, 3);
+    assert.equal(points[0].x, 0);
+    assert.equal(points[2].x, 100);
+    assert.equal(points[1].x, 50);
+    // 峰值 y 最小（贴顶），零值 y 最大（贴底）
+    assert.equal(points[2].y, 0);
+    assert.equal(points[0].y, 40);
+    assert.equal(points[1].ratio, 0.5);
+});
+
+test('折线图坐标：留白与单点', () => {
+    const padded = usage.chartPoints([{ tokens: 10 }], 100, 40, 5);
+    assert.equal(padded.length, 1);
+    // 只有一个点就画在中间，否则会贴着左边看起来像 bug
+    assert.equal(padded[0].x, 50);
+    assert.equal(padded[0].y, 5);
+
+    const empty = usage.chartPoints([], 100, 40, 0);
+    assert.deepEqual(arr(empty), []);
+});
+
+test('折线图坐标：全零时不除零', () => {
+    const points = usage.chartPoints(days([['a', 0, 0], ['b', 0, 0]]), 90, 30, 0);
+    assert.equal(points[0].ratio, 0);
+    assert.equal(points[1].ratio, 0);
+    assert.equal(points[0].y, 30);
+});
+
+test('折线图最大值：全零返回 null', () => {
+    assert.equal(usage.chartMax(days([['a', 100, 0], ['b', 40, 0]])), 100);
+    assert.equal(usage.chartMax(days([['a', 0, 0]])), null);
+    assert.equal(usage.chartMax([]), null);
+    assert.equal(usage.chartMax(null), null);
+});
+
+test('折线图坐标：畸形输入不抛异常', () => {
+    assert.doesNotThrow(() => usage.chartPoints(null, 100, 40, 0));
+    assert.doesNotThrow(() => usage.chartPoints([{ tokens: 'x' }], 0, 0, undefined));
+    assert.doesNotThrow(() => usage.chartPoints([null, 5, 'x'], 100, 40, 2));
+});
+
+test('折线图与迷你条：两种数据形状都接受', () => {
+    // 记录原始格式（totalTokens）
+    assert.equal(usage.chartMax(days([['a', 100, 0], ['b', 40, 0]])), 100);
+    // 归一化格式（tokens）
+    assert.equal(usage.chartMax([{ tokens: 100 }, { tokens: 40 }]), 100);
+    assert.equal(usage.chartPoints([{ totalTokens: 80 }], 100, 40, 0)[0].ratio, 1);
+    assert.deepEqual(arr(usage.sparkline([{ totalTokens: 0 }, { totalTokens: 50 }])), [0, 1]);
 });
