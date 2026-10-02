@@ -151,7 +151,7 @@ Windows 更新可能改变 EFI 启动顺序。条件允许时，让 Windows 与 
 - 通过 CachyOS 仓库安装 Codex CLI 和 Claude Code，并通过 AUR 安装 `codex-desktop-git`。
 - 生成 CC Switch 与 Codex Desktop 的非敏感配置镜像，不复制账号、令牌、Cookie 或密钥。
 - 部署稳定的 Niri 主配置、快捷键和项目扩展；DMS 根据受管理的设置生成配色、布局、光标和模糊配置。
-- 禁止 Niri 接管电源键，并自动隐藏企业微信在 XWayland 下产生的黑色阴影窗口。
+- 禁止 Niri 接管电源键（避免笔记本上的挂起循环）。
 - 自动清理受管理位置中的旧品牌包、路径和 Niri 配置残留。
 - 不自动重启。
 

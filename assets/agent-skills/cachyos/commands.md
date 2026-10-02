@@ -104,5 +104,4 @@ terminal-here                  在当前位置打开终端
 
 ```text
 cachyos-post-login-setup       首次登录后台任务（有 marker，每个只跑一次）
-wxwork-shadow-hider.py         隐藏企业微信在 XWayland 下的黑色阴影窗口
 ```
