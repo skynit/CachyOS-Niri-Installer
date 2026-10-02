@@ -4,6 +4,11 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 readonly SCRIPT_NAME="${0##*/}"
+# 当前用户名。不直接用 $USER：env -i、cron、`su -` 这类上下文里它可能不存在，
+# 而 set -u 会让安装在此处直接崩掉（实测 env -i 下就是 USER: unbound variable）。
+TARGET_USER="${USER:-}"
+[[ -n $TARGET_USER ]] || TARGET_USER="$(id -un)"
+readonly TARGET_USER
 readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly PINNED_DMS_VERSION="v1.5.3"
 readonly PINNED_DMS_SHA256_AMD64="c84da05e4afd84a737faaac4fa3bc65fa78fcd783c5ec930aec24f31f4e84716"
@@ -12,6 +17,11 @@ readonly PINNED_NIRI_SIDEBAR_SHA256_AMD64="8264fa0a82657a21b781588877adec67e29c5
 
 # shellcheck source=packages.sh
 source "$SCRIPT_DIR/packages.sh"
+
+# agent 表（id → 二进制名 / 技能目录 / 启动参数）：安装器要用它判断"哪些 agent 可用"，
+# 再决定是否设置默认 agent。放在这里是为了不在安装器里复制一份映射。
+# shellcheck source=assets/lib/agent.sh
+source "$SCRIPT_DIR/assets/lib/agent.sh"
 # shellcheck source=hardware.sh
 source "$SCRIPT_DIR/hardware.sh"
 
@@ -387,19 +397,19 @@ remove_noctalia_profile() {
 configure_application_services() {
     run sudo systemctl enable --now libvirtd.service
 
-    if ! id -nG "$USER" | tr ' ' '\n' | grep -qx libvirt; then
-        run sudo usermod --append --groups libvirt "$USER"
+    if ! id -nG "$TARGET_USER" | tr ' ' '\n' | grep -qx libvirt; then
+        run sudo usermod --append --groups libvirt "$TARGET_USER"
         warn "log out and back in before using libvirt as $USER"
     fi
 
     run flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-    run sudo usermod --shell /usr/bin/fish "$USER"
+    run sudo usermod --shell /usr/bin/fish "$TARGET_USER"
 
     if ! getent group i2c >/dev/null 2>&1; then
         run sudo groupadd --system i2c
     fi
-    if ! id -nG "$USER" | tr ' ' '\n' | grep -qx i2c; then
-        run sudo usermod --append --groups i2c "$USER"
+    if ! id -nG "$TARGET_USER" | tr ' ' '\n' | grep -qx i2c; then
+        run sudo usermod --append --groups i2c "$TARGET_USER"
     fi
     run sudo modprobe i2c-dev
 }
@@ -498,6 +508,11 @@ install_desktop_assets() {
         "$HOME/.config/systemd/user/cachyos-agent-theme.service"
     run install -m 0644 "$SCRIPT_DIR/assets/systemd/user/cachyos-agent-theme.path" \
         "$HOME/.config/systemd/user/cachyos-agent-theme.path"
+    # 用量记录需要周期性重算：没有定时器的话面板只会停在安装那一刻的数字。
+    run install -m 0644 "$SCRIPT_DIR/assets/systemd/user/cachyos-agent-usage.service" \
+        "$HOME/.config/systemd/user/cachyos-agent-usage.service"
+    run install -m 0644 "$SCRIPT_DIR/assets/systemd/user/cachyos-agent-usage.timer" \
+        "$HOME/.config/systemd/user/cachyos-agent-usage.timer"
 
     if [[ ! -e "$HOME/.config/kitty/kitty.conf" ]]; then
         if [[ "$DRY_RUN" == true ]]; then
@@ -537,26 +552,28 @@ install_agent_skills() {
     # CLI 首次运行才会出现），所以这里只是尽力而为；cachyos-agent 启动前还会按 harness
     # 再同步一次，那才是真正可靠的时机。
     if [[ "$DRY_RUN" == true ]]; then
-        print_command /usr/local/bin/cachyos-agent-skills
+        print_command cachyos-agent-skills --create-supported
         return 0
     fi
 
-    if [[ ! -x /usr/local/bin/cachyos-agent-skills ]]; then
+    # 按命令名调用而不是写死 /usr/local/bin：与安装器调用其它本项目命令的方式一致，
+    # 也让"刚装出来的那份"被真正执行（写死绝对路径会在测试沙箱里跑到别处去）。
+    if ! command -v cachyos-agent-skills >/dev/null 2>&1; then
         warn "cachyos-agent-skills 未安装；跳过 agent 技能软链"
         return 0
     fi
 
-    if ! /usr/local/bin/cachyos-agent-skills; then
+    if ! cachyos-agent-skills --create-supported; then
         warn "agent 技能软链未完全建立；稍后可手动运行 cachyos-agent-skills"
     fi
 }
 
 sync_ai_configs() {
     if [[ "$DRY_RUN" == true ]]; then
-        print_command /usr/local/bin/cachyos-ai-config-sync status
-        print_command /usr/local/bin/cachyos-ai-config-sync sync
-    elif [[ -x /usr/local/bin/cachyos-ai-config-sync && -f "$HOME/.cc-switch/cc-switch.db" ]]; then
-        /usr/local/bin/cachyos-ai-config-sync sync || warn "AI configuration mirror was not updated"
+        print_command cachyos-ai-config-sync status
+        print_command cachyos-ai-config-sync sync
+    elif command -v cachyos-ai-config-sync >/dev/null 2>&1 && [[ -f "$HOME/.cc-switch/cc-switch.db" ]]; then
+        cachyos-ai-config-sync sync || warn "AI configuration mirror was not updated"
     else
         warn "CC Switch database is not present; AI configuration mirror will be created on first use"
     fi
@@ -767,6 +784,9 @@ post_install() {
         print_command systemctl --user enable cachyos-agent-theme.path
         print_command systemctl --user start cachyos-agent-theme.path
         print_command cachyos-agent-theme-sync --quiet
+        print_command systemctl --user enable --now cachyos-agent-usage.timer
+        print_command cachyos-agent-usage-update --force
+        print_command cachyos-default-agent '<detected-agent>'
         return 0
     fi
 
@@ -796,6 +816,40 @@ post_install() {
     fi
 
     # 主题同步：先跑一次（把当前模式写进各 agent），再挂上 path 单元跟着配色文件走。
+    # 用量面板需要周期性重算，否则只会停在安装那一刻的数字。
+    if ! systemctl --user enable --now cachyos-agent-usage.timer; then
+        warn "could not enable cachyos-agent-usage.timer; run this after logging in:"
+        warn "  systemctl --user enable --now cachyos-agent-usage.timer"
+    fi
+
+    # 先算一次并忽略失败：新用户一登录就该在面板里看到数字，而不是空面板；
+    # 但采集失败（没登录过 agent、没有凭据）绝不能把安装判为失败。
+    if ! cachyos-agent-usage-update --force >/dev/null 2>&1; then
+        warn "could not collect agent usage yet (run cachyos-agent-usage-update after using an agent)"
+    fi
+
+    # 只有一个 agent 可用时直接设为默认：新用户按下 Super+grave 就能用，而不是先面对选择器。
+    # 装了多个则不猜——留空让选择器出现，用户选一次就会被记住。
+    if [[ ! -e "$HOME/.config/cachyos-desktop/agent" ]]; then
+        local -a available_agents=()
+        local candidate
+        local binary
+        while read -r candidate; do
+            [[ -n $candidate ]] || continue
+            binary="$(cachyos_agent_binary "$candidate" 2>/dev/null || true)"
+            if [[ -n $binary ]] && command -v "$binary" >/dev/null 2>&1; then
+                available_agents+=("$candidate")
+            fi
+        done < <(cachyos_agent_supported 2>/dev/null || true)
+        if ((${#available_agents[@]} == 1)); then
+            if cachyos-default-agent "${available_agents[0]}" >/dev/null 2>&1; then
+                info "default AI agent: ${available_agents[0]}"
+            fi
+        elif ((${#available_agents[@]} > 1)); then
+            info "several AI agents found; press Super+grave and pick one (the choice is remembered)"
+        fi
+    fi
+
     if ! systemctl --user enable cachyos-agent-theme.path; then
         warn "could not enable cachyos-agent-theme.path; run this after logging in:"
         warn "  systemctl --user enable --now cachyos-agent-theme.path"

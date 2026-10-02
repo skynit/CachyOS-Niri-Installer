@@ -122,6 +122,7 @@ link_into() {
 main() {
     local quiet=false
     local harness=""
+    local create_supported=false""
     local relpath
     local relpaths
     local status=0
@@ -130,6 +131,14 @@ main() {
         case "$1" in
             --quiet)
                 quiet=true
+                shift
+                ;;
+            --create-supported)
+                # 安装器专用：全新 HOME 里 .claude/.codex 还不存在（CLI 装完但没跑过），
+                # 于是"跳过（目录不存在）"会让技能永远链不上。这里为**位置确定且 CLI 已安装**
+                # 的 agent 先把技能目录建出来——这不是猜目录，是这些 harness 的公开约定。
+                # opencode 的 .agents/skills 是库注释里写明的"尽力而为"位置，不在这里建。
+                create_supported=true
                 shift
                 ;;
             --harness)
@@ -161,6 +170,20 @@ main() {
     if [[ ! -d $ASSET_DIR/agent-skills ]]; then
         printf '找不到技能资源目录：%s\n' "$ASSET_DIR/agent-skills" >&2
         return 1
+    fi
+
+    if [[ $create_supported == true ]]; then
+        local agent binary
+        while IFS= read -r agent; do
+            [[ -n $agent ]] || continue
+            [[ $agent == opencode ]] && continue
+            binary="$(cachyos_agent_binary "$agent" 2>/dev/null)" || continue
+            command -v "$binary" >/dev/null 2>&1 || continue
+            while IFS= read -r relpath; do
+                [[ -n $relpath ]] || continue
+                mkdir -p "$HOME/$relpath"
+            done < <(cachyos_agent_skill_relpaths "$agent")
+        done < <(cachyos_agent_supported)
     fi
 
     # 单个目录失败不影响其余目录；全部处理完再汇总退出码。

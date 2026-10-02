@@ -1,0 +1,13 @@
+[Unit]
+Description=Periodically refresh AI agent usage records
+
+[Timer]
+# 登录后先算一次：否则面板要等满一个周期才有数据，新用户会以为功能坏了。
+OnStartupSec=2min
+OnUnitActiveSec=15min
+AccuracySec=1min
+# 关机期间错过的刷新，开机后补一次（用量记录是累计值，补算不会算错）。
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -37,6 +37,17 @@ cachyos_agent_name() {
 #
 # opencode 没有已知的技能目录，因此回落到通用位置：该目录不存在时链接什么也不会
 # 发生，用户自己创建它则说明其 harness 会读——链接过去是无害的最佳努力。
+# 该 agent 的可执行文件名（三个 CLI 与 id 同名）。单独成函数是为了让"怎么判断某 agent
+# 是否可用"只有一处定义——安装器、验收、诊断都从这里取。
+cachyos_agent_binary() {
+    case "${1:-}" in
+        codex) printf '%s\n' codex ;;
+        claude) printf '%s\n' claude ;;
+        opencode) printf '%s\n' opencode ;;
+        *) return 1 ;;
+    esac
+}
+
 cachyos_agent_skill_relpaths() {
     case "${1:-}" in
         codex) printf '%s\n' '.codex/skills' ;;

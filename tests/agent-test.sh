@@ -184,4 +184,22 @@ if cachyos_agent_name bogus >/dev/null; then
 fi
 pass '未知 agent 的名称查询返回非 0'
 
+# ---- agent 表：id → 二进制名（安装器用它判断哪些 agent 可用）------------------
+for pair in "codex codex" "claude claude" "opencode opencode"; do
+    set -- $pair
+    assert_equal "$2" "$(cachyos_agent_binary "$1")" "agent 表：$1 的二进制名是 $2"
+done
+if cachyos_agent_binary bogus >/dev/null 2>&1; then
+    fail '未知 agent 不该返回成功'
+else
+    pass '未知 agent 返回非 0'
+fi
+# 表里每个 agent 都必须能取到二进制名，否则安装器会静默认为"没有可用 agent"
+missing_binary=''
+while read -r agent; do
+    cachyos_agent_binary "$agent" >/dev/null 2>&1 || missing_binary="$missing_binary $agent"
+done < <(cachyos_agent_supported)
+assert_equal '' "$missing_binary" 'agent 表里每个 id 都有对应的二进制名'
+
+
 printf '\n%s 项检查通过。\n' "$PASS_COUNT"

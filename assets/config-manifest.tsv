@@ -17,6 +17,8 @@ waypaper/config.ini	.config/waypaper/config.ini
 systemd/user/cachyos-crash-watch.service	.config/systemd/user/cachyos-crash-watch.service
 systemd/user/cachyos-agent-theme.service	.config/systemd/user/cachyos-agent-theme.service
 systemd/user/cachyos-agent-theme.path	.config/systemd/user/cachyos-agent-theme.path
+systemd/user/cachyos-agent-usage.service	.config/systemd/user/cachyos-agent-usage.service
+systemd/user/cachyos-agent-usage.timer	.config/systemd/user/cachyos-agent-usage.timer
 dms-plugins/CachyosAgents/plugin.json	.config/DankMaterialShell/plugins/CachyosAgents/plugin.json
 dms-plugins/CachyosAgents/Usage.js	.config/DankMaterialShell/plugins/CachyosAgents/Usage.js
 dms-plugins/CachyosAgents/UsageSource.qml	.config/DankMaterialShell/plugins/CachyosAgents/UsageSource.qml

@@ -303,6 +303,10 @@ cachyos-ai-config-sync sync
 
 ### AI Agent
 
+安装时会**自动确定默认 agent**：只探测到 1 个可用的 agent（`claude`/`codex`/`opencode`）就直接设为默认，
+按下 `Super+\`` 立刻能用；探测到多个则留空——第一次按会弹出选择器，选一次之后就被记住。
+
+
 安装器把三个 AI 编程 agent 接成同一套入口，并自动带上各自的"无人值守"旗标——这些旗标
 每个 agent 都不一样，散落在快捷键里很难维护：
 
@@ -401,7 +405,15 @@ cachyos-crash-mute SomeApp off      # 恢复提醒
 cachyos-agent-usage-update            # 重新采集（面板每 15 分钟也会自己调一次）
 cachyos-agent-usage-update claude     # 只跑某一个采集器
 cachyos-agent-usage-claude            # 采集器直接输出一条 JSON 记录
-cachyos-agent-usage-codex             # 每个 agent 一个采集器，各自输出一条 JSON 记录
+```
+cachyos-agent-usage-update            # 刷新所有 agent 的用量记录（定时器每 15 分钟跑一次）
+```
+
+安装时会**先算一次**，并启用 `cachyos-agent-usage.timer`（登录后 2 分钟 + 此后每 15 分钟，`Persistent=true`
+所以关机期间错过的刷新会在开机后补上）。没有这个定时器，面板只会停在安装那一刻的数字。
+
+```bash
+cachyos-agent-usage-claude            # 每个 agent 一个采集器，各自输出一条 JSON 记录
 cachyos-agent-usage-fireworks         # 需要 FIREWORKS_API_KEY（或 firectl / opencode 登录）
 ```
 
@@ -489,6 +501,11 @@ cachyos-agent-theme-sync --dry-run  # 只显示会改什么
 `cachyos_agent_supported`/`cachyos_agent_name`/`cachyos_agent_command`
 （必要时还有 `cachyos_agent_skill_relpaths`）、`packages.sh` 里的包、以及
 `tests/agent-test.sh` 的断言。
+
+技能会链到**已存在**的 harness 目录（不替用户凭空创建目录）。但全新机器上 `.claude`/`.codex` 往往还不存在
+（CLI 装了、用户还没跑过），于是安装器与首次登录初始化都会带 `--create-supported`：只为**目录位置确定
+且该 CLI 已安装**的 agent（claude/codex）建目录再链接；opencode 的 `.agents/skills` 是"尽力而为"位置，
+不凭空创建。
 
 ### 窗口、列、显示器与工作区
 
@@ -661,6 +678,12 @@ cachyos-agent --list        # 确认三个 agent 的安装状态
 - `tests/usage-test.sh` —— 用量采集：同日多条用量必须累加、缓存与全量结果一致、
   缓存版本失配要作废、两种 input 语义下的计费。
 - `tests/dms-plugin-test.sh` —— 状态栏接线：只增不覆盖、幂等、尊重用户关掉的插件开关。
+- `tests/fresh-install-test.sh` —— **全新安装彩排**：把 `install.sh` 真跑一遍（临时 HOME + 假系统根），
+  然后逐项断言 AI 系统是否完整（命令、资产、单元、插件、状态栏、niri 接线、技能链接）。这才是
+  "任何人跑一遍就能用"的证据，`--dry-run` 给不了。
+- `tests/fireworks-test.sh` —— Fireworks 采集器对着本地 stub API 跑真实 HTTP 往返（翻页、模型归属、
+  余额估算、无凭据降级）。
+- `tests/agent-theme-test.sh` —— 主题同步生成 Claude 自定义主题与 Hermes skin，并校验格式与幂等。
 - `tests/voxtype-test.sh` —— 听写状态机、未安装时的提示、快捷键文件的写入与卸载、配置备份。
 - `tests/hardware-test.sh` —— CPU/GPU 检测与包选择。
 

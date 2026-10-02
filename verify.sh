@@ -443,6 +443,18 @@ check_ai_agent_stack() {
         fail "crash watch does not read the crash-capture-off flag"
     fi
 
+    # 用量记录靠定时器周期性重算；定时器没起来，面板就会一直显示安装那一刻的数字。
+    if systemctl --user is-enabled --quiet cachyos-agent-usage.timer 2>/dev/null; then
+        pass "agent usage refresh timer is enabled"
+    else
+        fail "cachyos-agent-usage.timer is not enabled (rerun the installer)"
+    fi
+    if systemctl --user is-active --quiet cachyos-agent-usage.timer 2>/dev/null; then
+        pass "agent usage refresh timer is active"
+    else
+        fail "cachyos-agent-usage.timer is not active"
+    fi
+
     if systemctl --user is-enabled --quiet cachyos-crash-watch.service 2>/dev/null; then
         pass "cachyos-crash-watch.service is enabled"
     else

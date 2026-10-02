@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh local AI agent usage records
+
+[Service]
+Type=oneshot
+# 采集器会读 ~/.claude、~/.codex、~/.cc-switch 等目录。任何一个坏了都不该让这次刷新
+# 变成"服务失败"——编排器自己会把失败的 agent 保留为上一份记录并以非 0 退出；
+# 这里用 SuccessExitStatus 容忍它，否则定时器每次都会显示失败。
+ExecStart=/usr/local/bin/cachyos-agent-usage-update
+SuccessExitStatus=0 1 2

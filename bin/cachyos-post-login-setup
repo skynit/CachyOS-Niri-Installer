@@ -16,7 +16,12 @@ failed=false
 for command_name in cachyos-agent-skills cachyos-firefox-setup cachyos-code-theme cachyos-wine-setup; do
     command_marker="$state_dir/${command_name}-v1"
     [[ ! -e "$command_marker" ]] || continue
-    if ! "$command_name" >>"$log_file" 2>&1; then
+    # 技能分发要带 --create-supported：首次登录时 .claude/.codex 往往还不存在
+    # （CLI 装了但用户还没跑过），不带这个参数就会全部"跳过（目录不存在）"，
+    # 用户用了 agent 也拿不到技能。
+    command_args=()
+    [[ $command_name == cachyos-agent-skills ]] && command_args+=(--create-supported)
+    if ! "$command_name" "${command_args[@]+"${command_args[@]}"}" >>"$log_file" 2>&1; then
         printf '%s failed\n' "$command_name" >> "$log_file"
         failed=true
     else
