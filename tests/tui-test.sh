@@ -165,7 +165,7 @@ else
 fi
 grep -qF '安装计划' "$WORK_DIR/install.out" \
     && pass '计划以框的形式输出' || fail '计划框丢失'
-grep -qF 'Preserved' "$WORK_DIR/install.out" \
-    && pass '计划里保留了 Preserved 承诺' || fail '计划里 Preserved 承诺丢失'
+grep -qF '不改动' "$WORK_DIR/install.out" \
+    && pass '计划里保留了「不改动」承诺' || fail '计划里「不改动」承诺丢失'
 
 printf '\n%s 项检查通过。\n' "$PASS_COUNT"

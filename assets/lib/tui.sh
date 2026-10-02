@@ -379,7 +379,7 @@ tui_summary() {
     printf '\n'
     printf '%s%s%s%s%s\n' "$TUI_MUTED" "$TUI_TOP_LEFT" "$border" "$TUI_TOP_RIGHT" "$TUI_RESET"
     tui_box_line "${TUI_BOLD}${TUI_ACCENT}${title}${TUI_RESET}" "$inner"
-    tui_box_line "成功 ${TUI_STEPS_OK} · 提醒 ${TUI_STEPS_WARN} · 跳过 ${TUI_STEPS_SKIP} · 用时 ${minutes}分${seconds}秒" "$inner"
+    tui_box_line "成功 ${TUI_STEPS_OK} 项 · 警告 ${TUI_STEPS_WARN} 项 · 跳过 ${TUI_STEPS_SKIP} 项 · 耗时 ${minutes} 分 ${seconds} 秒" "$inner"
     local line
     for line in "$@"; do
         tui_box_line "$line" "$inner"

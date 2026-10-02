@@ -196,30 +196,51 @@ preflight() {
 }
 
 confirm_plan() {
-    local detected_hardware hardware_stack
+    local detected_hardware hardware_stack full_update replace_configs dry_label
     if [[ "$SKIP_HARDWARE" == true ]]; then
-        detected_hardware="skipped"
-        hardware_stack="skipped"
+        detected_hardware="已跳过（--skip-hardware）"
+        hardware_stack="已跳过"
     else
         detected_hardware="$(cachyos_hardware_summary)"
-        hardware_stack="auto-selected"
+        hardware_stack="自动选择"
+    fi
+    if [[ "$SKIP_UPDATE" == true ]]; then
+        full_update="否（--skip-update）"
+    else
+        full_update="是"
+    fi
+    replace_configs="是（覆盖受管理的用户配置）"
+    if [[ "$DRY_RUN" == true ]]; then
+        dry_label="是（只打印，不执行）"
+    else
+        dry_label="否"
     fi
 
-    # 计划用框展示：这是用户做决定前唯一要读的一屏，字号对齐比散落的裸文本好读得多。
-    tui_banner "CachyOS + Niri + DMS 安装计划" \
-        "User              $(id -un)" \
-        "Terminal          $TERMINAL" \
-        "DMS release       $DMS_VERSION" \
-        "Full update       $([[ "$SKIP_UPDATE" == true ]] && printf 'no' || printf 'yes')" \
-        "Detected hardware $detected_hardware" \
-        "Hardware stack    $hardware_stack" \
-        "Replace configs   yes" \
-        "DMS integrations  DankSearch, DankCalendar" \
-        "Applications      daily, Chinese, office, development, media, VM, gaming, tools" \
-        "Display manager   Ly" \
-        "Dry run           $DRY_RUN" \
-        "Preserved         CachyOS repositories/kernel, bootloader, NetworkManager" \
-        "                  connections, Secure Boot configuration, Windows partitions"
+    # 字段左对齐到固定列宽。按**显示列宽**补齐（中文算两列），否则中英混排会参差不齐。
+    _plan_field() {
+        local label="$1" value="$2" pad
+        pad=$((18 - $(tui_visible_length "$label")))
+        ((pad < 1)) && pad=1
+        printf '%s%s%s\n' "$label" "$(tui_repeat ' ' "$pad")" "$value"
+    }
+
+    # 计划用框展示：这是用户做决定前唯一要读的一屏，字段对齐比散落的裸文本好读得多。
+    local -a plan=()
+    plan+=("$(_plan_field 运行用户 "$(id -un)")")
+    plan+=("$(_plan_field 终端 "$TERMINAL")")
+    plan+=("$(_plan_field "DMS 版本" "$DMS_VERSION")")
+    plan+=("$(_plan_field 系统升级 "$full_update")")
+    plan+=("$(_plan_field 检测到的硬件 "$detected_hardware")")
+    plan+=("$(_plan_field 硬件驱动栈 "$hardware_stack")")
+    plan+=("$(_plan_field 覆盖配置 "$replace_configs")")
+    plan+=("$(_plan_field "DMS 集成" "DankSearch、DankCalendar")")
+    plan+=("$(_plan_field "应用分组" "daily、Chinese、office、development、media、VM、gaming、tools")")
+    plan+=("$(_plan_field 显示管理器 "Ly")")
+    plan+=("$(_plan_field 试运行 "$dry_label")")
+    plan+=("$(_plan_field 不改动 "软件源与内核、引导器、NetworkManager 连接、")")
+    plan+=("$(_plan_field "" "Secure Boot 配置、Windows 分区")")
+
+    tui_banner "CachyOS + Niri + DMS 安装计划" "${plan[@]}"
 
     if [[ "$ASSUME_YES" == true || "$DRY_RUN" == true ]]; then
         return 0
@@ -331,17 +352,17 @@ install_hardware_stack() {
         warn "$note"
     done
     install_available_packages required true "${CACHYOS_HARDWARE_REQUIRED_PACKAGES[@]}"
-    tui_ok "必需硬件包（${#CACHYOS_HARDWARE_REQUIRED_PACKAGES[@]} 个）"
+    tui_ok "已安装必需硬件包（${#CACHYOS_HARDWARE_REQUIRED_PACKAGES[@]} 个）"
     install_available_packages optional false "${CACHYOS_HARDWARE_OPTIONAL_PACKAGES[@]}"
     if ((${#CACHYOS_HARDWARE_OPTIONAL_PACKAGES[@]} > 0)); then
-        tui_ok "可选硬件包（${#CACHYOS_HARDWARE_OPTIONAL_PACKAGES[@]} 个，缺了只警告）"
+        tui_ok "已安装可选硬件包（${#CACHYOS_HARDWARE_OPTIONAL_PACKAGES[@]} 个；缺失时仅警告）"
     fi
 
     if pacman -Q tuned-ppd >/dev/null 2>&1; then
         warn "preserving the installed tuned-ppd power-profile provider"
     else
         install_available_packages power-profile true power-profiles-daemon
-        tui_ok "电源配置服务 power-profiles-daemon"
+        tui_ok "电源配置服务：power-profiles-daemon"
     fi
 }
 
@@ -836,12 +857,12 @@ post_install() {
     fi
 
     systemctl --user daemon-reload
-    tui_ok "systemd 用户单元已重新加载"
+    tui_ok "已重新加载 systemd 用户单元"
     if ! systemctl --user add-wants niri.service dms.service; then
         warn "could not bind dms.service to niri.service; run this after logging in:"
         warn "  systemctl --user add-wants niri.service dms.service"
     else
-        tui_ok "DMS 已绑定到 Niri 会话"
+        tui_ok "DMS 已绑定至 Niri 会话"
     fi
 
     # 崩溃监听与 niri 会话同生命周期（unit 里 WantedBy=niri.service，与上面的 dms 一致）。
@@ -855,7 +876,7 @@ post_install() {
         warn "could not start cachyos-crash-watch.service; run this after logging in:"
         warn "  systemctl --user restart cachyos-crash-watch.service"
     else
-        tui_ok "崩溃监听已启用并重启（Super+\` 之外还能用 cachyos-agent-crash 诊断）"
+        tui_ok "崩溃监听已启用并重启（亦可用 cachyos-agent-crash 诊断）"
     fi
 
     # DMS 只在启动时读 settings.json：用量面板插件与状态栏接线要重启一次才生效。
@@ -863,7 +884,7 @@ post_install() {
         if ! systemctl --user restart dms.service; then
             warn "could not restart dms.service; the usage widget appears after the next login"
         else
-            tui_ok "已重启 DMS（用量面板与状态栏接线生效）"
+            tui_ok "已重启 DMS（用量面板与状态栏控件生效）"
         fi
     fi
 
@@ -873,7 +894,7 @@ post_install() {
         warn "could not enable cachyos-agent-usage.timer; run this after logging in:"
         warn "  systemctl --user enable --now cachyos-agent-usage.timer"
     else
-        tui_ok "用量刷新定时器已启用（登录后 2 分钟 + 每 15 分钟）"
+        tui_ok "用量刷新定时器已启用（登录后 2 分钟，此后每 15 分钟）"
     fi
 
     # 先算一次并忽略失败：新用户一登录就该在面板里看到数字，而不是空面板；
@@ -881,7 +902,7 @@ post_install() {
     if ! cachyos-agent-usage-update --force >/dev/null 2>&1; then
         warn "could not collect agent usage yet (run cachyos-agent-usage-update after using an agent)"
     else
-        tui_ok "已采集一次用量数据"
+        tui_ok "已完成一次用量采集"
     fi
 
     # 只有一个 agent 可用时直接设为默认：新用户按下 Super+grave 就能用，而不是先面对选择器。
@@ -899,12 +920,12 @@ post_install() {
         done < <(cachyos_agent_supported 2>/dev/null || true)
         if ((${#available_agents[@]} == 1)); then
             if cachyos-default-agent "${available_agents[0]}" >/dev/null 2>&1; then
-                tui_ok "默认 AI 编程助手：${available_agents[0]}（只探测到这一个）"
+                tui_ok "默认 AI 编程助手：${available_agents[0]}（仅检测到一个）"
             fi
         elif ((${#available_agents[@]} > 1)); then
             info "several AI agents found; press Super+grave and pick one (the choice is remembered)"
         else
-            tui_skip "没有装 AI 编程助手，先不设默认值"
+            tui_skip "未检测到 AI 编程助手，暂不设置默认值"
         fi
     fi
 
@@ -918,7 +939,7 @@ post_install() {
     if ! cachyos-agent-theme-sync --quiet; then
         warn "could not sync the light/dark mode to the AI agents (see cachyos-agent-theme-sync --status)"
     else
-        tui_ok "已把当前明暗主题同步给 AI 助手，之后跟随配色变化"
+        tui_ok "已将当前明暗主题同步至 AI 助手，此后随配色变化自动同步"
     fi
 }
 
@@ -929,8 +950,9 @@ main() {
     TUI_PHASE_TOTAL=6
 
     tui_banner "CachyOS · Niri · DankMaterialShell" \
-        "帮你把 CachyOS 装成 Niri 桌面（DMS 顶栏），AI 编程助手也一起配好" \
-        "别用 root 跑；要联网；软件源、引导器、网络连接、Secure Boot 都不会动"
+        "在已安装的 CachyOS 上部署 Niri 与 DankMaterialShell，并配置 AI 编程助手" \
+        "以具备 sudo 权限的普通用户运行；需要网络连接" \
+        "不改动软件源、引导器、网络连接与 Secure Boot"
 
     tui_phase_start "检查环境"
     preflight
@@ -946,7 +968,7 @@ main() {
         info "performing full CachyOS package upgrade"
         run sudo pacman -Syu --noconfirm
     else
-        tui_skip "已按 --skip-update 跳过全系统升级"
+        tui_skip "已按 --skip-update 跳过系统升级"
     fi
     tui_phase_done
 
@@ -972,7 +994,7 @@ main() {
     remove_blocked_brand_components
     tui_phase_done
 
-    tui_phase_start "桌面配置与 AI 助手"
+    tui_phase_start "桌面配置与 AI 组件"
     install_desktop_assets
     install_agent_skills
     configure_dms_settings
@@ -980,14 +1002,14 @@ main() {
     sync_ai_configs
     tui_phase_done
 
-    tui_phase_start "收尾"
+    tui_phase_start "服务启用与收尾"
     post_install
     tui_phase_done
 
-    tui_summary "安装完成（安装器不会自动重启）" \
+    tui_summary "安装完成（未自动重启系统）" \
         "1. 在方便时重启，并在 Ly 中选择 Niri 会话" \
         "2. 至少退出并重新登录一次，使 Fish、Fcitx5、libvirt 和 i2c 组权限生效" \
-        "3. 首次进入 Niri 后会在后台初始化 Firefox、Code、Wine 和 agent 技能" \
+        "3. 首次进入 Niri 后将在后台初始化 Firefox、Code、Wine 与 AI 助手技能" \
         "4. 执行：./verify.sh" \
         "5. 在 Niri 中执行：dms doctor" \
         "6. 执行：cachyos-lock-doctor" \
