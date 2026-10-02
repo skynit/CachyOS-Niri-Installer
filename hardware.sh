@@ -86,6 +86,10 @@ cachyos_detect_hardware() {
 }
 
 cachyos_select_hardware_packages() {
+    # 每次选择都从零开始：这两个标记决定"要不要补软件回退提供者"，残留值会让函数在不同
+    # 调用顺序下给出不同结果（测试里就先踩到：上一轮的 intel 让回退不触发）。
+    CACHYOS_HARDWARE_VULKAN_PROVIDER=""
+    CACHYOS_HARDWARE_VULKAN_PROVIDER_32=""
     local device vendor driver kernel_pkgbase_file kernel_pkgbase
 
     CACHYOS_HARDWARE_REQUIRED_PACKAGES=(
@@ -120,21 +124,34 @@ cachyos_select_hardware_packages() {
         driver="${device#*:}"
         case "$vendor" in
             intel)
+                CACHYOS_HARDWARE_VULKAN_PROVIDER="vulkan-intel"
+                CACHYOS_HARDWARE_VULKAN_PROVIDER_32="lib32-vulkan-intel"
                 cachyos_append_unique CACHYOS_HARDWARE_REQUIRED_PACKAGES vulkan-intel
+                cachyos_append_unique CACHYOS_HARDWARE_REQUIRED_PACKAGES lib32-vulkan-intel
                 cachyos_append_unique CACHYOS_HARDWARE_OPTIONAL_PACKAGES lib32-vulkan-intel
                 cachyos_append_unique CACHYOS_HARDWARE_OPTIONAL_PACKAGES intel-media-driver
                 cachyos_append_unique CACHYOS_HARDWARE_OPTIONAL_PACKAGES libva-utils
                 ;;
             amd)
+                CACHYOS_HARDWARE_VULKAN_PROVIDER="vulkan-radeon"
+                CACHYOS_HARDWARE_VULKAN_PROVIDER_32="lib32-vulkan-radeon"
                 cachyos_append_unique CACHYOS_HARDWARE_REQUIRED_PACKAGES vulkan-radeon
+                cachyos_append_unique CACHYOS_HARDWARE_REQUIRED_PACKAGES lib32-vulkan-radeon
                 cachyos_append_unique CACHYOS_HARDWARE_OPTIONAL_PACKAGES lib32-vulkan-radeon
                 ;;
             nvidia)
                 if [[ "$driver" == "nouveau" ]]; then
+                    CACHYOS_HARDWARE_VULKAN_PROVIDER="vulkan-nouveau"
+                    CACHYOS_HARDWARE_VULKAN_PROVIDER_32="lib32-vulkan-nouveau"
                     cachyos_append_unique CACHYOS_HARDWARE_REQUIRED_PACKAGES vulkan-nouveau
+                    cachyos_append_unique CACHYOS_HARDWARE_REQUIRED_PACKAGES lib32-vulkan-nouveau
                     cachyos_append_unique CACHYOS_HARDWARE_OPTIONAL_PACKAGES lib32-vulkan-nouveau
                 else
+                    # NVIDIA 的专有栈自己提供 vulkan 实现，也算"已指定提供者"。
+                    CACHYOS_HARDWARE_VULKAN_PROVIDER="nvidia-utils"
+                    CACHYOS_HARDWARE_VULKAN_PROVIDER_32="lib32-nvidia-utils"
                     cachyos_append_unique CACHYOS_HARDWARE_REQUIRED_PACKAGES nvidia-utils
+                    cachyos_append_unique CACHYOS_HARDWARE_REQUIRED_PACKAGES lib32-nvidia-utils
                     cachyos_append_unique CACHYOS_HARDWARE_OPTIONAL_PACKAGES lib32-nvidia-utils
                     cachyos_append_unique CACHYOS_HARDWARE_OPTIONAL_PACKAGES nvidia-settings
                     if [[ "$driver" != "nvidia" ]]; then
@@ -155,6 +172,26 @@ cachyos_select_hardware_packages() {
 
     if ((${#CACHYOS_GPU_DEVICES[@]} == 0)); then
         CACHYOS_HARDWARE_NOTES+=("No GPU was detected; only common hardware packages were selected")
+    fi
+
+    # 必须保证 pacman 不需要**猜** vulkan 提供者。
+    #
+    # `steam` 依赖虚拟包 `vulkan-driver`。如果这次事务里没有任何具体的提供者，pacman 会在
+    # 交互提示里列出 32 个候选，非交互（--noconfirm）时它取第一个 `mesa-git`——而 mesa-git 与
+    # 基础系统里的 `mesa` **直接冲突**，于是 pacman 报 "unresolvable package conflicts detected"
+    # 并让整个安装以退出码 1 中断。真机上实测过（虚拟机里没有可识别的 GPU 时必现）。
+    #
+    # 所以没有探测到具体 GPU 驱动时，显式加一个软件回退提供者：它依赖的是 `mesa` 而不是
+    # `mesa-git`，满足虚拟依赖且不引入冲突。
+    if [[ -z "${CACHYOS_HARDWARE_VULKAN_PROVIDER:-}" ]]; then
+        cachyos_append_unique CACHYOS_HARDWARE_REQUIRED_PACKAGES vulkan-swrast
+        CACHYOS_HARDWARE_VULKAN_PROVIDER="vulkan-swrast"
+    fi
+    # 32 位的那个虚拟依赖同样必须被显式满足：`lib32-vulkan-*` 在上面的分支里只是"可选"包，
+    # 默认不装；缺了它 pacman 仍然会去猜，照样选中 lib32-mesa-git 而冲突。
+    if [[ -z "${CACHYOS_HARDWARE_VULKAN_PROVIDER_32:-}" ]]; then
+        cachyos_append_unique CACHYOS_HARDWARE_REQUIRED_PACKAGES lib32-vulkan-swrast
+        CACHYOS_HARDWARE_VULKAN_PROVIDER_32="lib32-vulkan-swrast"
     fi
 }
 
