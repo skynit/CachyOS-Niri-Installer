@@ -513,6 +513,30 @@ check_voxtype_stack() {
     done
 }
 
+check_agent_theme_sync() {
+    local unit_dir="$HOME/.config/systemd/user"
+
+    # 单元由 manifest 循环检查存在性；这里检查"能不能真的起作用"。
+    if systemctl --user is-enabled --quiet cachyos-agent-theme.path 2>/dev/null; then
+        pass "theme sync path unit is enabled"
+    else
+        warn "cachyos-agent-theme.path is not enabled (the mode sync runs only at install)"
+    fi
+
+    if systemctl --user is-active --quiet cachyos-agent-theme.path 2>/dev/null; then
+        pass "theme sync path unit is active"
+    else
+        warn "cachyos-agent-theme.path is not active"
+    fi
+
+    # 真正读一次配色文件并按模式算出目标值；失败说明配色文件缺失或不可读。
+    if cachyos-agent-theme-sync --status --quiet >/dev/null 2>&1; then
+        pass "theme sync can read the DMS colour palette"
+    else
+        warn "theme sync cannot read the DMS colour palette"
+    fi
+}
+
 check_lock_screen() {
     local command_name
     local settings_file="$HOME/.config/DankMaterialShell/settings.json"
@@ -596,6 +620,7 @@ main() {
     check_ai_agent_stack
     check_dms_plugin_stack
     check_voxtype_stack
+    check_agent_theme_sync
     check_lock_screen
     check_neutral_install
 

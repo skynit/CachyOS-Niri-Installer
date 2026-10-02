@@ -443,6 +443,30 @@ Niri 没有条件绑定，用可选 include 才能做到"**装了听写才有这
 `$XDG_RUNTIME_DIR/voxtype/state` 读取，由 `voxtype` 自己维护。用 `cachyos-voxtype-remove`
 卸载时会先把 `~/.config/voxtype` 备份成带时间戳的目录，不会静默丢掉你调过的设备或采样率。
 
+#### 主题同步
+
+DMS 换壁纸或切明暗后，把当前的**明暗模式**同步给各 agent，省得每次都要手动去各家设置里改：
+
+```bash
+cachyos-agent-theme-sync            # 同步一次
+cachyos-agent-theme-sync --status   # 只看当前模式与各 agent 状态，不写文件
+cachyos-agent-theme-sync --dry-run  # 只显示会改什么
+```
+
+- 数据源是 DMS 生成的 `~/.cache/DankMaterialShell/dms-colors.json`（里面直接带 `mode`）。
+- 已同步：**Claude Code** —— 写 `~/.claude/settings.json` 的 `theme`（`dark` / `light`），
+  只改这一个键，其余原样保留。
+- 未同步：**Codex**（`config.toml` 与 `codex --help` 都没有主题配置项，TUI 自行适配明暗）、
+  **OpenCode**（主题是内置名，名表无法在本机核实，写错会静默不生效）。两者都会被明确列出，
+  不会假装同步成功。
+- 触发方式：`cachyos-agent-theme.path` 盯着配色文件，DMS 每次重写它就同步一次；安装时也会
+  先同步一次。装好可用 `systemctl --user status cachyos-agent-theme.path` 查看。
+
+**为什么不做完整配色主题**：Claude Code 支持自定义主题文件，但它的 schema 无法在本机可靠
+核实（发行的是打包过的二进制，从中提取只会拿到 minified JS 的噪声）。本项目宁可少做，
+也不写一份"看起来对、实际不生效"的主题文件——这正是审核阶段反复出现的问题类型。
+想补的话，只需要在 `bin/cachyos-agent-theme-sync` 的取值表里加一行。
+
 #### 新增一个 agent
 
 旗标集中在一处：`assets/lib/agent.sh`。加一个 agent 需要同时改三处——该文件的

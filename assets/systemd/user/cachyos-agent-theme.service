@@ -1,0 +1,8 @@
+[Unit]
+Description=Sync the DMS light/dark mode to the AI agents
+After=dms.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/cachyos-agent-theme-sync --quiet
+# 刻意不加 Restart：这是随主题变化触发的一次性同步，失败就失败，反复重试只会刷日志。

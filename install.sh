@@ -486,6 +486,11 @@ install_desktop_assets() {
     # 逐个显式安装，否则 verify.sh 的 manifest 循环会因为文件不存在而 FAIL。
     run install -m 0644 "$SCRIPT_DIR/assets/systemd/user/cachyos-crash-watch.service" \
         "$HOME/.config/systemd/user/cachyos-crash-watch.service"
+    # 主题变化时把明暗模式同步给 agent：用 path 单元盯着 DMS 生成的配色文件。
+    run install -m 0644 "$SCRIPT_DIR/assets/systemd/user/cachyos-agent-theme.service" \
+        "$HOME/.config/systemd/user/cachyos-agent-theme.service"
+    run install -m 0644 "$SCRIPT_DIR/assets/systemd/user/cachyos-agent-theme.path" \
+        "$HOME/.config/systemd/user/cachyos-agent-theme.path"
 
     if [[ ! -e "$HOME/.config/kitty/kitty.conf" ]]; then
         if [[ "$DRY_RUN" == true ]]; then
@@ -737,6 +742,9 @@ post_install() {
         print_command systemctl --user enable cachyos-crash-watch.service
         print_command systemctl --user restart cachyos-crash-watch.service
         print_command systemctl --user restart dms.service
+        print_command systemctl --user enable cachyos-agent-theme.path
+        print_command systemctl --user start cachyos-agent-theme.path
+        print_command cachyos-agent-theme-sync --quiet
         return 0
     fi
 
@@ -763,6 +771,18 @@ post_install() {
         if ! systemctl --user restart dms.service; then
             warn "could not restart dms.service; the usage widget appears after the next login"
         fi
+    fi
+
+    # 主题同步：先跑一次（把当前模式写进各 agent），再挂上 path 单元跟着配色文件走。
+    if ! systemctl --user enable cachyos-agent-theme.path; then
+        warn "could not enable cachyos-agent-theme.path; run this after logging in:"
+        warn "  systemctl --user enable --now cachyos-agent-theme.path"
+    fi
+    if ! systemctl --user start cachyos-agent-theme.path; then
+        warn "could not start cachyos-agent-theme.path"
+    fi
+    if ! cachyos-agent-theme-sync --quiet; then
+        warn "could not sync the light/dark mode to the AI agents (see cachyos-agent-theme-sync --status)"
     fi
 }
 

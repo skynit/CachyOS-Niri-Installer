@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+
+# 把 DMS 当前的明暗模式同步给各 AI agent。
+#
+# 只同步**能验证的部分**：模式（dark/light）。完整配色（自定义主题 JSON）没有做，因为
+# 各 agent 的主题文件 schema 无法在本机可靠核实——Claude Code 是打包过的二进制，
+# 从里面提取 schema 只会拿到 minified JS 的噪声。宁可少做，也不写一份"看起来对、
+# 实际不生效"的主题文件（那正是本项目审核里反复出现的问题）。
+#
+# 数据源：DMS 生成的 ~/.cache/DankMaterialShell/dms-colors.json，里面直接带 mode 字段。
+
+set -Eeuo pipefail
+
+readonly SCRIPT_NAME="${0##*/}"
+readonly COLORS_FILE_DEFAULT="$HOME/.cache/DankMaterialShell/dms-colors.json"
+
+DRY_RUN=false
+QUIET=false
+
+usage() {
+    cat <<EOF
+Usage: $SCRIPT_NAME [--dry-run] [--quiet] [--status]
+
+把 DMS 的明暗模式同步到各 agent 的配置。
+
+  --dry-run  只显示会做什么，不写文件
+  --quiet    只输出错误
+  --status   显示当前模式与各 agent 的状态，不做修改
+  -h, --help 显示本帮助
+EOF
+}
+
+status_only=false
+while (($# > 0)); do
+    case "$1" in
+        --dry-run) DRY_RUN=true; shift ;;
+        --quiet) QUIET=true; shift ;;
+        --status) status_only=true; shift ;;
+        -h | --help) usage; exit 0 ;;
+        *) printf '%s: 未知选项 %s\n' "$SCRIPT_NAME" "$1" >&2; usage >&2; exit 2 ;;
+    esac
+done
+
+say() {
+    [[ $QUIET == true ]] && return 0
+    printf '%s\n' "$1"
+}
+
+colors_file="${CACHYOS_DMS_COLORS_FILE:-$COLORS_FILE_DEFAULT}"
+
+if [[ ! -s "$colors_file" ]]; then
+    printf '%s: 找不到 DMS 配色文件（%s）。先让 DMS 生成配色。\n' "$SCRIPT_NAME" "$colors_file" >&2
+    exit 1
+fi
+
+mode="$(jq -r '.mode // empty' "$colors_file" 2>/dev/null || true)"
+if [[ -z "$mode" ]]; then
+    printf '%s: 配色文件里没有 mode 字段。\n' "$SCRIPT_NAME" >&2
+    exit 1
+fi
+
+# 每个 agent 的主题取值表。**只放能验证的取值**：没把握的 agent 就留空，脚本会明说跳过，
+# 而不是写一个可能不被识别的值进去。想加就加一行，不需要改结构。
+claude_theme=""
+case "$mode" in
+    dark) claude_theme="dark" ;;
+    light) claude_theme="light" ;;
+    *)
+        printf '%s: 未知模式 %s，跳过。\n' "$SCRIPT_NAME" "$mode" >&2
+        exit 1
+        ;;
+esac
+
+apply_json_key() {
+    # 只改一个键，其余原样保留；先写临时文件再原子替换。
+    local file="$1"
+    local key="$2"
+    local value="$3"
+    local temporary
+
+    # --status 与 --dry-run 都不得写文件。这里再挡一道：调用方漏判也不会真写。
+    if [[ $status_only == true || $DRY_RUN == true ]]; then
+        say "  [未写入] $file: $key = $value"
+        return 0
+    fi
+
+    temporary="$(mktemp)"
+    if jq --arg value "$value" --arg key "$key" '.[$key] = $value' "$file" > "$temporary"; then
+        install -m 0600 "$temporary" "$file"
+        say "  $file: $key = $value"
+    else
+        printf '%s: 无法更新 %s\n' "$SCRIPT_NAME" "$file" >&2
+        rm -f -- "$temporary"
+        return 1
+    fi
+    rm -f -- "$temporary"
+}
+
+synced=0
+skipped=()
+
+# Claude Code：settings.json 的 theme 字段。
+claude_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+claude_settings="$claude_dir/settings.json"
+if [[ -n $claude_theme ]]; then
+    if [[ -d $claude_dir ]]; then
+        if [[ -s $claude_settings ]]; then
+            current="$(jq -r '.theme // empty' "$claude_settings" 2>/dev/null || true)"
+            if [[ $status_only == true ]]; then
+                say "  Claude Code：当前 theme=${current:-（未设置）}，目标 $claude_theme"
+            elif [[ $current == "$claude_theme" ]]; then
+                say "  Claude Code 已是 $claude_theme，无需改动。"
+            else
+                apply_json_key "$claude_settings" theme "$claude_theme"
+            fi
+            synced=$((synced + 1))
+        else
+            # 没有 settings.json：可能还没跑过 Claude Code，别替它创建骨架配置。
+            skipped+=("Claude Code（还没有 settings.json）")
+        fi
+    else
+        skipped+=("Claude Code（未安装）")
+    fi
+fi
+
+# Codex 与 OpenCode：本轮不同步，理由写在这里，免得以后有人以为是漏了。
+# - Codex：config.toml 与 `codex --help` 都没有主题相关配置项，TUI 自行适配明暗。
+# - OpenCode：主题是内置名（如 opencode/catppuccin），名表无法在本机核实，写错会静默不生效。
+skipped+=("Codex（不支持主题配置）")
+skipped+=("OpenCode（主题名表未核实，暂不同步）")
+
+if ((${#skipped[@]} > 0)); then
+    say "跳过："
+    for entry in "${skipped[@]}"; do
+        say "  - $entry"
+    done
+fi
+
+if [[ $status_only == false ]]; then
+    say "已同步 $synced 个 agent 到 $mode 模式。"
+fi

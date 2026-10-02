@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch the DMS colour palette and sync the light/dark mode to AI agents
+After=dms.service
+
+[Path]
+# DMS 每次换壁纸或主题都会重写这个文件；PathChanged 在它变化时触发同步。
+PathChanged=%h/.cache/DankMaterialShell/dms-colors.json
+
+[Install]
+WantedBy=niri.service

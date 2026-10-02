@@ -15,3 +15,5 @@ waybar/style.css	.config/waybar/style.css
 waycorner/config.toml	.config/waycorner/config.toml
 waypaper/config.ini	.config/waypaper/config.ini
 systemd/user/cachyos-crash-watch.service	.config/systemd/user/cachyos-crash-watch.service
+systemd/user/cachyos-agent-theme.service	.config/systemd/user/cachyos-agent-theme.service
+systemd/user/cachyos-agent-theme.path	.config/systemd/user/cachyos-agent-theme.path
