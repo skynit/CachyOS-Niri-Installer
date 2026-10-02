@@ -237,7 +237,9 @@ Column {
                         Column {
                             width: parent.width
                             spacing: 2
-                            visible: card.agent.days.length > 1
+                            // ≥1 而不是 >1：只有一天数据时 chartPoints 会把点画在正中间，
+                            // 藏掉整个区块反而像"坏掉了"。
+                            visible: card.agent.days.length >= 1
 
                             RowLayout {
                                 width: parent.width

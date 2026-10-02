@@ -16,6 +16,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import tempfile
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
@@ -24,7 +25,10 @@ RECENT_DAYS = 7
 
 # 缓存格式/解析逻辑的版本。**改动任何解析或聚合逻辑都必须递增**：缓存键只看源文件的
 # (mtime, size)，源文件没变而代码变了时，旧缓存会继续给出按旧逻辑算出的数字。
-CACHE_VERSION = 2
+# 本次提升的原因：Claude 按 message.id 去重（原来把一条 API 消息按 content block 算了好几遍）、
+# 缓存里补上了按日 prompt 数、读取失败的文件不再写缓存。任何解析逻辑变化都必须在这里 +1，
+# 否则源文件没变、旧缓存会继续给出按旧逻辑算出的数字。
+CACHE_VERSION = 3
 
 
 def cache_dir() -> Path:
@@ -51,24 +55,54 @@ def load_cache(agent: str) -> dict[str, Any]:
 
 def save_cache(agent: str, cache: dict[str, Any]) -> None:
     path = cache_dir() / f"{agent}-files.json"
-    temporary = path.with_suffix(".tmp")
     cache["cacheVersion"] = CACHE_VERSION
+    # 临时文件名要唯一：同一个 agent 的两个采集器实例并发时，固定名字会互相覆盖。
+    # （实测并发没有造成损坏，但唯一名字是零成本的正确做法。）
     try:
-        with temporary.open("w", encoding="utf-8") as handle:
+        descriptor, temporary_name = tempfile.mkstemp(dir=path.parent, prefix=f".{agent}-", suffix=".tmp")
+    except OSError:
+        return
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             json.dump(cache, handle, ensure_ascii=False)
         temporary.replace(path)
     except OSError:
         # 缓存写不进去只是变慢，不该让采集失败。
-        pass
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
 
 
 def empty_counters() -> dict[str, int]:
     return {"inputTokens": 0, "outputTokens": 0, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0}
 
 
+def as_int(value: Any) -> int:
+    """把任意输入收敛成 int。非数字/None/NaN 一律当 0。
+
+    真实会话文件里偶尔会出现字符串、浮点或 null 的 token 字段。直接用 int() 会让整次采集
+    以 ValueError 退出（记录停在旧值），而这只是**一个字段**的问题——不值得让统计全废。
+    浮点按截断处理（1.9 → 1），与 token 计数的整数语义一致。
+    """
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if value == value and value not in (float("inf"), float("-inf")) else 0
+    if isinstance(value, str):
+        try:
+            return int(float(value.strip() or 0))
+        except (TypeError, ValueError):
+            return 0
+    return 0
+
+
 def add_counters(target: dict[str, int], source: dict[str, int]) -> None:
     for key, value in source.items():
-        target[key] = target.get(key, 0) + int(value or 0)
+        target[key] = target.get(key, 0) + as_int(value)
 
 
 def total_tokens(counters: dict[str, int], input_includes_cache: bool = False) -> int:
@@ -111,10 +145,16 @@ def local_date(value: Any) -> str:
     return parsed.astimezone().date().isoformat()
 
 
-def iter_jsonl(path: Path) -> Iterator[Any]:
-    """逐行解析 JSONL；坏行跳过（会话文件可能因崩溃被截断）。"""
+def iter_jsonl(path: Path, status: dict[str, bool] | None = None) -> Iterator[Any]:
+    """逐行解析 JSONL；坏行跳过（会话文件可能因崩溃被截断）。
+
+    `status` 用来把"文件读不了"与"文件是空的"区分开：调用方据此决定**不要**把这次的结果写进
+    缓存。否则一个 stat 成功但读不了的文件会被缓存成"0 条记录"，错误一直留着直到文件变化。
+
+    `utf-8-sig` 会吃掉行首 BOM：带 BOM 的首行原本 json.loads 失败会被静默丢掉（实测丢过 100 tokens）。
+    """
     try:
-        with path.open(encoding="utf-8", errors="replace") as handle:
+        with path.open(encoding="utf-8-sig", errors="replace") as handle:
             for line in handle:
                 line = line.strip()
                 if not line:
@@ -124,6 +164,8 @@ def iter_jsonl(path: Path) -> Iterator[Any]:
                 except ValueError:
                     continue
     except OSError:
+        if status is not None:
+            status["ok"] = False
         return
 
 

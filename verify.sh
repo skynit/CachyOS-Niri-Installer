@@ -467,13 +467,22 @@ check_dms_plugin_stack() {
         warn "DMS usage plugin is not enabled (Settings > Plugins, or rerun the installer)"
     fi
 
+    # 插件已启用、却没有任何一条 barConfigs 含它 ⇒ 用户看不到任何东西，这是功能不成立，
+    # 不是"提醒"。反过来若插件没启用，就不要强求接线（用户可能故意不开）。
+    local plugin_enabled=false
+    if [[ -f "$plugin_settings" ]] && jq -e '.cachyosAgents.enabled == true' "$plugin_settings" >/dev/null 2>&1; then
+        plugin_enabled=true
+    fi
+
     if [[ -f "$settings_file" ]] && jq -e '
             [.barConfigs[]? | (.leftWidgets? // [])[], (.centerWidgets? // [])[], (.rightWidgets? // [])[]
              | if type == "object" then .id else . end] | index("cachyosAgents") != null' \
             "$settings_file" >/dev/null 2>&1; then
         pass "DMS usage widget is placed on the DankBar"
+    elif [[ $plugin_enabled == true ]]; then
+        fail "DMS usage plugin is enabled but the widget is on no bar (Settings > Bar, or rerun the installer)"
     else
-        warn "DMS usage widget is not placed on the DankBar"
+        warn "DMS usage widget is not placed on the DankBar (plugin disabled, so that is allowed)"
     fi
 
     # 面板没有记录可读时会显示占位符，所以这里也确认采集器至少跑成功过一次。
@@ -514,26 +523,50 @@ check_voxtype_stack() {
 }
 
 check_agent_theme_sync() {
+    local share_dir="${CACHYOS_DESKTOP_SHARE_DIR:-/usr/local/share/cachyos-desktop}"
     local unit_dir="$HOME/.config/systemd/user"
+    local unit
 
-    # 单元由 manifest 循环检查存在性；这里检查"能不能真的起作用"。
+    # 这条检查过去只会 pass/warn，从不说 fail——结果"单元指向不存在的可执行文件 + 同步脚本
+    # 直接 exit 1"也能让 verify 全绿。下面几条是真正能失败的：
+    for unit in cachyos-agent-theme.service cachyos-agent-theme.path; do
+        if [[ -s "$unit_dir/$unit" ]] && cmp -s "$share_dir/assets/systemd/user/$unit" "$unit_dir/$unit"; then
+            pass "installed theme unit matches the shipped one: $unit"
+        else
+            fail "installed theme unit differs from the shipped one (rerun the installer): $unit"
+        fi
+    done
+
+    # ExecStart 指向的命令必须真的存在，否则 path 单元每次触发都是失败。
+    if [[ -x /usr/local/bin/cachyos-agent-theme-sync ]]; then
+        pass "theme sync binary is installed and executable"
+    else
+        fail "cachyos-agent-theme-sync is missing or not executable"
+    fi
+
+    if ! systemctl --user show-environment >/dev/null 2>&1; then
+        # systemctl 本身不可用（例如不在用户会话里）：这里只能提醒，不算功能缺陷。
+        warn "systemctl --user is unavailable; skipped the theme sync unit checks"
+        return 0
+    fi
+
     if systemctl --user is-enabled --quiet cachyos-agent-theme.path 2>/dev/null; then
         pass "theme sync path unit is enabled"
     else
-        warn "cachyos-agent-theme.path is not enabled (the mode sync runs only at install)"
+        fail "cachyos-agent-theme.path is not enabled (rerun the installer)"
     fi
 
     if systemctl --user is-active --quiet cachyos-agent-theme.path 2>/dev/null; then
         pass "theme sync path unit is active"
     else
-        warn "cachyos-agent-theme.path is not active"
+        fail "cachyos-agent-theme.path is not active"
     fi
 
     # 真正读一次配色文件并按模式算出目标值；失败说明配色文件缺失或不可读。
     if cachyos-agent-theme-sync --status --quiet >/dev/null 2>&1; then
         pass "theme sync can read the DMS colour palette"
     else
-        warn "theme sync cannot read the DMS colour palette"
+        fail "theme sync cannot read the DMS colour palette"
     fi
 }
 

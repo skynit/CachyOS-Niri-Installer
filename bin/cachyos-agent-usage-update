@@ -9,7 +9,9 @@
 set -Eeuo pipefail
 
 readonly SCRIPT_NAME="${0##*/}"
-readonly STATE_DIR="$HOME/.local/state/cachyos-desktop"
+# 与面板（UsageSource.qml）保持一致地尊重 XDG_STATE_HOME：否则两者会指向不同目录，
+# 面板读到的是空目录、看起来像"没有数据"。
+readonly STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/cachyos-desktop"
 readonly USAGE_DIR="$STATE_DIR/agents/usage"
 
 SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,12 +35,18 @@ EOF
 
 flags=()
 only=()
+limits_only=false
 declare -A excluded
 
 while (($# > 0)); do
     case "$1" in
-        --force | --limits-only)
+        --force)
             flags+=("$1")
+            shift
+            ;;
+        --limits-only)
+            flags+=("$1")
+            limits_only=true
             shift
             ;;
         --except)
@@ -94,7 +102,23 @@ collect() {
     fi
 
     temporary="$(mktemp "$USAGE_DIR/.$agent.XXXXXX")"
-    printf '%s\n' "$record" > "$temporary"
+    if [[ $limits_only == true && -s "$USAGE_DIR/$agent.json" ]]; then
+        # --limits-only 的采集器只能给出限额，本地统计是空的。直接落盘会用好数据换坏数据
+        # （整条记录变成 hasLocalStats=false、今天用量归零），所以这里只把限额字段并进去，
+        # 保留磁盘上原有的 stats/ready/hasLocalStats。
+        if ! jq -s '.[0] * {
+                limits: .[1].limits,
+                usageStatusText: .[1].usageStatusText,
+                tierLabel: .[1].tierLabel,
+                updatedAt: .[1].updatedAt
+            }' "$USAGE_DIR/$agent.json" <<<"$record" > "$temporary"; then
+            rm -f -- "$temporary"
+            printf '%s: %s 的限额合并失败（保留上一份记录）\n' "$SCRIPT_NAME" "$agent" >&2
+            return 1
+        fi
+    else
+        printf '%s\n' "$record" > "$temporary"
+    fi
     mv -- "$temporary" "$USAGE_DIR/$agent.json"
 }
 

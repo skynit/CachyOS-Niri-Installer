@@ -15,7 +15,7 @@ cachyos-agent-skills [--quiet] [--harness <agent>]
                               把 agent 技能软链到各 harness 的技能目录
 cachyos-agent-crash <pid>|--latest
                               把一次进程崩溃交给默认 agent 诊断
-cachyos-crash-mute [<程序> [on|off]]   按程序静默崩溃提醒
+cachyos-crash-mute [<程序> [off]]     按程序静默崩溃提醒（只支持 off，没有 on）
 cachyos-ai-config-sync status|backup|sync
                               在 CC Switch 数据库与 Codex 配置之间同步 provider
 ```

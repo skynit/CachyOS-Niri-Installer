@@ -157,7 +157,8 @@ Windows 更新可能改变 EFI 启动顺序。条件允许时，让 Windows 与 
 
 ## 默认应用
 
-`packages.sh` 是唯一的软件包清单。目前包含 **103 个去重后的仓库包**和 **14 个
+`packages.sh` 是**应用清单**的唯一来源（DMS 的功能包与硬件相关包另有出处）。目前包含
+**104 个去重后的仓库包**和 **14 个
 AUR 包**，安装时不需要额外功能开关。
 
 - 日常：Firefox、Thunar、Nautilus、File Roller、Transmission、Flatseal、Mission Center、GParted、LACT、EasyEffects、MPV、imv、LocalSend、Yazi、剪贴板、截图和录屏工具。
@@ -357,7 +358,8 @@ cachyos-agent-skills --harness codex   # 只同步某一个 harness
 
 1. 把 `pid`/`comm`/`exe`/`signal`/时间写入
    `~/.local/state/cachyos-desktop/agents/last-crash`；
-2. 发一条通知。同一程序 60 秒内只提醒一次（`CACHYOS_CRASH_DEDUPE_SECONDS` 可调）。
+2. 发一条通知。同一程序 60 秒内**只记录并提醒一次**——去重判断在写记录之前，所以窗口内的
+   第二次崩溃既不记录也不提醒（`CACHYOS_CRASH_DEDUPE_SECONDS` 可调）。
 
 诊断入口：
 
@@ -387,17 +389,20 @@ cachyos-crash-mute SomeApp off      # 恢复提醒
 
 #### 用量统计
 
-安装器会装上 DMS 面板插件 **CachyOS Agents 用量**：状态栏显示三个 agent 的 token 与费用，
-点开是每个 agent 的明细（今天/累计、会话与提示数、按费用排序的模型、最近 7 天柱状图）。
+安装器会装上 DMS 面板插件 **CachyOS Agents 用量**：**状态栏只显示 token 用量**（没有图标、
+没有金额），点开是每个 agent 的明细（今天/累计的 token 与费用、会话与提示数、按费用排序的
+模型、最近 7 天的**折线图**）。
 
 ```bash
 cachyos-agent-usage-update            # 重新采集（面板每 15 分钟也会自己调一次）
 cachyos-agent-usage-update claude     # 只跑某一个采集器
 cachyos-agent-usage-claude            # 采集器直接输出一条 JSON 记录
+cachyos-agent-usage-codex             # 每个 agent 一个采集器，各自输出一条 JSON 记录
 ```
 
 数据链路：采集器 → `~/.local/state/cachyos-desktop/agents/usage/<agent>.json` → 面板读取。
-面板只读目录，所以**加一个 agent 只需要加一个采集器，面板不用改**。
+面板只读目录；加一个 agent 需要两处：加一个采集器，并把它登记进面板的 agent 表
+（`Usage.js` 顶部的 `agents` 数组——`summarise()` 只遍历那张表，只加 JSON 文件不会显示）。
 
 - 全部在本机取数：Claude 读 `~/.claude/projects/**` 的会话转录，Codex 读
   `~/.codex/sessions/**` 的 rollout。不联网。
@@ -408,7 +413,7 @@ cachyos-agent-usage-claude            # 采集器直接输出一条 JSON 记录
 - **缓存按源文件 `(mtime, size)` 增量**，并带 `CACHE_VERSION`：解析逻辑一变缓存整体作废，
   否则会出现"代码修好了、屏幕上的数字还是旧的"。
 - 缺数据显示「未采集 / 无数据」，绝不把没采到渲染成 0；今天没有用量时回落到最近有数据的
-  一天并标出日期（例如 `10-01 12.0M · $0.367`）。
+  一天并标出日期（例如 `10-01 12.0M`）——金额只在弹窗里看。
 
 插件的源码真源在 <https://github.com/skynit/dms-plugins>，安装器里放的是随包副本
 （`assets/dms-plugins/CachyosAgents/`），这样全新机器离线也能复刻。面板纯逻辑由
@@ -556,7 +561,7 @@ DMS 默认使用密码认证，并应用以下策略：
 
 | 电源状态 | 自动锁屏 | 关闭显示器 | 自动休眠 |
 | --- | ---: | ---: | ---: |
-| 接通电源 | 5 分钟 | 10 分钟 | 60 分钟 |
+| 接通电源 | 20 分钟 | 20 分钟 | 60 分钟 |
 | 使用电池 | 3 分钟 | 5 分钟 | 30 分钟 |
 
 - 休眠前强制锁屏，并使用 `loginctl` 集成。
@@ -703,8 +708,9 @@ AI Agent 这一层是**借鉴 [Omarchy](https://omarchy.org/) 的设计**做的�
 
 - 崩溃监听只在服务运行期间生效：服务重启（例如更新）窗口内的崩溃不会被补报——
   `journalctl -f -n 0` 有意不重播历史。
-- 点击通知后启动的诊断会话被刻意移出 service 的 cgroup（`KillMode=process`），代价是重启
-  watcher 时会短暂留下一个空闲的 `journalctl` 进程，它在下次有匹配输出时因 SIGPIPE 自行退出。
+- 诊断会话被刻意设置为**不随服务重启被 SIGTERM**（`KillMode=process`：systemd 只杀主进程，
+  同 cgroup 里的 kitty/agent 继续跑）。代价是重启 watcher 时会短暂留下一个空闲的 `journalctl`
+  进程，它在下次有匹配输出时因 SIGPIPE 自行退出。
 - 选择器需要终端或 Kitty；两者都没有时只能用 `cachyos-default-agent <agent>` 直接指定。
 
 ## 官方 Niri 与修改版功能差异

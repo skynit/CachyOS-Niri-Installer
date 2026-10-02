@@ -90,7 +90,7 @@ bash tests/run-all.sh # 纯函数测试，不需要桌面环境
 | Niri 主配置（输入、布局、include） | `~/.config/niri/config.kdl` | 同上 | 是 |
 | 动态配色 / 布局 / 光标 / 模糊 | `~/.config/niri/dms/{colors,layout,alttab,outputs,cursor,wpblur}.kdl` | **DMS 生成，不要手改**（会被重写） | 否 |
 | 面板、启动器、锁屏等 DMS 行为 | `~/.config/DankMaterialShell/settings.json`（或用设置界面） | 界面改自动生效；手工改后可能要 `dms restart` | 否 |
-| DMS 插件 | `~/.config/DankMaterialShell/plugins/<id>/` | `dms ipc call plugin-scan rescan` | 否 |
+| DMS 插件 | `~/.config/DankMaterialShell/plugins/<id>/` | `dms ipc call plugin-scan scan`（重扫全部）或 `rescan <插件 id>` | 否 |
 | Waybar 顶/底栏与样式 | `~/.config/waybar/{top,bottom}.jsonc`、`style.css` | `cachyos-waybar-top` / `-bottom` / `-toggle`（内部 `pkill -x waybar` 再启动） | 是 |
 | Kitty 字体等 | `~/.config/kitty/cachyos-font.conf`（由 `kitty.conf` include） | 开新窗口生效 | 是 |
 | 输入法 / RIME | `~/.config/fcitx5/profile`、`~/.local/share/fcitx5/rime/default.custom.yaml` | `cachyos-input-toggle` 或重新登录 | 是 |
@@ -159,15 +159,20 @@ systemctl --user status cachyos-crash-watch.service        # 崩溃监听
 - **26 个字母键全部已被占用**，`Mod+X` 也不行（`Super+X` 是 DMS 电源菜单）。
   **`Mod+grave`（`` Super+` ``）已被本项目占用**为"启动默认 AI agent"。
   实测空闲的非字母键：`Mod+BackSpace`、`Mod+Delete`、`Mod+Backslash`、`Mod+Insert`、
-  `Mod+F4/F6/F7/F9/F10/F11/F12`。
+  `Mod+F4/F6/F7/F10/F11/F12`。
+  **注意 `Mod+F9` 与 `Mod+Ctrl+X` 不是空闲的**：装了本地听写（Voxtype）后它们被
+  `~/.config/niri/cachyos-voxtype.kdl` 占用；Niri 遇到重复绑定会**直接加载失败**，
+  所以在这台机器上加键前先确认听写是否已安装。
 - **重复绑定是硬错误**：`niri validate` 会报 `duplicate keybind`，配置加载失败。
 - **`cachyos-extras.kdl` 是必需的**：主配置里的 `include "cachyos-extras.kdl"` **没有**
-  `optional=true`（只有 DMS 生成的那批是 optional）。删掉或改名会让 Niri 直接起不来，
+  `optional=true`。optional 的包括 DMS 生成的那批，以及 `cachyos-voxtype.kdl`（装了听写才有）；
+  删掉或改名 `cachyos-extras.kdl` 会让 Niri 直接起不来，
   `niri validate` 报 `failed to read included config`。
 - **DMS 生成的文件不要手改**：`~/.config/niri/dms/` 下除 `binds.kdl` 外基本都是生成的。
 - **`config.kdl` 里的 `@HOME@`** 是安装期模板占位符，运行时文件里不应再出现。
 - **不要用 `dms plugins list` / `dms plugins install`**：它们会去上游 registry 拉网络数据，
-  离线或受限网络下会长时间挂住。插件一律文件部署 + `dms ipc call plugin-scan rescan`。
+  离线或受限网络下会长时间挂住。插件一律文件部署 + `dms ipc call plugin-scan scan`
+  （`rescan` **必须带插件 id**，不带参数是静默空操作）。
 - **`cachyos-config` 只有五个子命令**：`status|update|migrate|protect|unprotect`。
   窗口规则不归它管——用 `dms ipc call window-rules toggle` 或 `dms config windowrules`。
 - **`cachyos-config migrate` 是破坏性操作**（先备份再整体覆盖），动手前必须取得用户确认。

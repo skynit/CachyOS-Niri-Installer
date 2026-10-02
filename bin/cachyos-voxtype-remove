@@ -33,18 +33,21 @@ if command -v voxtype >/dev/null 2>&1; then
         printf '找不到 paru，请手动卸载 voxtype-bin。\n' >&2
     fi
 
-    # 配置先备份再删：用户可能调过输入设备或提示音，静默丢掉不合适。
-    if [[ -d "$HOME/.config/voxtype" ]]; then
-        backup="$HOME/.config/voxtype.bak-$(date +%Y%m%d-%H%M%S)"
-        mv -- "$HOME/.config/voxtype" "$backup"
-        printf '配置已备份到 %s\n' "$backup"
-    fi
-
-    # 模型（约 150MB）与运行期数据
-    rm -rf -- "$HOME/.local/share/voxtype"
 else
-    printf 'voxtype 未安装，只清理了快捷键与配置残留。\n'
+    printf 'voxtype 包未安装（可能已被手动移除），继续清理配置与模型数据。\n'
 fi
+
+# 配置与模型数据**不管 voxtype 在不在都要清理**：包可能已经被手动卸掉，留下配置目录和
+# 约 150MB 的模型，而原来的写法把它们放在 if 里面，还在日志里声称清理过了。
+if [[ -d "$HOME/.config/voxtype" ]]; then
+    # 先备份再删：用户可能调过输入设备或提示音，静默丢掉不合适。
+    backup="$HOME/.config/voxtype.bak-$(date +%Y%m%d-%H%M%S)"
+    mv -- "$HOME/.config/voxtype" "$backup"
+    printf '配置已备份到 %s\n' "$backup"
+fi
+
+# 模型（约 150MB）与运行期数据
+rm -rf -- "$HOME/.local/share/voxtype"
 
 printf '本地听写已卸载。\n'
 

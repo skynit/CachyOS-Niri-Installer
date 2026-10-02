@@ -129,6 +129,11 @@ parse_args() {
                 usage
                 exit 0
                 ;;
+            --)
+                # 选项终止符：本脚本不吃位置参数，接受它并停止解析，别把它当未知选项。
+                shift
+                break
+                ;;
             *)
                 die "unknown option: $1"
                 ;;
@@ -197,7 +202,9 @@ EOF
     fi
 
     local answer
-    read -r -p 'Continue? [y/N] ' answer
+    # 非交互调用（stdin 是空/EOF）时 read 返回非 0，set -e 会在打印任何解释之前中止。
+    # 这里把 EOF 当成"没有确认"，交给下面的分支正常报错退出。
+    read -r -p 'Continue? [y/N] ' answer || answer="" 
     [[ "${answer,,}" == "y" || "${answer,,}" == "yes" ]] || die "cancelled"
 }
 
@@ -608,8 +615,13 @@ install_dms_plugins() {
     run install -m 0644 "$source_dir/tests/usage.test.cjs" "$plugin_dir/tests/usage.test.cjs"
 
     if [[ "$DRY_RUN" == true ]]; then
-        print_command jq --arg plugin cachyosAgents -f "$SCRIPT_DIR/assets/dms/enable-dms-plugin.jq" "$plugin_settings"
-        print_command jq -f "$SCRIPT_DIR/assets/dms/add-agents-bar-widget.jq" "$settings_file"
+        # 打印真实发生的两步（写临时文件 + install -m 0600），而不是简化成"就地 jq"。
+        print_command jq --arg plugin cachyosAgents -f "$SCRIPT_DIR/assets/dms/enable-dms-plugin.jq" \
+            "$plugin_settings" '>' merged-plugin-settings.json
+        print_command install -m 0600 merged-plugin-settings.json "$plugin_settings"
+        print_command jq -f "$SCRIPT_DIR/assets/dms/add-agents-bar-widget.jq" \
+            "$settings_file" '>' merged-desktop-settings.json
+        print_command install -m 0600 merged-desktop-settings.json "$settings_file"
         return 0
     fi
 
@@ -634,10 +646,20 @@ install_dms_plugins() {
 
     # 接线到状态栏。这个 jq 程序只增不覆盖且幂等——绝不能走 desktop-settings.json 的浅合并，
     # 那会把整个 barConfigs 数组替换掉，用户的布局就没了。
+    #
+    # 注意：**没有现成的 barConfigs 时它什么都不做**。DMS 读设置是整体赋值，凭空造一个只含
+    # 本控件的栏会把用户的默认顶栏（启动器/时钟/系统托盘…）整个换掉。那种情况下控件不显示，
+    # 由用户在 设置 → 状态栏 里自己加，比毁掉布局好。
     if [[ -s "$settings_file" ]]; then
         temporary_file="$(mktemp)"
         if jq -f "$SCRIPT_DIR/assets/dms/add-agents-bar-widget.jq" "$settings_file" > "$temporary_file"; then
             install -m 0600 "$temporary_file" "$settings_file"
+            if ! jq -e '[.barConfigs[]? | (.leftWidgets? // [])[], (.centerWidgets? // [])[], (.rightWidgets? // [])[]
+                    | if type == "object" then .id else . end] | index("cachyosAgents") != null' \
+                "$settings_file" >/dev/null 2>&1; then
+                warn "usage widget not added to the DankBar (no custom bar configured yet);"
+                warn "add it from DMS Settings > Bar, or rerun the installer after customising the bar"
+            fi
         else
             warn "could not add the usage widget to the DankBar configuration"
         fi

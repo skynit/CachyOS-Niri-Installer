@@ -28,9 +28,9 @@ dms ipc call <target> <method> [参数...]
 | `wallpaper` | `set`、`next`、`get` | 壁纸 |
 | `theme` | `dark`、`light`、`toggle`、`getMode` | 明暗模式 |
 | `plugins` | `list`、`enable`、`disable`、`reload` | 插件开关 |
-| `plugin-scan` | `rescan`、`reload`、`status` | 重新扫描插件目录 |
+| `plugin-scan` | `scan`、`rescan <id>`、`reload <id>`、`status <id>` | 重新扫描插件目录（`rescan`/`reload` 必须带插件 id） |
 | `notifications` | `toggleDoNotDisturb`、`clearAll` | 通知 |
-| `settings` | `dump`、`dumpSession`、`get`、`set`、`tabs` | 设置界面 |
+| `settings` | `dump`、`get`、`set`、`tabs`（`dumpSession` 需要 DMS ≥ 1.6；本项目默认钉 1.5.3） | 设置界面 |
 | `widget` | `list`、`status`、`toggle`、`reveal` | 栏位小组件（没有 `dump`） |
 
 `dms ipc call plugins list` 可以离线列出已加载插件及其状态。
@@ -69,7 +69,7 @@ cachyos-dms-setting maxWidth 318
 新增或修改插件后让它生效：
 
 ```bash
-dms ipc call plugin-scan rescan
+dms ipc call plugin-scan scan        # 重扫全部；rescan 必须带插件 id，不带参数是空操作
 dms ipc call plugins list        # 确认 [loaded]
 ```
 

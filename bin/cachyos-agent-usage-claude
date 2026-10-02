@@ -48,8 +48,48 @@ def claude_dir() -> Path:
     return Path(os.environ.get("CLAUDE_CONFIG_DIR") or (Path.home() / ".claude")).expanduser()
 
 
+def _prompt_text(message: dict[str, Any]) -> str:
+    """取出用户消息的文本部分，用于识别"这不是人打的"。"""
+    content = message.get("content")
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
+                return part["text"].strip()
+    return ""
+
+
+def _is_real_prompt(message: dict[str, Any], entry: dict[str, Any]) -> bool:
+    """判断一条 user 记录是不是"人真的输入了一句"。
+
+    真实转录里混着不少非人输入的 user 记录：`isMeta` 的合成消息、被中断的
+    "[Request interrupted by user]"、`<local-command-stdout>` 回显等。把它们算成 prompt
+    会让"提示数"虚高（实测 333 条里至少 33 条是这类）。
+    """
+    if entry.get("isMeta") is True:
+        return False
+    text = _prompt_text(message)
+    for prefix in ("[Request interrupted", "<local-command", "<command-name", "<command-message"):
+        if text.startswith(prefix):
+            return False
+    return True
+
+
 def scan_transcripts(cache: dict[str, Any]) -> tuple[dict[str, Any], dict[str, dict[str, int]], set[str], int]:
-    """增量扫描转录，返回 (per_day, model_usage, sessions, prompts)。"""
+    """增量扫描转录，返回 (per_day, model_usage, sessions, prompts)。
+
+    三个关键点（都踩过坑）：
+
+    1. **按 message.id 去重、取最后一次。** Claude Code 对同一条 API 消息会按 content block
+       （thinking / text / tool_use…）逐行写出，每行都带该消息**完整**的 usage。逐行累加会把
+       同一次请求算 2~3 遍：实测输入 2.72 倍、缓存读 2.58 倍、费用 1.95 倍。同一 id 内
+       output_tokens 单调不减，所以"最后一次"就是完整值。
+    2. **按日 prompt 数要进缓存并在重放时还原。** 否则"命中缓存"与全量重算会给出不同的
+       prompt/会话数，甚至把整条记录变成"无数据"。
+    3. **读取失败的文件整份跳过且不写缓存。** 文件可能 stat 成功但读不了；把"读到 0 条"缓存下来
+       会让错误一直留着，直到文件变化或有人跑 --force。
+    """
     files = au.collect_files([claude_dir() / "projects"], "*.jsonl")
     per_day: dict[str, Any] = {}
     model_usage: dict[str, dict[str, int]] = {}
@@ -63,27 +103,37 @@ def scan_transcripts(cache: dict[str, Any]) -> tuple[dict[str, Any], dict[str, d
         key = str(path)
         if not stamp:
             continue
+
         cached = known.get(key)
         if cached and cached.get("stamp") == stamp:
             seen[key] = cached
-            # 缓存里按 (日期 → 模型 → 计数) 存；重放走与解析分支**完全相同**的合并函数，
-            # 两条路径才不会给出两种答案。
+            # 重放必须与解析分支同构：先按模型合并计数，再单独补一次当天的 prompt 数
+            # （prompt 是按天计数的，跟着每个模型加一遍会翻倍）。
             for date, entry in (cached.get("perDay") or {}).items():
                 for model, counters in (entry.get("byModel") or {}).items():
                     au.merge_day(per_day, date, counters, model)
+                day_prompts = au.as_int(entry.get("prompts", 0))
+                if day_prompts > 0:
+                    au.merge_day(
+                        per_day, date, au.empty_counters(), "", day_prompts, entry.get("session") or ""
+                    )
                 if entry.get("session"):
                     sessions.add(entry["session"])
             for model, counters in (cached.get("models") or {}).items():
                 au.add_counters(model_usage.setdefault(model, au.empty_counters()), counters)
-            prompts += int(cached.get("prompts", 0))
+            prompts += au.as_int(cached.get("prompts", 0))
             continue
 
+        status = {"ok": True}
         file_per_day: dict[str, Any] = {}
         file_models: dict[str, dict[str, int]] = {}
         file_prompts = 0
         session_id = ""
+        day_prompts: dict[str, int] = {}
+        # message.id → (日期, 模型, 计数)：同一条 API 消息可能有多行，保留最后一次。
+        usage_by_message: dict[str, tuple[str, str, dict[str, int]]] = {}
 
-        for entry in au.iter_jsonl(path):
+        for line_number, entry in enumerate(au.iter_jsonl(path, status)):
             if not isinstance(entry, dict):
                 continue
             if not session_id:
@@ -91,47 +141,57 @@ def scan_transcripts(cache: dict[str, Any]) -> tuple[dict[str, Any], dict[str, d
             message = entry.get("message")
             if not isinstance(message, dict):
                 continue
+
             usage = message.get("usage")
             if isinstance(usage, dict):
                 model = str(message.get("model") or "unknown")
                 counters = {
-                    "inputTokens": int(usage.get("input_tokens") or 0),
-                    "outputTokens": int(usage.get("output_tokens") or 0),
-                    "cacheReadInputTokens": int(usage.get("cache_read_input_tokens") or 0),
-                    "cacheCreationInputTokens": int(usage.get("cache_creation_input_tokens") or 0),
+                    "inputTokens": au.as_int(usage.get("input_tokens")),
+                    "outputTokens": au.as_int(usage.get("output_tokens")),
+                    "cacheReadInputTokens": au.as_int(usage.get("cache_read_input_tokens")),
+                    "cacheCreationInputTokens": au.as_int(usage.get("cache_creation_input_tokens")),
                 }
                 date = au.local_date(entry.get("timestamp"))
                 if date:
-                    # 必须**累加**：同一天同一文件通常有多条用量，覆盖式赋值只留下最后一条，
-                    # 而那份被覆盖的数据正是缓存里存的东西。
-                    day = file_per_day.setdefault(date, {"byModel": {}, "session": session_id})
-                    au.add_counters(day["byModel"].setdefault(model, au.empty_counters()), counters)
-                    au.merge_day(per_day, date, counters, model)
-                    au.add_counters(file_models.setdefault(model, au.empty_counters()), counters)
-                    if session_id:
-                        sessions.add(session_id)
+                    message_id = str(message.get("id") or entry.get("uuid") or f"line-{line_number}")
+                    usage_by_message[message_id] = (date, model, counters)
                 continue
 
-            # 用户消息计为一次 prompt（工具结果不算）。
+            # 用户消息计为一次 prompt（工具结果与合成条目不算）。
             if str(entry.get("type")) == "user":
                 content = message.get("content")
                 is_tool_result = isinstance(content, list) and any(
                     isinstance(part, dict) and part.get("type") == "tool_result" for part in content
                 )
-                if not is_tool_result:
-                    file_prompts += 1
+                if not is_tool_result and _is_real_prompt(message, entry):
                     date = au.local_date(entry.get("timestamp"))
                     if date:
-                        entry_day = per_day.setdefault(
-                            date, {"counters": au.empty_counters(), "byModel": {}, "prompts": 0, "sessions": 0}
-                        )
-                        entry_day["prompts"] += 1
+                        file_prompts += 1
+                        day_prompts[date] = day_prompts.get(date, 0) + 1
                         if session_id:
-                            entry_day.setdefault("_sessions", set()).add(session_id)
+                            sessions.add(session_id)
+
+        if not status["ok"]:
+            # 读失败：整份文件不参与统计，也不写缓存（下次运行会重试）。
+            continue
+
+        if session_id:
+            sessions.add(session_id)
+
+        for date, model, counters in usage_by_message.values():
+            day = file_per_day.setdefault(date, {"byModel": {}, "prompts": 0, "session": session_id})
+            au.add_counters(day["byModel"].setdefault(model, au.empty_counters()), counters)
+            au.merge_day(per_day, date, counters, model)
+            au.add_counters(file_models.setdefault(model, au.empty_counters()), counters)
+            if session_id:
+                sessions.add(session_id)
+
+        for date, count in day_prompts.items():
+            day = file_per_day.setdefault(date, {"byModel": {}, "prompts": 0, "session": session_id})
+            day["prompts"] = au.as_int(day.get("prompts")) + count
+            au.merge_day(per_day, date, au.empty_counters(), "", count, session_id)
 
         prompts += file_prompts
-        # 解析分支必须和"缓存命中"分支合并出同样的结果：漏掉这一步会让首次运行的
-        # modelUsage 为空、第二次（命中缓存）才有值——同一份数据出现两种答案。
         for model, counters in file_models.items():
             au.add_counters(model_usage.setdefault(model, au.empty_counters()), counters)
         seen[key] = {
@@ -158,6 +218,43 @@ def scan_history_fallback() -> int:
     return count
 
 
+def limits_from_payload(payload: Any) -> tuple[list[dict[str, Any]], str, str]:
+    """把限额端点的返回解析成 (limits, tierLabel, statusText)。
+
+    单独抽出来是因为这里**必须**对任意载荷都安全：端点可能改结构、代理可能返回一个仍是合法
+    JSON 的错误页。原来只有 urlopen/json.load 在 try 里，解析在外面——一个 list 载荷就会
+    AttributeError，把整次采集（含本地统计）一起打死，与"拿不到就不显示限额"的承诺相反。
+    """
+    if not isinstance(payload, dict):
+        return [], "", "限额端点返回了意外的结构，只显示本地统计"
+
+    limits: list[dict[str, Any]] = []
+    for key, label in (("five_hour", "5 小时"), ("seven_day", "每周")):
+        window = payload.get(key)
+        if not isinstance(window, dict):
+            continue
+        percent = window.get("utilization")
+        if percent is None:
+            continue
+        try:
+            value = float(percent)
+        except (TypeError, ValueError):
+            continue
+        # 有的版本把利用率给成 0~1 的小数，有的给成 0~100 的百分数。
+        limits.append(
+            {
+                "label": label,
+                "percent": value * 100.0 if value <= 1.0 else value,
+                "resetsAt": window.get("resets_at") if isinstance(window.get("resets_at"), str) else "",
+            }
+        )
+
+    tier = payload.get("plan") or payload.get("tier") or ""
+    if not isinstance(tier, str):
+        tier = ""
+    return limits, tier, "" if limits else "限额端点没有返回可用窗口"
+
+
 def fetch_limits() -> tuple[list[dict[str, Any]], str, str]:
     """尽力获取限额。返回 (limits, tierLabel, statusText)；失败时 limits 为空。"""
     credentials_path = claude_dir() / ".credentials.json"
@@ -165,7 +262,8 @@ def fetch_limits() -> tuple[list[dict[str, Any]], str, str]:
     try:
         with credentials_path.open(encoding="utf-8") as handle:
             data = json.load(handle)
-        token = str(((data.get("claudeAiOauth") or {}).get("accessToken")) or "")
+        if isinstance(data, dict):
+            token = str(((data.get("claudeAiOauth") or {}).get("accessToken")) or "")
     except (OSError, ValueError):
         token = ""
 
@@ -182,23 +280,10 @@ def fetch_limits() -> tuple[list[dict[str, Any]], str, str]:
     except (urllib.error.URLError, ValueError, OSError, TimeoutError):
         return [], "", "限额端点不可用，只显示本地统计"
 
-    limits: list[dict[str, Any]] = []
-    for key, label in (("five_hour", "5 小时"), ("seven_day", "每周")):
-        window = payload.get(key)
-        if not isinstance(window, dict):
-            continue
-        percent = window.get("utilization")
-        if percent is None:
-            continue
-        limits.append(
-            {
-                "label": label,
-                "percent": float(percent) * (100.0 if float(percent) <= 1.0 else 1.0),
-                "resetsAt": window.get("resets_at") or "",
-            }
-        )
-    tier = str((payload.get("plan") or payload.get("tier") or ""))
-    return limits, tier, "" if limits else "限额端点没有返回可用窗口"
+    try:
+        return limits_from_payload(payload)
+    except Exception:  # noqa: BLE001 - 端点怎么变都不该拖垮本地统计
+        return [], "", "限额端点返回了无法解析的内容，只显示本地统计"
 
 
 def main() -> int:
@@ -217,8 +302,10 @@ def main() -> int:
     else:
         per_day, model_usage, sessions, prompts = scan_transcripts(cache)
         au.finalise_sessions(per_day)
+        # 只有在转录里什么都没找到时才用 history.jsonl 粗略计数；而且取最大值，
+        # 避免把已经数出来的 prompt 覆盖成 0（那会让整条记录变成"无数据"）。
         if not per_day:
-            prompts = scan_history_fallback()
+            prompts = max(prompts, scan_history_fallback())
 
     limits, tier, status = fetch_limits()
     if not args.limits_only and not args.force:

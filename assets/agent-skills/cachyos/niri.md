@@ -5,11 +5,12 @@
 | 文件 | 来源 | 说明 |
 | --- | --- | --- |
 | `~/.config/niri/config.kdl` | 安装器渲染 `assets/niri/config.kdl` | 安装时把模板里的 `@HOME@` 替换成实际家目录 |
-| `~/.config/niri/dms/binds.kdl` | 安装器 `assets/niri/binds.kdl` | 全部快捷键都在这里 |
+| `~/.config/niri/dms/binds.kdl` | 安装器 `assets/niri/binds.kdl` | 主要快捷键；项目增强键在 `cachyos-extras.kdl`，听写在 `cachyos-voxtype.kdl` |
 | `~/.config/niri/cachyos-extras.kdl` | 安装器 `assets/niri/cachyos-extras.kdl` | 窗口规则与项目扩展 |
 | `~/.config/niri/dms/{colors,layout,alttab,outputs,cursor,wpblur}.kdl` | **DMS 生成** | 动态配色、布局、光标、模糊；不要手改，会被 DMS 重写 |
 
-主配置引入以上文件，但**只有 DMS 生成的那批是 `optional=true`**，缺了不影响启动：
+主配置引入以上文件。`optional=true` 的是 DMS 生成的那批**以及 `cachyos-voxtype.kdl`**（装了听写才有），
+和 `cachyos-extras.kdl`（必需，没有 `optional=true`）不同：
 
 ```
 include optional=true "dms/colors.kdl"
@@ -26,8 +27,10 @@ include "cachyos-extras.kdl"      # 没有 optional：这个文件必须存在
 - **`Mod` 与 `Super` 是同一个键**，两种拼写在 `binds.kdl` 里等价。
 - 26 个字母键**全部已被占用**。想加两键快捷键只能用非字母键；`Mod+X` 也不行
   （`Super+X` 是 DMS 电源菜单）。实测空闲的非字母键：`Mod+BackSpace`、`Mod+Delete`、
-  `Mod+Backslash`、`Mod+Insert`、`Mod+F4/F6/F7/F9/F10/F11/F12`。
-  注意 `Mod+grave` **已被本项目占用**为"启动默认 AI agent"，不要再绑定它。
+  `Mod+Backslash`、`Mod+Insert`、`Mod+F4/F6/F7/F10/F11/F12`。
+  已被占用的键不要再绑定：`Mod+grave`（启动默认 AI agent）、`Super+Ctrl+X` 与 `Mod+F9`
+  （**装了本地听写 Voxtype 后**由 `cachyos-voxtype.kdl` 占用；没装听写时 F9 是空闲的，
+  但先确认 `~/.config/niri/cachyos-voxtype.kdl` 是否存在再决定）。
 - 已占用的键不要重复绑定：`niri validate` 会直接报 `duplicate keybind`。
 - 快捷键绑定格式：
 

@@ -94,10 +94,23 @@ function dayTokens(day) {
     return value < 0 ? 0 : value;
 }
 
-function daysOf(record) {
-    var days = statsOf(record).recentDays;
-    if (!Array.isArray(days))
+// QML 把 Repeater modelData 里的数组当作 V4Sequence 传进 JS：它有 length、能下标访问，
+// 但 **Array.isArray() 返回 false**。拿 Array.isArray 当门禁会让折线图一个点都画不出来，
+// 而且 Canvas 不报错、只是空白——极难发现。所有"来自记录/来自 QML"的数组都走这里。
+function asArray(value) {
+    if (Array.isArray(value))
+        return value;
+    // 字符串也有 length，但它不是"数组样"：把它当数组会得到 ['b','a','d'] 这种垃圾，
+    // 让"字段畸形"悄悄变成"有 3 天数据"。函数同理。
+    if (typeof value === "string" || typeof value === "function")
         return [];
+    if (value && typeof value.length === "number")
+        return Array.prototype.slice.call(value);
+    return [];
+}
+
+function daysOf(record) {
+    var days = asArray(statsOf(record).recentDays);
     return days.map(function (day) {
         return {
             date: day && typeof day.date === "string" ? day.date : "",
@@ -176,9 +189,9 @@ function summarise(records, settings) {
             var stats = statsOf(record);
             var today = todayOf(record);
             var hasLocal = record.hasLocalStats === true;
-            var limits = Array.isArray(record.limits) ? record.limits.filter(function (limit) {
+            var limits = asArray(record.limits).filter(function (limit) {
                 return limit && typeof limit.label === "string";
-            }) : [];
+            });
             return Object.assign(base, {
                 state: hasLocal || limits.length > 0 ? "ready" : "missing",
                 hasRecord: true,
@@ -214,24 +227,32 @@ function rangeFor(rows, mode) {
     if (mode === "total") {
         var totalTokens = 0;
         var totalCost = 0;
+        var totalHasData = false;
         rows.forEach(function (row) {
+            // hasData 看"这条记录到底有没有统计数据"，而不是"数字是不是 0"：采集器对从没
+            // 用过的 agent 也会产出 7 天全 0 的记录，那种 0 是伪造的，必须显示为缺失。
+            if (row.state === "ready")
+                totalHasData = true;
             totalTokens += num(row.totalTokens) || 0;
             totalCost += num(row.totalCost) || 0;
         });
-        return { tokens: totalTokens, cost: totalCost, caption: "累计" };
+        return { tokens: totalTokens, cost: totalCost, caption: "累计", hasData: totalHasData };
     }
 
     if (mode === "week") {
         // rows[].days 已经是 daysOf 归一化过的 {date, tokens, cost}，直接累加即可。
         var weekTokens = 0;
         var weekCost = 0;
+        var weekHasData = false;
         rows.forEach(function (row) {
+            if (row.state === "ready")
+                weekHasData = true;
             row.days.forEach(function (day) {
                 weekTokens += num(day.tokens) || 0;
                 weekCost += num(day.cost) || 0;
             });
         });
-        return { tokens: weekTokens, cost: weekCost, caption: "近 7 天" };
+        return { tokens: weekTokens, cost: weekCost, caption: "近 7 天", hasData: weekHasData };
     }
 
     var tokens = 0;
@@ -260,10 +281,19 @@ function rangeFor(rows, mode) {
     });
 
     if (anyToday)
-        return { tokens: tokens, cost: cost, caption: "今天" };
+        return { tokens: tokens, cost: cost, caption: "今天", hasData: true };
     if (lastDate)
-        return { tokens: lastTokens, cost: lastCost, caption: lastDate.slice(5) };
-    return { tokens: 0, cost: 0, caption: "" };
+        return { tokens: lastTokens, cost: lastCost, caption: lastDate.slice(5), hasData: true };
+
+    // 到这里今天与最近 7 天都没有非零值，还要再分两种：
+    //   - 记录是真的（agent 用过，只是这几天确实是 0）→ 显示 0，这是事实；
+    //   - 记录是采集器给从没用过的 agent 产出的空壳（hasLocalStats=false）→ 显示缺失。
+    var anyReady = rows.some(function (row) {
+        return row.state === "ready";
+    });
+    if (anyReady)
+        return { tokens: 0, cost: 0, caption: "今天", hasData: true };
+    return { tokens: 0, cost: 0, caption: "", hasData: false };
 }
 
 // 状态栏只显示 token 用量：不带图标、不带价格（金额在弹窗里看）。
@@ -279,17 +309,18 @@ function barText(records, settings) {
     var mode = MODES.indexOf(settings.displayMode) >= 0 ? settings.displayMode : "today";
     var range = rangeFor(withData, mode === "bare" ? "today" : mode);
 
-    if (mode === "bare")
-        return range.tokens > 0 ? formatTokens(range.tokens) : "—";
-    if (!range.caption)
+    // 没有任何真实数据就显示占位符：绝不出现"累计 0"这种伪造出来的数字。
+    if (!range.hasData)
         return "—";
+    if (mode === "bare")
+        return formatTokens(range.tokens);
     return range.caption + " " + formatTokens(range.tokens);
 }
 
 // 把最近几天的用量算成折线图坐标。放在这里而不是 QML 里，是为了能直接跑 node 测试。
 // width/height 是画布尺寸，inset 是四周留白；返回 [] 表示没有数据可画。
 function chartPoints(days, width, height, inset) {
-    var values = Array.isArray(days) ? days.map(dayTokens) : [];
+    var values = asArray(days).map(dayTokens);
     if (values.length === 0)
         return [];
 
@@ -317,30 +348,28 @@ function chartPoints(days, width, height, inset) {
     });
 }
 
+// 竖排状态栏（左/右栏）用：只给数字，不带"今天/日期"前缀，窄条里才放得下。
+function compactLabel(records, settings) {
+    var rows = summarise(records, settings);
+    var withData = rows.filter(function (row) {
+        return row.state !== "waiting";
+    });
+    if (withData.length === 0)
+        return "";
+    var range = rangeFor(withData, "today");
+    return range.hasData ? formatTokens(range.tokens) : "—";
+}
+
 // 折线图上要标注的最大值（用于纵轴说明）。全为 0 时返回 null。
 function chartMax(days) {
-    if (!Array.isArray(days) || days.length === 0)
+    var list = asArray(days);
+    if (list.length === 0)
         return null;
-    var max = days.reduce(function (best, day) {
+    var max = list.reduce(function (best, day) {
         var value = dayTokens(day);
         return value > best ? value : best;
     }, 0);
     return max > 0 ? max : null;
-}
-
-// 归一化成 0..1，供面板画迷你柱状图；全为 0 时返回全 0。
-function sparkline(days) {
-    var values = Array.isArray(days) ? days.map(dayTokens) : [];
-    var max = values.reduce(function (best, value) {
-        return value > best ? value : best;
-    }, 0);
-    if (max <= 0)
-        return values.map(function () {
-            return 0;
-        });
-    return values.map(function (value) {
-        return value / max;
-    });
 }
 
 // 数据新鲜度：超过 maxAgeMs 视为过期（面板据此提示"数据可能过期"）。

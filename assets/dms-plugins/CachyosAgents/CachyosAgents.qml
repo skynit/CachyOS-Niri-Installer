@@ -49,6 +49,40 @@ PluginComponent {
         }
     }
 
+    // 竖排状态栏（左栏/右栏）也要有控件；PluginComponent 在竖排且缺 verticalBarPill 时
+    // 会把尺寸算成 0，控件直接消失。竖排窄，所以只放最紧凑的数字，不带"今天/日期"。
+    verticalBarPill: Component {
+        Item {
+            id: vpill
+            readonly property real fontPixels: Math.max(7, Math.min(11, root.widgetThickness - 8))
+            implicitWidth: root.widgetThickness
+            implicitHeight: Math.max(16, vcontent.implicitHeight + 10)
+            activeFocusOnTab: true
+            Accessible.role: Accessible.Button
+            Accessible.name: "AI agent 用量：" + root.label
+            Accessible.onPressAction: root.triggerPopout()
+            Keys.onReturnPressed: root.triggerPopout()
+            Keys.onSpacePressed: root.triggerPopout()
+
+            StyledText {
+                id: vcontent
+                anchors.centerIn: parent
+                text: Usage.compactLabel(sampler.records, root.pluginData)
+                font.pixelSize: vpill.fontPixels
+                color: Theme.widgetTextColor
+            }
+
+            Rectangle {
+                anchors.fill: parent
+                anchors.margins: -2
+                radius: 6
+                color: "transparent"
+                border.width: vpill.activeFocus ? 2 : 0
+                border.color: Theme.primary
+            }
+        }
+    }
+
     // 显式判空而不是可选链：qmllint 解析不了 ?.，写成这样整份文件就能当门禁跑。
     readonly property real screenWidth: parentScreen && parentScreen.width ? parentScreen.width : 960
     readonly property real screenHeight: parentScreen && parentScreen.height ? parentScreen.height : 800

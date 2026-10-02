@@ -1,3 +1,12 @@
+# 说明
+
+本文是**设计与移植计划**，记录当时为什么这么决定。实现过程中若干细节已经演进：
+
+- 文档里的**行号引用**是写计划时的快照，后续改动会让它们偏移，以代码为准。
+- 被列为“本轮不做”的条目（用量面板、voxtype 听写、主题同步）后来都做了，见 README。
+- 少数假设已被实测推翻，正文与实施记录里都标注了，例如：Niri 不支持按键释放绑定，
+  所以按住说话改成了 toggle；无参数的 dms ipc call plugin-scan rescan 是空操作。
+
 # AI Agent 集成移植计划（P0）
 
 把 Omarchy 的 AI agent 集成层移植到本项目。本轮只做 **P0：启动层 + 技能层 + 诊断层**，不交付任何 UI。
@@ -43,7 +52,7 @@
 
 | 不做 | 原因 |
 | --- | --- |
-| Omarchy 的 `pacman` pre-transaction guard、`omarchy update` 管线 | 与本项目 `cachyos-system-update`、`cachyos-migration` 冲突 |
+| Omarchy 的 `pacman` pre-transaction guard、`omarchy update` 管线 | 与本项目 `cachyos-system-update`、`cachyos-config migrate` 冲突 |
 | Omarchy 的每用户迁移系统 | 本项目已有 `cachyos-config migrate` + marker 模式 |
 | Omarchy CLI 路由器（元数据头 + 最长前缀 + 470 命令） | 本项目 48 个显式 helper + `verify.sh` 循环是更合适的规模 |
 | mise stub 机制 | 本项目已用 pacman/AUR 装 agent，不引入第二套包管理器 |

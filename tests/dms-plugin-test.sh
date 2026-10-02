@@ -42,13 +42,43 @@ widget_count() {
 
 add_widget() { jq -f "$WIDGET_JQ" "$1"; }
 
-# ---- 从零开始：没有 barConfigs 时要建出合法结构 --------------------------------
+# ---- 没有 barConfigs 时：什么都不做（绝不凭空造一个栏）-------------------------
+# DMS 读设置是整体赋值（`root[k] = raw`），它的默认状态栏只在"键不存在"时生效。
+# 如果这里造一个只含本控件的栏，全新机器上用户会得到一个几乎是空的顶栏——
+# 这比"控件没显示"严重得多。这条断言就是防止那个 bug 回归。
 empty="$WORK_DIR/empty.json"
-printf '%s\n' '{}' > "$empty"
+printf '%s\n' '{"currentThemeName":"x"}' > "$empty"
 add_widget "$empty" > "$WORK_DIR/empty-once.json"
-assert_equal '1' "$(widget_count "$WORK_DIR/empty-once.json")" '空配置：控件被加了一次'
-assert_equal '1' "$(jq '.barConfigs | length' "$WORK_DIR/empty-once.json")" '空配置：建出了一份 barConfigs'
-assert_equal 'true' "$(jq -r '.barConfigs[0].rightWidgets[0].enabled' "$WORK_DIR/empty-once.json")" '空配置：控件是启用状态'
+assert_equal 'false' "$(jq 'has("barConfigs")' "$WORK_DIR/empty-once.json")" \
+    '空配置：不创建 barConfigs（让 DMS 用它自己的默认栏）'
+assert_equal "$(jq -S . "$empty" | md5sum)" "$(jq -S . "$WORK_DIR/empty-once.json" | md5sum)" \
+    '空配置：语义完全不变（jq 只会重排格式）'
+assert_equal "$(jq -c '.barConfigs' "$empty" | head -c 4)" "$(jq -c '.barConfigs' "$WORK_DIR/empty-once.json" | head -c 4)" \
+    '空配置：barConfigs 仍为 null'
+
+# barConfigs 是空数组时同样不碰
+printf '%s\n' '{"barConfigs":[]}' > "$WORK_DIR/empty-array.json"
+add_widget "$WORK_DIR/empty-array.json" > "$WORK_DIR/empty-array-out.json"
+assert_equal '0' "$(jq '.barConfigs | length' "$WORK_DIR/empty-array-out.json")" \
+    '空的 barConfigs 数组：仍然不创建内容'
+
+# ---- DMS 默认栏形状：所有默认控件都要保留 --------------------------------------
+# 这是全新机器最可能出现的形状。曾经的真 bug：非空分支没问题，但空分支会毁掉默认栏。
+default_bar="$WORK_DIR/default-bar.json"
+jq -n '{barConfigs: [{id: "default", position: 1,
+        leftWidgets: ["launcherButton", "workspaceSwitcher", "focusedWindow"],
+        centerWidgets: ["music", "clock", "weather"],
+        rightWidgets: ["systemTray", "clipboard", "cpuUsage", "memUsage", "notificationButton", "battery", "controlCenterButton"]}]}' \
+    > "$default_bar"
+add_widget "$default_bar" > "$WORK_DIR/default-bar-out.json"
+assert_equal '["launcherButton","workspaceSwitcher","focusedWindow"]' \
+    "$(jq -c '.barConfigs[0].leftWidgets' "$WORK_DIR/default-bar-out.json")" '默认栏：左侧控件一个不少'
+assert_equal '["music","clock","weather"]' \
+    "$(jq -c '.barConfigs[0].centerWidgets' "$WORK_DIR/default-bar-out.json")" '默认栏：中间控件一个不少'
+assert_equal '["systemTray","clipboard","cpuUsage","memUsage","notificationButton","battery","controlCenterButton","cachyosAgents"]' \
+    "$(jq -c '[.barConfigs[0].rightWidgets[] | if type == "object" then .id else . end]' "$WORK_DIR/default-bar-out.json")" \
+    '默认栏：右侧原有控件全在，本控件追加在末尾'
+assert_equal 'default' "$(jq -r '.barConfigs[0].id' "$WORK_DIR/default-bar-out.json")" '默认栏：栏自身的 id 未被动过'
 
 # ---- 已有布局：追加而不覆盖，且其他键一个字节都不能变 --------------------------
 real="$WORK_DIR/real.json"

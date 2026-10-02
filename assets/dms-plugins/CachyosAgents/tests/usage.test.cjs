@@ -128,15 +128,6 @@ test('模型按费用降序、可限量、标出是否计价', () => {
     assert.equal(limited.length, 1);
 });
 
-test('sparkline 归一化，全零时全零', () => {
-    // sparkline 消费的是 daysOf 归一化后的 {tokens} 结构，这里两种入口都验证。
-    assert.deepEqual(arr(usage.sparkline([{ tokens: 0 }, { tokens: 50 }, { tokens: 100 }])), [0, 0.5, 1]);
-    assert.deepEqual(arr(usage.sparkline([{ tokens: 0 }])), [0]);
-    assert.deepEqual(arr(usage.sparkline(null)), []);
-    const normalized = usage.summarise([record()], {}).find(row => row.id === 'claude').days;
-    assert.deepEqual(arr(usage.sparkline(normalized)), [0.2, 0.8, 1]);
-});
-
 test('新鲜度按阈值判定过期', () => {
     assert.equal(usage.freshness(0, 1000, 60000).stale, true);
     assert.equal(usage.freshness(1000, 61_000, 60_000).stale, true);
@@ -155,7 +146,7 @@ test('畸形数据不抛异常', () => {
     assert.doesNotThrow(() => usage.summarise([null, 42, 'x'], {}));
     assert.doesNotThrow(() => usage.summarise([{ id: 'claude', stats: 'nope', limits: 'x' }], {}));
     assert.doesNotThrow(() => usage.barText([{ id: 'claude' }], { displayMode: 'nonsense' }));
-    assert.doesNotThrow(() => usage.sparkline([{ tokens: 'x' }]));
+    assert.doesNotThrow(() => usage.chartPoints([{ tokens: 'x' }], 10, 10, 0));
     const rows = usage.summarise([{ id: 'claude', stats: { recentDays: 'bad', modelUsage: [] } }], {});
     assert.equal(rows[0].days.length, 0);
     assert.equal(rows[0].models.length, 0);
@@ -204,13 +195,12 @@ test('折线图坐标：畸形输入不抛异常', () => {
     assert.doesNotThrow(() => usage.chartPoints([null, 5, 'x'], 100, 40, 2));
 });
 
-test('折线图与迷你条：两种数据形状都接受', () => {
+test('折线图：两种数据形状都接受', () => {
     // 记录原始格式（totalTokens）
     assert.equal(usage.chartMax(days([['a', 100, 0], ['b', 40, 0]])), 100);
     // 归一化格式（tokens）
     assert.equal(usage.chartMax([{ tokens: 100 }, { tokens: 40 }]), 100);
     assert.equal(usage.chartPoints([{ totalTokens: 80 }], 100, 40, 0)[0].ratio, 1);
-    assert.deepEqual(arr(usage.sparkline([{ totalTokens: 0 }, { totalTokens: 50 }])), [0, 1]);
 });
 
 test('折线图坐标：任何现实输入都不产生 NaN 或越界点', () => {
@@ -262,4 +252,64 @@ test('已删除的旧 displayMode 值会安全回落到 today', () => {
     assert.equal(usage.barText([record()], { displayMode: 'icon' }), '今天 500');
     assert.equal(usage.barText([record()], { displayMode: '' }), '今天 500');
     assert.equal(usage.barText([record()], {}), '今天 500');
+});
+
+test('折线图接受 QML 传来的"数组样"对象（V4Sequence）', () => {
+    // QML 把 Repeater modelData 里的数组交给 JS 时不是真数组：Array.isArray() 为 false，
+    // 但有 length、能下标访问。曾经因为用 Array.isArray 当门禁，折线图一个点都画不出来。
+    const sequence = { length: 3, 0: { tokens: 0 }, 1: { tokens: 50 }, 2: { tokens: 100 } };
+    assert.equal(Array.isArray(sequence), false, '前提：它确实不是真数组');
+    const points = usage.chartPoints(sequence, 100, 40, 0);
+    assert.equal(points.length, 3);
+    assert.equal(points[2].y, 0);
+    assert.equal(usage.chartMax(sequence), 100);
+});
+
+test('summarise 也接受数组样的 recentDays / limits', () => {
+    const recordWithSequence = {
+        id: 'claude',
+        hasLocalStats: true,
+        limits: { length: 1, 0: { label: '5 小时', percent: 42 } },
+        stats: { recentDays: { length: 2, 0: { date: '2026-10-01', totalTokens: 10 }, 1: { date: '2026-10-02', totalTokens: 20 } } }
+    };
+    const row = usage.summarise([recordWithSequence], {}).find(r => r.id === 'claude');
+    assert.equal(row.days.length, 2, '数组样的 recentDays 要被读出来');
+    assert.equal(row.limits.length, 1, '数组样的 limits 要被读出来');
+    assert.equal(row.days[1].tokens, 20);
+});
+
+test('没有真实数据时 week/total/bare 都必须显示占位符，不能是 0', () => {
+    // 采集器对从没用过的 agent 也会产出 7 天全 0、hasLocalStats=false 的记录。
+    // 那时把 0 显示出来就是伪造数据——这条断言正是针对这个缺陷。
+    const useless = [{
+        id: 'claude',
+        hasLocalStats: false,
+        stats: {
+            recentDays: days([['2026-09-26', 0, 0], ['2026-09-27', 0, 0]]),
+            modelUsage: {}
+        }
+    }];
+    for (const mode of ['today', 'week', 'total', 'bare']) {
+        assert.equal(usage.barText(useless, { displayMode: mode }), '—', `${mode} 模式不能显示 0`);
+    }
+    assert.equal(usage.barText([{ id: 'claude' }], { displayMode: 'total' }), '—');
+    assert.equal(usage.barText([{ id: 'claude' }], { displayMode: 'week' }), '—');
+    assert.equal(usage.compactLabel(useless, {}), '—');
+});
+
+test('真的有记录且用量为零时，显示 0 是对的（不是缺失）', () => {
+    const zeroButReal = [{
+        id: 'claude',
+        hasLocalStats: true,
+        stats: { recentDays: days([['2026-10-01', 0, 0], ['2026-10-02', 0, 0]]), modelUsage: {}, totalTokens: 0 }
+    }];
+    assert.equal(usage.barText(zeroButReal, { displayMode: 'today' }), '今天 0');
+    assert.equal(usage.barText(zeroButReal, { displayMode: 'week' }), '近 7 天 0');
+    assert.equal(usage.barText(zeroButReal, { displayMode: 'bare' }), '0');
+});
+
+test('compactLabel 只给数字，供竖排状态栏使用', () => {
+    assert.equal(usage.compactLabel([record()], {}), '500');
+    assert.equal(usage.compactLabel([], {}), '');
+    assert.equal(usage.compactLabel([{ id: 'claude' }], {}), '—');
 });

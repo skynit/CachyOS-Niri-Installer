@@ -47,15 +47,18 @@ assert_equal() {
 
 TODAY="$(date +%F)"
 YESTERDAY="$(date -d yesterday +%F 2>/dev/null || date -v-1d +%F)"
-TODAY_TS="${TODAY}T10:00:05+08:00"
-YESTERDAY_TS="${YESTERDAY}T10:00:05+08:00"
+# 用**本机时区偏移**生成时间戳：硬编码 +08:00 时，在别的时区下"今天 10:00+08:00"可能落在
+# 本地的前一天/后一天，测试会莫名其妙地失败（实测 TZ=America/Los_Angeles 就会）。
+OFFSET="$(date +%:z)"
+TODAY_TS="${TODAY}T10:00:05${OFFSET}"
+YESTERDAY_TS="${YESTERDAY}T10:00:05${OFFSET}"
 
 HOME_DIR="$WORK_DIR/home"
 mkdir -p "$HOME_DIR/.claude/projects/demo" "$HOME_DIR/.codex/sessions/2026/01/01"
 
 # ---- Claude fixture：两条 assistant（今天/昨天）+ 一条 user prompt --------------
 cat > "$HOME_DIR/.claude/projects/demo/session.jsonl" <<JSONL
-{"type":"user","sessionId":"S1","timestamp":"${TODAY}T10:00:00+08:00","message":{"role":"user","content":"你好"}}
+{"type":"user","sessionId":"S1","timestamp":"${TODAY}T10:00:00${OFFSET}","message":{"role":"user","content":"你好"}}
 {"type":"assistant","sessionId":"S1","timestamp":"${TODAY_TS}","message":{"model":"model-one","usage":{"input_tokens":100,"output_tokens":10,"cache_read_input_tokens":5,"cache_creation_input_tokens":1}}}
 {"type":"assistant","sessionId":"S1","timestamp":"${TODAY_TS}","message":{"model":"model-one","usage":{"input_tokens":50,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}
 {"type":"assistant","sessionId":"S1","timestamp":"${YESTERDAY_TS}","message":{"model":"model-two","usage":{"input_tokens":200,"output_tokens":20,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}
@@ -63,8 +66,8 @@ JSONL
 
 # ---- Codex fixture：session_meta 在行顶层；total 远大于增量之和 ------------------
 cat > "$HOME_DIR/.codex/sessions/2026/01/01/rollout-2026-01-01T00-00-00-demo.jsonl" <<JSONL
-{"timestamp":"${TODAY}T11:00:00+08:00","ordinal":0,"type":"session_meta","payload":{"session_id":"C1","cwd":"/tmp","model":"gpt-test"}}
-{"timestamp":"${TODAY}T11:00:01+08:00","ordinal":1,"type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}}
+{"timestamp":"${TODAY}T11:00:00${OFFSET}","ordinal":0,"type":"session_meta","payload":{"session_id":"C1","cwd":"/tmp","model":"gpt-test"}}
+{"timestamp":"${TODAY}T11:00:01${OFFSET}","ordinal":1,"type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}}
 {"timestamp":"${TODAY_TS}","ordinal":2,"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":999999,"output_tokens":888888},"last_token_usage":{"input_tokens":1000,"cached_input_tokens":100,"output_tokens":50,"cache_write_input_tokens":0}}}}
 {"timestamp":"${TODAY_TS}","ordinal":2,"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":500,"cached_input_tokens":0,"output_tokens":20,"cache_write_input_tokens":0}}}}
 {"timestamp":"${YESTERDAY_TS}","ordinal":3,"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":7,"cached_input_tokens":0,"output_tokens":3,"cache_write_input_tokens":0}}}}
@@ -115,15 +118,24 @@ assert_equal '391' "$(field '(.stats.modelUsage | to_entries | map(.value.totalT
 assert_equal '1' "$(field '.stats.totalSessions' "$claude")" 'claude：会话数按 sessionId 去重'
 assert_equal '1' "$(field '.stats.totalPrompts' "$claude")" 'claude：user 消息计为 1 个 prompt'
 
+# 真正做一次"命中缓存"：先清掉缓存冷跑一次（这一次会写缓存），再跑一次读缓存。
+# 之前的写法是 --force + 普通跑——而 --force 不写缓存，所以两次都是冷跑，这条断言
+# 等于什么都没测（连"把 prompt 数写成 4242"这种改动都能通过）。
+rm -rf "$HOME_DIR/.cache/cachyos-desktop/agent-usage"
+claude_cold="$(run_collector cachyos-agent-usage-claude)"
 claude_cached="$(run_collector cachyos-agent-usage-claude)"
-assert_equal "$(field '.stats' "$claude")" "$(field '.stats' "$claude_cached")" \
-    'claude：首次运行与命中缓存结果一致'
+assert_equal "$(field '.stats' "$claude_cold")" "$(field '.stats' "$claude")" \
+    'claude：冷跑与 --force 结果一致'
+assert_equal "$(field '.stats' "$claude_cold")" "$(field '.stats' "$claude_cached")" \
+    'claude：命中缓存与冷跑结果完全一致（含 prompts/sessions）'
+assert_equal '1' "$(field '.stats.totalPrompts' "$claude_cached")" \
+    'claude：命中缓存后 prompt 数没有丢（曾在重放时丢失）'
 
 # ---- Codex ----------------------------------------------------------------
 codex="$(run_collector cachyos-agent-usage-codex --force)"
 assert_equal 'codex' "$(field '.id' "$codex")" 'codex：记录 id 正确'
 assert_equal '1570' "$(field '.stats.todayTotalTokens' "$codex")" \
-    'codex：今天 = (1000-100+50) + (500+20)，缓存不重复计入且同日累加'
+    'codex：今天 = 1000+50+500+20 = 1570（input 已含缓存读，所以不再单独加它）'
 assert_equal '1' "$(field '.stats.totalSessions' "$codex")" 'codex：session_meta 在行顶层也能被识别'
 assert_equal 'gpt-test' "$(field '.stats.modelUsage | keys[0]' "$codex")" 'codex：模型取自 session_meta'
 assert_equal '1' "$(field '.stats.totalPrompts' "$codex")" 'codex：task_started 计为 1 个 prompt'
@@ -136,9 +148,15 @@ assert_equal '1570' "$(jq -r --arg d "$TODAY" "$day_tokens_query" <<<"$codex")" 
 assert_equal "$TODAY" "$(field '.stats.recentDays[-1].date' "$codex")" 'codex：recentDays 最后一项是今天'
 assert_equal '7' "$(field '.stats.recentDays | length' "$codex")" 'codex：recentDays 固定为 7 天'
 
+rm -rf "$HOME_DIR/.cache/cachyos-desktop/agent-usage"
+codex_cold="$(run_collector cachyos-agent-usage-codex)"
 codex_cached="$(run_collector cachyos-agent-usage-codex)"
-assert_equal "$(field '.stats' "$codex")" "$(field '.stats' "$codex_cached")" \
-    'codex：首次运行与命中缓存结果一致'
+assert_equal "$(field '.stats' "$codex_cold")" "$(field '.stats' "$codex")" \
+    'codex：冷跑与 --force 结果一致'
+assert_equal "$(field '.stats' "$codex_cold")" "$(field '.stats' "$codex_cached")" \
+    'codex：命中缓存与冷跑结果完全一致（含 prompts/sessions）'
+assert_equal '1' "$(field '.stats.totalPrompts' "$codex_cached")" \
+    'codex：命中缓存后 prompt 数没有丢'
 
 # ---- 语义与费用 ------------------------------------------------------------
 assert_equal 'exclusive' "$(field '.inputTokenSemantics' "$claude")" \
@@ -151,11 +169,13 @@ assert_close '0.4215' "$(field '.stats.costUsd' "$claude")" 'claude：四项分�
 # codex：input 1000 里含缓存 100 → 可计费输入 900*1000/1e6 + 50*2000/1e6 + 100*100/1e6 = 1.01
 #        昨天 7*1000/1e6 + 3*2000/1e6 = 0.013，合计 1.023
 assert_close '1.563' "$(field '.stats.costUsd' "$codex")" \
-    'codex：缓存部分不按输入价重复计费（1.55 + 0.013）'
+    'codex：计费时输入要拆出缓存部分（1.01+0.54+0.013），不按输入价重复收'
 assert_equal 'true' "$(field '.stats.modelUsage["model-one"].priced' "$claude")" 'claude：标注模型是否有定价'
 
 # ---- 缓存版本：逻辑变了就不能继续吃旧缓存 --------------------------------
 CACHE_FILE="$HOME_DIR/.cache/cachyos-desktop/agent-usage/claude-files.json"
+# 前面清过缓存，这里先跑一次让 claude 的缓存重新生成（这就是被测对象）。
+run_collector cachyos-agent-usage-claude >/dev/null
 if [[ -f $CACHE_FILE ]]; then
     # 冒充"旧版本写下的缓存"：版本号对不上，且数据是错的。
     jq '.cacheVersion = 1 | .files = {"bogus": {"stamp": "1:1", "perDay": {"2000-01-01": {"byModel": {"x": {"inputTokens": 999999}}}}}}' \
