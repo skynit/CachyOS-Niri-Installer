@@ -1,5 +1,9 @@
 # CachyOS + Niri + DankMaterialShell
 
+> 目标系统：[CachyOS](https://cachyos.org/)（Arch 派生，软件包按 x86-64-v3/v4 与 Zen4 指令集编译，
+> 使用 `linux-cachyos` 内核）。基础系统尚未安装时，先按[下载并安装 CachyOS](#下载并安装-cachyos)
+> 装好，再运行本项目的安装脚本。
+
 这是一个面向已安装 CachyOS 的 x86_64 设备的完整桌面配置安装器，默认部署：
 
 ```text
@@ -8,6 +12,103 @@ CachyOS + 官方 Niri + DMS v1.5.3 + Quickshell + Kitty
 
 应用、桌面增强和维护工具全部默认安装，不提供按功能拆分的可选开关。默认终端是
 Kitty；DMS 负责主面板、启动器、通知、锁屏和动态主题，Quickshell 是 DMS 的运行基础。
+
+## 目录
+
+- [界面预览](#界面预览)
+- [系统构成](#系统构成)
+- [使用前提](#使用前提)
+- [下载并安装 CachyOS](#下载并安装-cachyos)
+- [新电脑复刻与 Windows 双系统](#新电脑复刻与-windows-双系统)
+- [安装](#安装)
+- [默认应用](#默认应用)
+- [桌面功能](#桌面功能)
+- [默认快捷键](#默认快捷键)
+- [锁屏与电源](#锁屏与电源)
+- [配置更新、保护与迁移](#配置更新保护与迁移)
+- [软件卸载与 HOME 残留](#软件卸载与-home-残留)
+- [系统维护](#系统维护)
+- [安装后操作与验收](#安装后操作与验收)
+- [与 Omarchy 的关系](#与-omarchy-的关系)
+- [官方 Niri 与修改版功能差异](#官方-niri-与修改版功能差异)
+- [明确不会自动执行的操作](#明确不会自动执行的操作)
+- [DMS 版本更新](#dms-版本更新)
+
+## 界面预览
+
+**状态栏**。底栏右侧是本项目的 AI 用量控件（下图最右端 `今天 6.2M`）：只显示 token 数量，
+不显示金额和图标；点开可看每个 agent 的明细。为保护隐私，截图里的窗口标题与本机网络信息已裁掉。
+
+![状态栏](docs/images/bar.png)
+
+放大后的用量控件：
+
+![用量控件](docs/images/usage-widget.png)
+
+**弹窗里的近 7 天折线图**（离屏渲染，数据取自本机真实用量记录；Claude Code 峰值 5.0M，
+DSH 峰值 471.9M）：
+
+![近 7 天用量](docs/images/usage-chart.png)
+
+**安装器界面**。真终端里输出横幅、六段阶段进度、每组应用的进度条与收尾汇总；输出被重定向到
+文件或管道时自动退化为纯文本（保留 `[INFO]`/`[WARN]`/`[DRY-RUN]` 标记）：
+
+```text
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ CachyOS · Niri · DankMaterialShell                                                              │
+│ 在已安装的 CachyOS 上部署 Niri 与 DankMaterialShell，并配置 AI 编程助手                         │
+│ 以具备 sudo 权限的普通用户运行；需要网络连接                                                    │
+│ 不改动软件源、引导器、网络连接与 Secure Boot                                                    │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+== 阶段 1/6 · 检查环境 ----------------------------------------------------------------------------
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ CachyOS + Niri + DMS 安装计划                                                                   │
+│ 运行用户          skynit                                                                        │
+│ 终端              kitty                                                                         │
+│ DMS 版本          v1.5.3                                                                        │
+│ 系统升级          否（--skip-update）                                                           │
+│ 检测到的硬件      已跳过（--skip-hardware）                                                     │
+│ 硬件驱动栈        已跳过                                                                        │
+│ 覆盖配置          是（覆盖受管理的用户配置）                                                    │
+│ DMS 集成          DankSearch、DankCalendar                                                      │
+│ 应用分组          daily、Chinese、office、development、media、VM、gaming、tools                 │
+│ 显示管理器        Ly                                                                            │
+```
+
+## 系统构成
+
+```text
+CachyOS（Arch 派生，x86-64-v3/v4 优化仓库 + linux-cachyos 内核）
+└── 官方 Niri（Wayland 滚动平铺合成器，项目只提供配置，不打补丁）
+    ├── DankMaterialShell + Quickshell   面板、启动器、通知、锁屏、动态主题
+    ├── Waybar ×2                        顶栏与底栏（项目自带配置与模块脚本）
+    ├── Kitty                            默认终端
+    ├── Fcitx5 + RIME（雾凇拼音）         中文输入
+    └── Ly（ly@tty2.service）            登录管理器（安装器会停用其它显示管理器）
+
+AI 层（与桌面解耦，可单独使用）
+├── agent 启动层        Super+` 启动默认 agent；多个则弹选择器
+├── 技能分发            cachyos / diagnose-crash 软链进 Claude、Codex、CC Switch
+├── 崩溃诊断            systemd-coredump 监听 + 一键交给 agent 分析
+├── 用量面板            Claude / Codex / OpenCode / DSH 的 token 与费用
+├── 主题同步            把 DMS 的明暗与完整配色推给 agent
+└── 本地听写（可选）    Voxtype + Waybar 状态模块
+```
+
+主要文件位置：
+
+| 路径 | 内容 |
+| --- | --- |
+| `/usr/local/bin/cachyos-*` | 本项目的 66 个命令（`agent`、`usage-*`、`voxtype-*`、`crash-*` 等） |
+| `/usr/local/share/cachyos-desktop/assets/**` | 随包资源：技能、DMS 插件、配置模板、脚本库 |
+| `~/.config/niri/` | 主配置、`cachyos-extras.kdl` 扩展、`dms/` 下生成的配色与快捷键 |
+| `~/.config/waybar/` | 顶栏、底栏与样式 |
+| `~/.config/DankMaterialShell/` | DMS 设置，以及 `plugins/CachyosAgents/` 用量面板插件 |
+| `~/.config/cachyos-desktop/` | 本项目自身状态（默认 agent 等） |
+| `~/.local/state/cachyos-desktop/` | 用量记录、崩溃记录、首次登录日志、配置备份 |
+| `~/.config/systemd/user/cachyos-*` | 5 个用户单元：崩溃监听、主题 path、用量定时器 |
+| `~/.claude/`、`~/.codex/`、`~/.cc-switch/` | 技能软链与 agent 配置镜像 |
 
 ## 使用前提
 
@@ -20,17 +121,51 @@ Kitty；DMS 负责主面板、启动器、通知、锁屏和动态主题，Quick
 
 不要在 CachyOS Live ISO 中运行。
 
-## 获取 CachyOS 安装镜像
+## 下载并安装 CachyOS
 
-基础系统尚未安装时，可从 CachyOS 官方 CDN 下载桌面版 ISO。仓库不保存镜像文件：
+本项目面向**已经安装好 CachyOS** 的系统，所以第一步是先装基础系统。
+
+**1. 下载镜像**
+
+打开官网 <https://cachyos.org/>，进入下载页 <https://cachyos.org/download>，选择 Desktop 版
+ISO（文件名形如 `cachyos-desktop-linux-<日期>.iso`，约 3～4 GiB）。下载页会给出各镜像站的直链，
+以及对应的 `.sha256` 校验文件与 `.sig` 签名；也可以直接用下面的固定版本链接。
+
+**2. 校验下载结果**
+
+镜像站偶尔同步不全，装之前务必校验：
+
+```bash
+# 与下载页给的 .sha256 文件放在同一目录
+sha256sum --check cachyos-desktop-linux-<日期>.iso.sha256
+```
+
+想用签名验证（更严格）：
+
+```bash
+gpg --recv-keys '882D CFE4 8E20 51D4 8E25 62AB F3B6 0748 8DB3 5A47'
+gpg --verify cachyos-desktop-linux-<日期>.iso.sig cachyos-desktop-linux-<日期>.iso
+```
+
+**3. 写入安装介质**
+
+用 Ventoy 或 `dd` 写入 U 盘，做法见下一节「新电脑复刻与 Windows 双系统」。
+
+**4. 安装 CachyOS**
+
+CachyOS 安装器提供两种方式：图形化（Calamares）和命令行。**桌面环境任选**——选 **Niri** 最省事，
+选 KDE/GNOME 等也可以，本项目会把桌面统一配置成 Niri + DMS。安装完进入系统后，再运行本项目的
+`install.sh` 补齐桌面配置与 AI 层。
+
+### 可复现的固定版本
+
+下面这个版本是经过完整验证的固定版本，便于复刻完全相同的环境（仓库不保存镜像文件）：
 
 ```bash
 curl --fail --location --continue-at - \
   --output cachyos-desktop-linux-260809.iso \
   https://cdn77.cachyos.org/ISO/desktop/260809/cachyos-desktop-linux-260809.iso
 ```
-
-校验下载结果：
 
 ```bash
 echo '959f6577f45e25ee9fd8c220fd221b08e4ea79412c7315c0f922dd6d86d5e33c  cachyos-desktop-linux-260809.iso' \
@@ -42,7 +177,17 @@ echo '959f6577f45e25ee9fd8c220fd221b08e4ea79412c7315c0f922dd6d86d5e33c  cachyos-
 - 官方签名：<https://cdn77.cachyos.org/ISO/desktop/260809/cachyos-desktop-linux-260809.iso.sig>
 - 签名密钥指纹：`882D CFE4 8E20 51D4 8E25 62AB F3B6 0748 8DB3 5A47`
 
-使用该镜像完成 CachyOS 基础安装并进入已安装的系统后，再运行本项目的安装脚本。
+### 官方资源
+
+| 资源 | 地址 |
+| --- | --- |
+| 官网 | <https://cachyos.org/> |
+| 下载页 | <https://cachyos.org/download> |
+| Wiki（文档） | <https://wiki.cachyos.org/> |
+| 论坛 | <https://discuss.cachyos.org/> |
+| 软件包查询 | <https://packages.cachyos.org/> |
+| GitHub | <https://github.com/cachyos> |
+
 
 ## 新电脑复刻与 Windows 双系统
 
@@ -135,6 +280,12 @@ Windows 更新可能改变 EFI 启动顺序。条件允许时，让 Windows 与 
 ./install.sh --skip-hardware    # 跳过自动识别的硬件包
 ./install.sh --yes              # 跳过安装器自身的确认提示
 ```
+
+安装过程会输出一个**零依赖的终端界面**（`assets/lib/tui.sh`）：横幅、六段阶段标题、每组应用的
+进度条、下载时的转圈，以及收尾的汇总框。一旦输出不是终端（管道、`> log`、CI），它会自动退化成
+纯文本，并保留 `[INFO]`/`[WARN]`/`[DRY-RUN]` 标记——`verify.sh` 与测试都依赖这些日志。想显式
+关闭颜色：`NO_COLOR=1`、`TERM=dumb`，或 `CACHYOS_TUI=plain`。它不依赖 `gum`/`dialog` 之类
+外部命令：安装发生在刚装好的 CachyOS 上，任何额外依赖都可能是"还没装上"的状态。
 
 默认安装过程会：
 
@@ -665,13 +816,6 @@ Snapper 快照和回滚仅在根文件系统为 Btrfs 时可用。`cachyos-grub-
 2. 至少退出并重新登录一次，使 Fish、Fcitx5、`libvirt` 和 `i2c` 组权限生效。
 3. 等待首次登录的 Firefox、Code、Wine 与 agent 技能初始化完成。
 4. 在本项目目录执行：
-
-```bash
-安装器的输出是一个**零依赖的终端界面**（`assets/lib/tui.sh`）：横幅、阶段标题（`阶段 n/6`）、
-每组应用的进度条、下载时的转圈、以及收尾的汇总框。它**一旦发现输出不是终端**（管道、`> log`、
-CI）就自动退化成纯文本——`verify.sh` 与测试都在抓这些日志，界面不会污染它们。想显式关掉颜色：
-`NO_COLOR=1`、`TERM=dumb`，或 `CACHYOS_TUI=plain`。界面不引入 `gum`/`dialog` 之类依赖：
-安装发生在刚装好的 CachyOS 上，任何外部依赖都可能是"还没装上"的状态。
 
 ```bash
 bash tests/run-all.sh
