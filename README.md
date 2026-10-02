@@ -24,6 +24,7 @@ Kitty；DMS 负责主面板、启动器、通知、锁屏和动态主题，Quick
 - [默认应用](#默认应用)
 - [桌面功能](#桌面功能)
 - [默认快捷键](#默认快捷键)
+- [AI 功能](#ai-功能)
 - [锁屏与电源](#锁屏与电源)
 - [配置更新、保护与迁移](#配置更新保护与迁移)
 - [软件卸载与 HOME 残留](#软件卸载与-home-残留)
@@ -300,7 +301,9 @@ Windows 更新可能改变 EFI 启动顺序。条件允许时，让 Windows 与 
 - 配置 Fcitx5、RIME、雾凇拼音、Waypaper、awww、Satty、录屏及双 Waybar。
 - 配置 DMS 主题、光标、模糊、锁屏、电源策略、指纹和安全密钥辅助工具。
 - 通过 CachyOS 仓库安装 Codex CLI 和 Claude Code，并通过 AUR 安装 `codex-desktop-git`。
-- 生成 CC Switch 与 Codex Desktop 的非敏感配置镜像，不复制账号、令牌、Cookie 或密钥。
+- 生成 CC Switch 与 Codex Desktop 的配置镜像，镜像里的敏感键会被过滤。注意：同步会**改写 Codex
+  自己的 `~/.codex/auth.json`**（用于切换 provider），并在改动前把原文件备份到
+  `~/.local/state/cachyos-ai-config/`（权限 0700）。
 - 部署稳定的 Niri 主配置、快捷键和项目扩展；DMS 根据受管理的设置生成配色、布局、光标和模糊配置。
 - 禁止 Niri 接管电源键（避免笔记本上的挂起循环）。
 - 自动清理受管理位置中的旧品牌包、路径和 Niri 配置残留。
@@ -452,216 +455,6 @@ cachyos-ai-config-sync sync
 `~/.cc-switch/codex-desktop-sync.json`。真实 API 凭据只写入权限为 `600` 的
 `~/.codex/auth.json`，不会写入镜像或日志。
 
-### AI Agent
-
-安装时会**自动确定默认 agent**：只探测到 1 个可用的 agent（`claude`/`codex`/`opencode`）就直接设为默认，
-按下 `Super+\`` 立刻能用；探测到多个则留空——第一次按会弹出选择器，选一次之后就被记住。
-
-
-安装器把三个 AI 编程 agent 接成同一套入口，并自动带上各自的"无人值守"旗标——这些旗标
-每个 agent 都不一样，散落在快捷键里很难维护：
-
-| agent | 包 | 无人值守旗标 |
-| --- | --- | --- |
-| `opencode` | `opencode` | `--auto` |
-| `claude` | `claude-code` | `--permission-mode auto` |
-| `codex` | `openai-codex` | `--approve-for-me` |
-
-```bash
-cachyos-default-agent                 # 查看当前默认 agent（未设置时无输出）
-cachyos-default-agent codex           # 设为默认
-cachyos-agent                         # 启动默认 agent；没有默认值时弹选择器
-cachyos-agent --pick                  # 强制重新选择
-cachyos-agent claude                  # 启动指定 agent
-cachyos-agent --list                  # 列出支持的 agent 及安装状态
-cachyos-agent-prompt "审查这个改动"     # 带一段 prompt 启动默认 agent
-```
-
-- 默认 agent 记在 `~/.config/cachyos-desktop/agent`（权限 0600）。这个文件可以手工改，
-  读取时会去掉首尾空白；如果写的是不受支持的名字，会提示并转为重新选择，而不是直接报错。
-- 选择器在终端里就地运行；没有终端（例如快捷键触发）时开一个 Kitty 窗口跑 fzf，
-  选择结果通过临时文件回传。按 `Esc` 取消则退出 1，不改动原默认值。
-- 所有 agent 窗口共用 kitty class `cachyos-agent`；这样一条窗口规则或主题就能覆盖全部
-  agent 窗口，不必每个 agent 各写一条（项目本身目前没有为它写规则）。
-  从快捷键启动会开新窗口；在终端里加 `--inline` 直接在当前终端运行。
-- 三个 agent 的 `-p`/`--help` 之类参数不会被误当成选项：`claude` 与 `codex` 的 prompt
-  统一用 `--` 分隔（`opencode` 走自己的 `--prompt`）。prompt 里的换行、引号、反斜杠、
-  `$`、制表符都原样传给 agent。
-
-#### Agent 技能
-
-安装器把两份技能软链到各 harness 的技能目录，让 agent 知道这套桌面该怎么改：
-
-- `cachyos`：Niri、DMS、`cachyos-*` 命令的正确用法，以及"哪些配置受安装器托管、
-  改前要先 `cachyos-config protect`"。
-- `diagnose-crash`：如何从 `coredumpctl` 事实判断崩溃该归因于用户配置还是上游 bug。
-
-只为**已存在**的技能目录建立软链（`~/.agents/skills`、`~/.claude/skills`、`~/.codex/skills`、
-`~/.gemini/config/skills`、`~/.pi/agent/skills`、`~/.hermes/skills` 及每个已存在的
-`~/.hermes/profiles/*/skills`、`~/.cc-switch/skills`），绝不创建 harness 目录。
-安装时、首次登录以及每次 `cachyos-agent` 启动前各同步一次——最后这个时机最可靠，
-因为那时 harness 目录才确实存在。手动重跑：
-
-```bash
-cachyos-agent-skills
-cachyos-agent-skills --harness codex   # 只同步某一个 harness
-```
-
-#### 崩溃诊断
-
-`cachyos-crash-watch.service` 常驻监听 systemd-coredump。`cachyos-toggle-crash-capture` 可以整体关掉它：
-关闭时写一个标记文件（单元里的 `ConditionPathExists=!` 让它在下次登录时也不启动），并立刻停掉当前会话的
-监听——所以"关掉"是一次性动作，不用每次登录再关一遍。
-
-进程崩溃后会：
-
-1. 把 `pid`/`comm`/`exe`/`signal`/时间写入
-   `~/.local/state/cachyos-desktop/agents/last-crash`；
-2. 发一条通知。同一程序 60 秒内**只记录并提醒一次**——去重判断在写记录之前，所以窗口内的
-   第二次崩溃既不记录也不提醒（`CACHYOS_CRASH_DEDUPE_SECONDS` 可调）。
-
-诊断入口：
-
-```bash
-cachyos-agent-crash --latest        # 用默认 agent 诊断最近一次记录到的崩溃
-cachyos-agent-crash 1516893         # 指定 PID（PID 见 coredumpctl list）
-cachyos-crash-mute                  # 列出已静音的程序
-cachyos-crash-mute SomeApp          # 不再提醒该程序
-cachyos-crash-mute SomeApp off      # 恢复提醒
-```
-
-通知默认就是**可点击的动作式**：点通知上的「用 AI 诊断」会把崩溃的四个字段
-（进程 / PID / 程序 / 信号）一并交给默认 agent（已在真实桌面会话上验证通知服务会回发
-动作）。想要只提示、不等待点击，就设 `CACHYOS_CRASH_ACTION=0` 启动 watcher；动作式
-通知发不出去时也会自动退回提示式。
-
-几个刻意的设计：
-
-- **同一个程序最多保留一条待处理通知。** 动作式通知会一直等到用户处理（`-t 0` 不自动
-  过期），若每次都新起一个，崩溃循环会让通知和等待进程无上界堆积。
-- **通知在后台发送**，不阻塞检测循环——否则用户还没点的那段时间里发生的崩溃都不会被记录。
-- **静音按内核的程序名长度对齐**：内核只记录 `comm` 的前 15 字节，所以
-  `cachyos-crash-mute gnome-keyring-daemon` 会按 `gnome-keyring-d` 静音（并给出提示）。
-  静音只是不再提醒，程序该崩还是会崩。
-- **`cachyos-agent-crash` 只把事实交给 agent**，诊断方法本身写在 `diagnose-crash` 技能里，
-  因此换任何默认 agent 都适用，方法也只维护一份。
-
-#### 用量统计
-
-安装器会装上 DMS 面板插件 **CachyOS Agents 用量**：**状态栏只显示 token 用量**（没有图标、
-没有金额），点开是每个 agent 的明细（今天/累计的 token 与费用、会话与提示数、按费用排序的
-模型、最近 7 天的**折线图**）。默认登记 Claude Code、Codex、OpenCode 与 **DSH（DeepSeek Harness）**，
-每个都能在插件设置里单独关掉。
-
-```bash
-cachyos-agent-usage-update            # 刷新所有 agent 的用量记录（面板每 15 分钟自己调一次）
-cachyos-agent-usage-update claude     # 只跑某一个 agent
-cachyos-agent-usage-update --limits-only   # 只刷新限额，不动本地统计
-cachyos-agent-usage-claude            # 每个 agent 一个采集器，各自输出一条 JSON 记录
-cachyos-agent-usage-codex
-cachyos-agent-usage-dsh
-```
-
-安装时会**先算一次**，并启用 `cachyos-agent-usage.timer`（登录后 2 分钟 + 此后每 15 分钟，
-`Persistent=true`，所以关机期间错过的刷新会在开机后补上）。没有这个定时器，面板只会停在
-安装那一刻的数字。
-
-数据链路：采集器 → `~/.local/state/cachyos-desktop/agents/usage/<agent>.json` → 面板读取。
-面板只读目录；加一个 agent 需要两处：加一个采集器，并把它登记进面板的 agent 表
-（`Usage.js` 顶部的 `agents` 数组——`summarise()` 只遍历那张表，只加 JSON 文件不会显示）。
-
-> **DSH 的金额**：它的事件流里没有花费，cc-switch 的定价库里也没有 deepseek 条目，所以 DSH
-> 默认只统计 token。想看到金额就在 `~/.config/cachyos-desktop/agents/dsh.json` 里给单价
-> （美元/百万 token）：`{"pricing": {"deepseek-v4-flash": {"input": 0.28, "output": 1.1, "cacheRead": 0.028}}}`。
-
-- 全部在本机取数，**不联网**：Claude 读 `~/.claude/projects/**` 的转录，Codex 读
-  `~/.codex/sessions/**` 的 rollout，DSH 读 `~/.dsh/sessions/**` 下 zstd 压缩的事件流
-  （v4/v2/v0 三种格式都兼容；提示数只认 `source.kind == "user"`，合成条目不算）。
-- **费用**取自 cc-switch 的 `model_pricing` 表（装了 cc-switch 才有）；没有定价时只显示
-  token，未定价的模型会标注「未定价」。
-- **token 语义按各家对齐**：Claude 与 DSH 的 input 都**不含**缓存读，Codex 的已含缓存。记录里用
-  `inputTokenSemantics` 标明，总量与费用都据此拆分，避免缓存被重复计算。DSH 的 `reasoningTokens`
-  已含在 `outputTokens` 里，不会被再加一遍。
-- **缓存按源文件 `(mtime, size)` 增量**，并带 `CACHE_VERSION`：解析逻辑一变缓存整体作废，
-  否则会出现"代码修好了、屏幕上的数字还是旧的"。
-- 缺数据显示「未采集 / 无数据」，绝不把没采到渲染成 0；今天没有用量时回落到最近有数据的
-  一天并标出日期（例如 `10-01 12.0M`）——金额只在弹窗里看。
-
-插件的源码真源在 <https://github.com/skynit/dms-plugins>，安装器里放的是随包副本
-（`assets/dms-plugins/CachyosAgents/`），这样全新机器离线也能复刻。面板纯逻辑由
-`node --test` 覆盖；接线用的两个 jq 程序（只增不覆盖、幂等、尊重用户已关掉的开关）由
-`tests/dms-plugin-test.sh` 覆盖。
-
-#### 本地听写（可选）
-
-基于 [Voxtype](https://github.com/peteonrails/voxtype)，本地 Whisper 推理，不上传音频。
-**刻意不装进默认安装**：语音模型约 150MB，听写也不是所有人的需求。
-
-```bash
-cachyos-voxtype-install    # 装 voxtype-bin + wtype、下载模型、按需开 GPU、写好快捷键
-cachyos-voxtype-toggle     # 开始/结束听写（快捷键绑的就是它）
-cachyos-voxtype-config     # 打开 voxtype 的交互式配置
-cachyos-voxtype-model      # 换模型 / 重新下载
-cachyos-voxtype-status     # 输出 Waybar 的 JSON 状态（栏上那个"听写中"）
-cachyos-voxtype-remove     # 卸载：删快捷键、备份配置、移除模型
-```
-
-安装后快捷键是 **`Super+Ctrl+X`** 与 **`Super+F9`**（都是开始/结束切换）。这两个键
-写在 `~/.config/niri/cachyos-voxtype.kdl`，由主配置用 `include optional=true` 引入——
-Niri 没有条件绑定，用可选 include 才能做到"**装了听写才有这几个键**"，而不是让没用听写的人
-白白失去它们。
-
-> **已知限制（实测）**：上游 Omarchy 在 Hyprland 上用 `F9` 的"按下开始 / 松开结束"实现
-> 按住说话。**Niri 不支持按键释放绑定**——`F9 release { }` 会让 `niri validate` 直接解析
-> 报错——所以本项目只能做 toggle：按一次开始，再按一次结束。裸 `F9` 也没有被占用，
-> 它仍然是应用自己的功能键。
-
-栏上的状态控件空闲时不显示文字（自动收起），只在录音/转写时出现；状态从
-`$XDG_RUNTIME_DIR/voxtype/state` 读取，由 `voxtype` 自己维护。用 `cachyos-voxtype-remove`
-卸载时会先把 `~/.config/voxtype` 备份成带时间戳的目录，不会静默丢掉你调过的设备或采样率。
-
-#### 主题同步
-
-DMS 换壁纸或切明暗后，把当前的**明暗模式**同步给各 agent，省得每次都要手动去各家设置里改：
-
-```bash
-cachyos-agent-theme-sync            # 同步一次（生成 Claude 自定义主题 + Hermes skin 并接线）
-cachyos-agent-theme-sync --status   # 只看当前模式与各 agent 状态，不写文件
-cachyos-agent-theme-sync --dry-run  # 只显示会改什么
-```
-
-- 数据源是 DMS 生成的 `~/.cache/DankMaterialShell/dms-colors.json`（里面直接带 `mode`）。
-- 已同步：**Claude Code** —— 写 `~/.claude/settings.json` 的 `theme`（`dark` / `light`），
-  只改这一个键，其余原样保留。
-- 未同步：**Codex**（`config.toml` 与 `codex --help` 都没有主题配置项，TUI 自行适配明暗）、
-  **OpenCode**（主题是内置名，名表无法在本机核实，写错会静默不生效）。两者都会被明确列出，
-  不会假装同步成功。
-- 触发方式：`cachyos-agent-theme.path` 盯着配色文件，DMS 每次重写它就同步一次；安装时也会
-  先同步一次。装好可用 `systemctl --user status cachyos-agent-theme.path` 查看。
-
-**为什么不做完整配色主题**：Claude Code 支持自定义主题文件，但它的 schema 无法在本机可靠
-核实（发行的是打包过的二进制，从中提取只会拿到 minified JS 的噪声）。本项目宁可少做，
-也不写一份"看起来对、实际不生效"的主题文件——这正是审核阶段反复出现的问题类型。
-同步做两件事：把 DMS 的 Material 3 调色板渲染成 **Claude Code 自定义主题**
-（`~/.claude/themes/cachyos.json`，键集取自 Omarchy 的 `claude.json.tpl`）与 **Hermes skin**
-（`~/.hermes/skins/cachyos.yaml`，装了 Hermes 才写），再把 `settings.json` 的 `theme` 指向它。
-渲染与校验都在 `assets/lib/agent_theme.py`：校验不过就完全不写、并且不改 `settings.json`——
-宁可不换主题，也不能让 agent 去读一个它认不出的文件。
-
-想补的话，只需要在 `bin/cachyos-agent-theme-sync` 的取值表里加一行。
-
-#### 新增一个 agent
-
-旗标集中在一处：`assets/lib/agent.sh`。加一个 agent 需要同时改三处——该文件的
-`cachyos_agent_supported`/`cachyos_agent_name`/`cachyos_agent_command`
-（必要时还有 `cachyos_agent_skill_relpaths`）、`packages.sh` 里的包、以及
-`tests/agent-test.sh` 的断言。
-
-技能会链到**已存在**的 harness 目录（不替用户凭空创建目录）。但全新机器上 `.claude`/`.codex` 往往还不存在
-（CLI 装了、用户还没跑过），于是安装器与首次登录初始化都会带 `--create-supported`：只为**目录位置确定
-且该 CLI 已安装**的 agent（claude/codex）建目录再链接；opencode 的 `.agents/skills` 是"尽力而为"位置，
-不凭空创建。
-
 ### 窗口、列、显示器与工作区
 
 ```text
@@ -737,6 +530,342 @@ Super+Alt+2                聚焦或启动 Kitty
 ```
 
 `Super+Escape` 用于切换应用的快捷键抑制，`Super+Shift+E` 用于退出 Niri；后者会结束当前桌面会话，使用前应保存工作。
+
+## AI 功能
+
+这一层是**可选、全本地**的：用不用 agent、用哪一个都由你决定，桌面本身不依赖它。当前实现的能力：
+
+| 能力 | 入口 | 默认安装 | 依赖 |
+| --- | --- | --- | --- |
+| 统一启动层 | `Super+\`` → `cachyos-agent` | 是 | 至少一个 agent CLI |
+| 技能分发 | `cachyos-agent-skills` | 是 | agent 自身的技能目录 |
+| 崩溃诊断 | `cachyos-crash-watch` + `cachyos-agent-crash` | 是 | `systemd-coredump` |
+| 用量统计与面板 | `cachyos-agent-usage-*` + DMS 插件 | 是 | 本机 agent 会话记录 |
+| 主题同步 | `cachyos-agent-theme-sync` | 是 | DMS 生成的配色文件 |
+| 配置镜像 | `cachyos-ai-config-sync` | 是（有 CC Switch 时生效） | CC Switch 数据库 |
+| 本地听写 | `cachyos-voxtype-*` | 否（可选组件） | Voxtype 与语音模型 |
+
+四条设计原则：
+
+1. **不改 agent 本身**：只做启动包装、技能软链、状态读取与主题写入；不 patch 二进制，不改它自己的配置格式。
+2. **凭据不进镜像**：写出的镜像只含非敏感的路由与路径，字段里凡匹配 token/secret/password/cookie/auth/credential/api-key 的键都会被过滤。但 `cachyos-ai-config-sync` 会**改写
+   Codex 自己的 `~/.codex/auth.json`**（改前原样备份到 0700 的状态目录）——这是它唯一触碰凭据的地方。
+3. **代码与状态分离**：命令在 `/usr/local/bin/cachyos-*`，随包资源在 `/usr/local/share/cachyos-desktop/assets/`，运行状态在 `~/.local/state/cachyos-desktop/`。
+4. **单点失败不致命**：任一项失败只警告，不影响安装结果，也不影响桌面启动。
+
+### Agent 启动层
+
+
+安装时会**自动确定默认 agent**：只探测到 1 个可用的 agent（`claude`/`codex`/`opencode`）就直接设为默认，
+按下 `Super+\`` 立刻能用；探测到多个则留空——第一次按会弹出选择器，选一次之后就被记住。
+
+
+安装器把三个 AI 编程 agent 接成同一套入口，并自动带上各自的"无人值守"旗标——这些旗标
+每个 agent 都不一样，散落在快捷键里很难维护：
+
+| agent | 包 | 无人值守旗标 |
+| --- | --- | --- |
+| `opencode` | `opencode` | `--auto` |
+| `claude` | `claude-code` | `--permission-mode auto` |
+| `codex` | `openai-codex` | `--approve-for-me` |
+
+```bash
+cachyos-default-agent                 # 查看当前默认 agent（未设置时无输出）
+cachyos-default-agent codex           # 设为默认
+cachyos-agent                         # 启动默认 agent；没有默认值时弹选择器
+cachyos-agent --pick                  # 强制重新选择
+cachyos-agent claude                  # 启动指定 agent
+cachyos-agent --list                  # 列出支持的 agent 及安装状态
+cachyos-agent-prompt "审查这个改动"     # 带一段 prompt 启动默认 agent
+```
+
+- 默认 agent 记在 `~/.config/cachyos-desktop/agent`（权限 0600）。这个文件可以手工改，
+  读取时会去掉首尾空白；如果写的是不受支持的名字，会提示并转为重新选择，而不是直接报错。
+- 选择器在终端里就地运行；没有终端（例如快捷键触发）时开一个 Kitty 窗口跑 fzf，
+  选择结果通过临时文件回传。按 `Esc` 取消则退出 1，不改动原默认值。
+- 所有 agent 窗口共用 kitty class `cachyos-agent`；这样一条窗口规则或主题就能覆盖全部
+  agent 窗口，不必每个 agent 各写一条（项目本身目前没有为它写规则）。
+  从快捷键启动会开新窗口；在终端里加 `--inline` 直接在当前终端运行。
+- 三个 agent 的 `-p`/`--help` 之类参数不会被误当成选项：`claude` 与 `codex` 的 prompt
+  统一用 `--` 分隔（`opencode` 走自己的 `--prompt`）。prompt 里的换行、引号、反斜杠、
+  `$`、制表符都原样传给 agent。
+
+### Agent 技能
+
+安装器把两份技能软链到各 harness 的技能目录，让 agent 知道这套桌面该怎么改：
+
+- `cachyos`：Niri、DMS、`cachyos-*` 命令的正确用法，以及"哪些配置受安装器托管、
+  改前要先 `cachyos-config protect`"。
+- `diagnose-crash`：如何从 `coredumpctl` 事实判断崩溃该归因于用户配置还是上游 bug。
+
+只为**已存在**的技能目录建立软链（`~/.agents/skills`、`~/.claude/skills`、`~/.codex/skills`、
+`~/.gemini/config/skills`、`~/.pi/agent/skills`、`~/.hermes/skills` 及每个已存在的
+`~/.hermes/profiles/*/skills`、`~/.cc-switch/skills`），绝不创建 harness 目录。
+安装时、首次登录以及每次 `cachyos-agent` 启动前各同步一次——最后这个时机最可靠，
+因为那时 harness 目录才确实存在。手动重跑：
+
+```bash
+cachyos-agent-skills
+cachyos-agent-skills --harness codex   # 只同步某一个 harness
+```
+
+### 崩溃诊断
+
+`cachyos-crash-watch.service` 常驻监听 systemd-coredump。`cachyos-toggle-crash-capture` 可以整体关掉它：
+关闭时写一个标记文件（单元里的 `ConditionPathExists=!` 让它在下次登录时也不启动），并立刻停掉当前会话的
+监听——所以"关掉"是一次性动作，不用每次登录再关一遍。
+
+进程崩溃后会：
+
+1. 把 `pid`/`comm`/`exe`/`signal`/时间写入
+   `~/.local/state/cachyos-desktop/agents/last-crash`；
+2. 发一条通知。同一程序 60 秒内**只记录并提醒一次**——去重判断在写记录之前，所以窗口内的
+   第二次崩溃既不记录也不提醒（`CACHYOS_CRASH_DEDUPE_SECONDS` 可调）。
+
+诊断入口：
+
+```bash
+cachyos-agent-crash --latest        # 用默认 agent 诊断最近一次记录到的崩溃
+cachyos-agent-crash 1516893         # 指定 PID（PID 见 coredumpctl list）
+cachyos-crash-mute                  # 列出已静音的程序
+cachyos-crash-mute SomeApp          # 不再提醒该程序
+cachyos-crash-mute SomeApp off      # 恢复提醒
+```
+
+通知默认就是**可点击的动作式**：点通知上的「用 AI 诊断」会把崩溃的四个字段
+（进程 / PID / 程序 / 信号）一并交给默认 agent（已在真实桌面会话上验证通知服务会回发
+动作）。想要只提示、不等待点击，就设 `CACHYOS_CRASH_ACTION=0` 启动 watcher；动作式
+通知发不出去时也会自动退回提示式。
+
+几个刻意的设计：
+
+- **同一个程序最多保留一条待处理通知。** 动作式通知会一直等到用户处理（`-t 0` 不自动
+  过期），若每次都新起一个，崩溃循环会让通知和等待进程无上界堆积。
+- **通知在后台发送**，不阻塞检测循环——否则用户还没点的那段时间里发生的崩溃都不会被记录。
+- **静音按内核的程序名长度对齐**：内核只记录 `comm` 的前 15 字节，所以
+  `cachyos-crash-mute gnome-keyring-daemon` 会按 `gnome-keyring-d` 静音（并给出提示）。
+  静音只是不再提醒，程序该崩还是会崩。
+- **`cachyos-agent-crash` 只把事实交给 agent**，诊断方法本身写在 `diagnose-crash` 技能里，
+  因此换任何默认 agent 都适用，方法也只维护一份。
+
+### 用量统计
+
+安装器会装上 DMS 面板插件 **CachyOS Agents 用量**：**状态栏只显示 token 用量**（没有图标、
+没有金额），点开是每个 agent 的明细（今天/累计的 token 与费用、会话与提示数、按费用排序的
+模型、最近 7 天的**折线图**）。默认登记 Claude Code、Codex、OpenCode 与 **DSH（DeepSeek Harness）**，
+每个都能在插件设置里单独关掉。
+
+```bash
+cachyos-agent-usage-update            # 刷新所有 agent 的用量记录（面板每 15 分钟自己调一次）
+cachyos-agent-usage-update claude     # 只跑某一个 agent
+cachyos-agent-usage-update --limits-only   # 只刷新限额，不动本地统计
+cachyos-agent-usage-claude            # 每个 agent 一个采集器，各自输出一条 JSON 记录
+cachyos-agent-usage-codex
+cachyos-agent-usage-dsh
+```
+
+安装时会**先算一次**，并启用 `cachyos-agent-usage.timer`（登录后 2 分钟 + 此后每 15 分钟，
+`Persistent=true`，所以关机期间错过的刷新会在开机后补上）。没有这个定时器，面板只会停在
+安装那一刻的数字。
+
+数据链路：采集器 → `~/.local/state/cachyos-desktop/agents/usage/<agent>.json` → 面板读取。
+面板只读目录；加一个 agent 需要两处：加一个采集器，并把它登记进面板的 agent 表
+（`Usage.js` 顶部的 `agents` 数组——`summarise()` 只遍历那张表，只加 JSON 文件不会显示）。
+
+> **DSH 的金额**：它的事件流里没有花费，cc-switch 的定价库里也没有 deepseek 条目，所以 DSH
+> 默认只统计 token。想看到金额就在 `~/.config/cachyos-desktop/agents/dsh.json` 里给单价
+> （美元/百万 token）：`{"pricing": {"deepseek-v4-flash": {"input": 0.28, "output": 1.1, "cacheRead": 0.028}}}`。
+
+- 全部在本机取数，**不联网**：Claude 读 `~/.claude/projects/**` 的转录，Codex 读
+  `~/.codex/sessions/**` 的 rollout，DSH 读 `~/.dsh/sessions/**` 下 zstd 压缩的事件流
+  （v4/v2/v0 三种格式都兼容；提示数只认 `source.kind == "user"`，合成条目不算）。
+- **费用**取自 cc-switch 的 `model_pricing` 表（装了 cc-switch 才有）；没有定价时只显示
+  token，未定价的模型会标注「未定价」。
+- **token 语义按各家对齐**：Claude 与 DSH 的 input 都**不含**缓存读，Codex 的已含缓存。记录里用
+  `inputTokenSemantics` 标明，总量与费用都据此拆分，避免缓存被重复计算。DSH 的 `reasoningTokens`
+  已含在 `outputTokens` 里，不会被再加一遍。
+- **缓存按源文件 `(mtime, size)` 增量**，并带 `CACHE_VERSION`：解析逻辑一变缓存整体作废，
+  否则会出现"代码修好了、屏幕上的数字还是旧的"。
+- 缺数据显示「未采集 / 无数据」，绝不把没采到渲染成 0；今天没有用量时回落到最近有数据的
+  一天并标出日期（例如 `10-01 12.0M`）——金额只在弹窗里看。
+
+插件的源码真源在 <https://github.com/skynit/dms-plugins>，安装器里放的是随包副本
+（`assets/dms-plugins/CachyosAgents/`），这样全新机器离线也能复刻。面板纯逻辑由
+`node --test` 覆盖；接线用的两个 jq 程序（只增不覆盖、幂等、尊重用户已关掉的开关）由
+`tests/dms-plugin-test.sh` 覆盖。
+
+### 本地听写（可选）
+
+基于 [Voxtype](https://github.com/peteonrails/voxtype)，本地 Whisper 推理，不上传音频。
+**刻意不装进默认安装**：语音模型约 150MB，听写也不是所有人的需求。
+
+```bash
+cachyos-voxtype-install    # 装 voxtype-bin + wtype、下载模型、按需开 GPU、写好快捷键
+cachyos-voxtype-toggle     # 开始/结束听写（快捷键绑的就是它）
+cachyos-voxtype-config     # 打开 voxtype 的交互式配置
+cachyos-voxtype-model      # 换模型 / 重新下载
+cachyos-voxtype-status     # 输出 Waybar 的 JSON 状态（栏上那个"听写中"）
+cachyos-voxtype-remove     # 卸载：删快捷键、备份配置、移除模型
+```
+
+安装后快捷键是 **`Super+Ctrl+X`** 与 **`Super+F9`**（都是开始/结束切换）。这两个键
+写在 `~/.config/niri/cachyos-voxtype.kdl`，由主配置用 `include optional=true` 引入——
+Niri 没有条件绑定，用可选 include 才能做到"**装了听写才有这几个键**"，而不是让没用听写的人
+白白失去它们。
+
+> **已知限制（实测）**：上游 Omarchy 在 Hyprland 上用 `F9` 的"按下开始 / 松开结束"实现
+> 按住说话。**Niri 不支持按键释放绑定**——`F9 release { }` 会让 `niri validate` 直接解析
+> 报错——所以本项目只能做 toggle：按一次开始，再按一次结束。裸 `F9` 也没有被占用，
+> 它仍然是应用自己的功能键。
+
+栏上的状态控件空闲时不显示文字（自动收起），只在录音/转写时出现；状态从
+`$XDG_RUNTIME_DIR/voxtype/state` 读取，由 `voxtype` 自己维护。用 `cachyos-voxtype-remove`
+卸载时会先把 `~/.config/voxtype` 备份成带时间戳的目录，不会静默丢掉你调过的设备或采样率。
+
+### 主题同步
+
+DMS 换壁纸或切明暗后，把当前的**明暗模式**同步给各 agent，省得每次都要手动去各家设置里改：
+
+```bash
+cachyos-agent-theme-sync            # 同步一次（生成 Claude 自定义主题 + Hermes skin 并接线）
+cachyos-agent-theme-sync --status   # 只看当前模式与各 agent 状态，不写文件
+cachyos-agent-theme-sync --dry-run  # 只显示会改什么
+```
+
+- 数据源是 DMS 生成的 `~/.cache/DankMaterialShell/dms-colors.json`（里面直接带 `mode`）。
+- 已同步：**Claude Code** —— 写 `~/.claude/settings.json` 的 `theme`（`dark` / `light`），
+  只改这一个键，其余原样保留。
+- 未同步：**Codex**（`config.toml` 与 `codex --help` 都没有主题配置项，TUI 自行适配明暗）、
+  **OpenCode**（主题是内置名，名表无法在本机核实，写错会静默不生效）。两者都会被明确列出，
+  不会假装同步成功。
+- 触发方式：`cachyos-agent-theme.path` 盯着配色文件，DMS 每次重写它就同步一次；安装时也会
+  先同步一次。装好可用 `systemctl --user status cachyos-agent-theme.path` 查看。
+
+**为什么不做完整配色主题**：Claude Code 支持自定义主题文件，但它的 schema 无法在本机可靠
+核实（发行的是打包过的二进制，从中提取只会拿到 minified JS 的噪声）。本项目宁可少做，
+也不写一份"看起来对、实际不生效"的主题文件——这正是审核阶段反复出现的问题类型。
+同步做两件事：把 DMS 的 Material 3 调色板渲染成 **Claude Code 自定义主题**
+（`~/.claude/themes/cachyos.json`，键集取自 Omarchy 的 `claude.json.tpl`）与 **Hermes skin**
+（`~/.hermes/skins/cachyos.yaml`，装了 Hermes 才写），再把 `settings.json` 的 `theme` 指向它。
+渲染与校验都在 `assets/lib/agent_theme.py`：校验不过就完全不写、并且不改 `settings.json`——
+宁可不换主题，也不能让 agent 去读一个它认不出的文件。
+
+想补的话，只需要在 `bin/cachyos-agent-theme-sync` 的取值表里加一行。
+
+### 新增一个 agent
+
+旗标集中在一处：`assets/lib/agent.sh`。加一个 agent 需要同时改三处——该文件的
+`cachyos_agent_supported`/`cachyos_agent_name`/`cachyos_agent_command`
+（必要时还有 `cachyos_agent_skill_relpaths`）、`packages.sh` 里的包、以及
+`tests/agent-test.sh` 的断言。
+
+技能会链到**已存在**的 harness 目录（不替用户凭空创建目录）。但全新机器上 `.claude`/`.codex` 往往还不存在
+（CLI 装了、用户还没跑过），于是安装器与首次登录初始化都会带 `--create-supported`：只为**目录位置确定
+且该 CLI 已安装**的 agent（claude/codex）建目录再链接；opencode 的 `.agents/skills` 是"尽力而为"位置，
+不凭空创建。
+
+### AI 配置镜像（可选）
+
+装了 **CC Switch**（`~/.cc-switch/cc-switch.db` 存在）时，`cachyos-ai-config-sync` 会在
+Codex Desktop 与 CC Switch 之间生成一份**非敏感**配置镜像，避免两边的手工配置互相覆盖：
+
+```bash
+cachyos-ai-config-sync status   # 看当前镜像状态
+cachyos-ai-config-sync sync     # 重新生成镜像
+```
+
+| 读取 | 写入 |
+| --- | --- |
+| `~/.cc-switch/cc-switch.db`（仅非敏感路由字段） | `~/.config/codex-desktop/cc-switch-sync.json` |
+| `~/.codex/config.toml` | `~/.cc-switch/codex-desktop-sync.json` |
+| `~/.config/codex-desktop/settings.json` | `~/.local/state/cachyos-ai-config/`（状态与备份） |
+
+写入的两个镜像文件都会**过滤敏感键**：字段名匹配 `token`/`secret`/`password`/`cookie`/`auth`/
+`credential`/`api-key`/`private-key` 的键不会出现在镜像里。
+
+需要如实说明的是：`sync` 为了切换 Codex provider，会**改写 Codex 自己的 `~/.codex/auth.json`**
+（只更新其中的 provider 认证块）。改动前它会把 `cc-switch.db`、`codex-desktop/settings.json`、
+`~/.codex/config.toml` 和 `~/.codex/auth.json` **原样备份**到
+`~/.local/state/cachyos-ai-config/backup-*/`（目录权限 0700，用于回滚）。
+
+如果你不希望脚本碰 `~/.codex/auth.json`，就不要运行 `cachyos-ai-config-sync sync`；安装器只在
+`~/.cc-switch/cc-switch.db` 存在时才会调用它，不存在时跳过并提示。
+
+### 数据、隐私与网络
+
+本层**没有自己的服务端**，全部在本机完成。读取的内容：
+
+| 读取 | 用途 |
+| --- | --- |
+| `~/.claude/projects/**`（Claude Code 会话 JSONL） | 用量统计 |
+| `~/.codex/sessions/**`（Codex 会话） | 用量统计 |
+| `~/.dsh/sessions/**`（zstd 压缩的会话日志） | 用量统计 |
+| `~/.config/DankMaterialShell/dms-colors.json` | 主题同步 |
+| `~/.codex/auth.json`（只用于更新 provider 认证块） | 配置镜像 |
+| `systemd-coredump` 的记录 | 崩溃诊断 |
+
+写出的内容：
+
+| 写入 | 用途 |
+| --- | --- |
+| `~/.local/state/cachyos-desktop/agents/usage/*.json` | 各 agent 的用量记录与增量缓存 |
+| `~/.local/state/cachyos-desktop/agents/last-crash` | 最近一次崩溃（供 `cachyos-agent-crash` 读取） |
+| `~/.local/state/cachyos-desktop/agents/crash-muted.txt` | 崩溃静音名单 |
+| `~/.local/state/cachyos-desktop/post-login.log` | 首次登录初始化日志 |
+| `~/.claude/themes/cachyos.json`、`~/.hermes/skins/cachyos.yaml` | 主题产物 |
+| `~/.config/codex-desktop/cc-switch-sync.json`、`~/.cc-switch/codex-desktop-sync.json` | 配置镜像（敏感键已过滤） |
+| `~/.codex/auth.json` | 同步时更新 provider 认证块（改前备份） |
+| `~/.local/state/cachyos-ai-config/backup-*/` | 上述文件的回滚备份（0700，含 `auth.json` 原文件） |
+
+**唯一的联网行为**是查询 Claude 的限额：
+
+```text
+https://api.anthropic.com/api/oauth/usage
+```
+
+它复用本机已有的 Claude Code OAuth 凭据做只读查询（失败不影响本地统计），Codex 与 DSH 的采集
+完全不联网。可选的本地听写会在你执行 `cachyos-voxtype-model` 时下载语音模型。
+
+用量采集的语义边界值得记一笔，因为各家 agent 的字段定义不同：
+
+| agent | `inputTokens` 是否含缓存读取 | 费用 |
+| --- | --- | --- |
+| Claude Code | **不含**（缓存读取单列） | 本机记录的价格 |
+| DSH | **不含**（缓存读取单列） | 可为 DSH 单独配置价格，未配置时只显示 token |
+| Codex | **含** | 本机记录的价格 |
+| OpenCode | 仅有本机统计，无跨设备汇总 | — |
+
+合计与计费会按各自语义分别处理，不会把缓存读取重复计入。
+
+### 故障排查
+
+| 现象 | 可能原因 | 处理 |
+| --- | --- | --- |
+| 状态栏显示 `—` | 该 agent 还没有本地记录 | 用一次 agent 后等定时器（登录后 2 分钟、之后每 15 分钟），或手动 `cachyos-agent-usage-update --force` |
+| 面板里没有我在用的 agent | 面板只登记 `claude`/`codex`/`opencode`/`dsh` | 见下一节「新增一个 agent」 |
+| `Super+\`` 每次都弹选择器 | 没设默认 agent，或记录里的名字已失效 | `cachyos-default-agent codex` |
+| agent 里没有 `cachyos` 技能 | 对应 harness 目录首次运行才生成 | `cachyos-agent-skills --create-supported` |
+| 崩溃没有通知 | 总开关关闭 / 程序在静音名单 / 还在去重窗口内 | `cachyos-toggle-crash-capture on`、`cachyos-crash-mute <程序名> off` |
+| 明暗切换后 agent 主题没变 | `theme.path` 单元未启用，或配色文件缺失 | `systemctl --user status cachyos-agent-theme.path`、`cachyos-agent-theme-sync --status` |
+| 没有 `cachyos-voxtype-*` 命令 | 听写是可选组件，未安装 | `cachyos-voxtype-install` |
+
+### AI 命令速查
+
+| 命令 | 作用 |
+| --- | --- |
+| `cachyos-agent [<agent>]` | 启动默认或指定 agent；`--inline` 当前终端、`--pick` 重选、`--list` 列出、`--validate <id>` 校验 |
+| `cachyos-agent-prompt [--inline] <prompt...>` | 带一段 prompt 启动默认 agent |
+| `cachyos-default-agent [<agent>]` | 查看或设置默认 agent |
+| `cachyos-agent-skills [--quiet] [--harness <agent>] [--create-supported]` | 建立技能软链 |
+| `cachyos-agent-usage-update [--force] [--limits-only] [--except <agent>] [agent...]` | 重算用量（`--limits-only` 只刷限额） |
+| `cachyos-agent-usage-claude` / `-codex` / `-dsh` | 单个采集器，支持 `--force`、`--limits-only` |
+| `cachyos-crash-watch` | 崩溃监听（由 systemd 用户单元拉起，一般不用手跑） |
+| `cachyos-agent-crash <pid> [comm] [exe] [signal]` | 把一次崩溃交给 agent 分析 |
+| `cachyos-crash-mute [<program>] [off]` | 静音某个程序，或取消静音 |
+| `cachyos-toggle-crash-capture [toggle\|off\|on]` | 崩溃捕捉总开关 |
+| `cachyos-agent-theme-sync [--dry-run] [--quiet] [--status]` | 同步明暗与完整配色 |
+| `cachyos-ai-config-sync status\|sync` | 查看或重建 AI 配置镜像 |
+| `cachyos-voxtype-install` / `-model` / `-config` / `-status` / `-toggle` / `-remove` | 本地听写（见上一节） |
 
 ## 锁屏与电源
 
