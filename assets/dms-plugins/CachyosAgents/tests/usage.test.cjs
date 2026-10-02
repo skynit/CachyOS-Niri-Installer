@@ -118,6 +118,30 @@ test('没有数据时状态条是占位符，全部隐藏时才为空', () => {
     assert.equal(usage.barText([], noneShown), '');
 });
 
+
+test('状态栏可以只统计某一个 agent', () => {
+    // 注意 overrides 只在顶层生效，所以要改 stats 里的东西必须整块替换（第一次就踩了）。
+    function withToday(id, today) {
+        const base = record();
+        return Object.assign({}, base, {
+            id,
+            stats: Object.assign({}, base.stats, {
+                todayTotalTokens: today,
+                recentDays: days([['2026-10-01', today, 0], ['2026-10-02', today, 0]])
+            })
+        });
+    }
+    const both = [withToday('claude', 1000), withToday('dsh', 777)];
+
+    // 默认（auto）把有数据的 agent 合计起来
+    assert.equal(usage.barText(both, { displayMode: 'bare', barAgent: 'auto' }), '1.8K');
+    // 钉在 DSH 上时只算 DSH——合计时单个 agent 的份额是看不出来的
+    assert.equal(usage.barText(both, { displayMode: 'bare', barAgent: 'dsh' }), '777');
+    assert.equal(usage.barText(both, { displayMode: 'bare', barAgent: 'claude' }), '1.0K');
+    // 钉到一个没有数据的 agent：占位符，不能显示 0
+    assert.equal(usage.barText(both, { displayMode: 'bare', barAgent: 'opencode' }), '—');
+});
+
 test('week / total / bare 三种模式', () => {
     assert.equal(usage.barText([record()], { displayMode: 'week' }), '近 7 天 1.0K');
     // total 取 modelUsage 之和：1000 + 2000 + 500

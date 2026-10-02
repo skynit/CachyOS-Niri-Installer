@@ -237,7 +237,7 @@ pass '首次登录初始化阶段执行完毕（不因个别步骤失败而中�
 
 # 1) 命令装进了（假）系统 bin
 for command_name in cachyos-agent cachyos-agent-prompt cachyos-agent-skills cachyos-default-agent \
-                    cachyos-agent-usage-claude cachyos-agent-usage-codex cachyos-agent-usage-fireworks \
+                    cachyos-agent-usage-claude cachyos-agent-usage-codex cachyos-agent-usage-dsh \
                     cachyos-agent-usage-update cachyos-agent-theme-sync cachyos-crash-watch \
                     cachyos-crash-mute cachyos-toggle-crash-capture cachyos-voxtype-install; do
     assert_file "$FAKE_ROOT/usr/local/bin/$command_name" "装出命令 $command_name"

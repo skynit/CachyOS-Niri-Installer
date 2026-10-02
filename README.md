@@ -399,34 +399,38 @@ cachyos-crash-mute SomeApp off      # 恢复提醒
 
 安装器会装上 DMS 面板插件 **CachyOS Agents 用量**：**状态栏只显示 token 用量**（没有图标、
 没有金额），点开是每个 agent 的明细（今天/累计的 token 与费用、会话与提示数、按费用排序的
-模型、最近 7 天的**折线图**）。
+模型、最近 7 天的**折线图**）。默认登记 Claude Code、Codex、OpenCode 与 **DSH（DeepSeek Harness）**，
+每个都能在插件设置里单独关掉。
 
 ```bash
-cachyos-agent-usage-update            # 重新采集（面板每 15 分钟也会自己调一次）
-cachyos-agent-usage-update claude     # 只跑某一个采集器
-cachyos-agent-usage-claude            # 采集器直接输出一条 JSON 记录
-```
-cachyos-agent-usage-update            # 刷新所有 agent 的用量记录（定时器每 15 分钟跑一次）
-```
-
-安装时会**先算一次**，并启用 `cachyos-agent-usage.timer`（登录后 2 分钟 + 此后每 15 分钟，`Persistent=true`
-所以关机期间错过的刷新会在开机后补上）。没有这个定时器，面板只会停在安装那一刻的数字。
-
-```bash
+cachyos-agent-usage-update            # 刷新所有 agent 的用量记录（面板每 15 分钟自己调一次）
+cachyos-agent-usage-update claude     # 只跑某一个 agent
+cachyos-agent-usage-update --limits-only   # 只刷新限额，不动本地统计
 cachyos-agent-usage-claude            # 每个 agent 一个采集器，各自输出一条 JSON 记录
-cachyos-agent-usage-fireworks         # 需要 FIREWORKS_API_KEY（或 firectl / opencode 登录）
+cachyos-agent-usage-codex
+cachyos-agent-usage-dsh
 ```
+
+安装时会**先算一次**，并启用 `cachyos-agent-usage.timer`（登录后 2 分钟 + 此后每 15 分钟，
+`Persistent=true`，所以关机期间错过的刷新会在开机后补上）。没有这个定时器，面板只会停在
+安装那一刻的数字。
 
 数据链路：采集器 → `~/.local/state/cachyos-desktop/agents/usage/<agent>.json` → 面板读取。
 面板只读目录；加一个 agent 需要两处：加一个采集器，并把它登记进面板的 agent 表
 （`Usage.js` 顶部的 `agents` 数组——`summarise()` 只遍历那张表，只加 JSON 文件不会显示）。
 
-- 全部在本机取数：Claude 读 `~/.claude/projects/**` 的会话转录，Codex 读
-  `~/.codex/sessions/**` 的 rollout。不联网。
+> **DSH 的金额**：它的事件流里没有花费，cc-switch 的定价库里也没有 deepseek 条目，所以 DSH
+> 默认只统计 token。想看到金额就在 `~/.config/cachyos-desktop/agents/dsh.json` 里给单价
+> （美元/百万 token）：`{"pricing": {"deepseek-v4-flash": {"input": 0.28, "output": 1.1, "cacheRead": 0.028}}}`。
+
+- 全部在本机取数，**不联网**：Claude 读 `~/.claude/projects/**` 的转录，Codex 读
+  `~/.codex/sessions/**` 的 rollout，DSH 读 `~/.dsh/sessions/**` 下 zstd 压缩的事件流
+  （v4/v2/v0 三种格式都兼容；提示数只认 `source.kind == "user"`，合成条目不算）。
 - **费用**取自 cc-switch 的 `model_pricing` 表（装了 cc-switch 才有）；没有定价时只显示
   token，未定价的模型会标注「未定价」。
-- **token 语义按各家对齐**：Claude 的 `input_tokens` 不含缓存，Codex 的已含缓存。记录里用
-  `inputTokenSemantics` 标明，总量与费用都据此拆分，避免缓存被重复计算。
+- **token 语义按各家对齐**：Claude 与 DSH 的 input 都**不含**缓存读，Codex 的已含缓存。记录里用
+  `inputTokenSemantics` 标明，总量与费用都据此拆分，避免缓存被重复计算。DSH 的 `reasoningTokens`
+  已含在 `outputTokens` 里，不会被再加一遍。
 - **缓存按源文件 `(mtime, size)` 增量**，并带 `CACHE_VERSION`：解析逻辑一变缓存整体作废，
   否则会出现"代码修好了、屏幕上的数字还是旧的"。
 - 缺数据显示「未采集 / 无数据」，绝不把没采到渲染成 0；今天没有用量时回落到最近有数据的
@@ -678,11 +682,12 @@ cachyos-agent --list        # 确认三个 agent 的安装状态
 - `tests/usage-test.sh` —— 用量采集：同日多条用量必须累加、缓存与全量结果一致、
   缓存版本失配要作废、两种 input 语义下的计费。
 - `tests/dms-plugin-test.sh` —— 状态栏接线：只增不覆盖、幂等、尊重用户关掉的插件开关。
+- `tests/dsh-usage-test.sh` —— DSH 采集器：v4/v0 两种事件格式、token 语义（input 不含缓存读、
+  reasoning 不重复计）、只认 `source.kind == "user"` 的提示，以及**命中缓存与全量重扫一致**
+  （包含"只有会话元数据、没有任何用量"的文件——这里曾经丢过会话数）。
 - `tests/fresh-install-test.sh` —— **全新安装彩排**：把 `install.sh` 真跑一遍（临时 HOME + 假系统根），
   然后逐项断言 AI 系统是否完整（命令、资产、单元、插件、状态栏、niri 接线、技能链接）。这才是
   "任何人跑一遍就能用"的证据，`--dry-run` 给不了。
-- `tests/fireworks-test.sh` —— Fireworks 采集器对着本地 stub API 跑真实 HTTP 往返（翻页、模型归属、
-  余额估算、无凭据降级）。
 - `tests/agent-theme-test.sh` —— 主题同步生成 Claude 自定义主题与 Hermes skin，并校验格式与幂等。
 - `tests/voxtype-test.sh` —— 听写状态机、未安装时的提示、快捷键文件的写入与卸载、配置备份。
 - `tests/hardware-test.sh` —— CPU/GPU 检测与包选择。
@@ -736,7 +741,6 @@ AI Agent 这一层是**借鉴 [Omarchy](https://omarchy.org/) 的设计**做的�
 | 470 个命令的 CLI 路由器（元数据头 + 最长前缀匹配） | 显式 `cachyos-*` 命令 + `verify.sh` 遍历 | 48 个命令用不上路由层 |
 | mise stub 按需安装 agent | 用 pacman / AUR 安装 | 不引入第二套包管理器 |
 | `omarchy-shell` 的 QML 插件 | DMS 插件（`plugin.json`） | 宿主不同，插件 API 完全不同 |
-| `omarchy-agent-usage-fireworks` | `cachyos-agent-usage-fireworks` | 同一套 Fireworks 计费 API；本机的 HTTP 链路用 stub 服务器验证过 |
 | `omarchy-theme-set-hermes` | `cachyos-agent-theme-sync` 的 Hermes 分支 | skin 格式相同（`name`/`description`/`colors` 44 键），配色来自 DMS 而不是静态主题 |
 | `omarchy-toggle-crash-capture` | `cachyos-toggle-crash-capture` | 同样用"标记文件 + 单元条件"实现跨登录关闭 |
 | 用 `--exec` 绕开"shell 不回发 ActionInvoked" | 直接用 `notify-send -A -w` | 在本项目实测 DMS（quickshell）**会**回发 `ActionInvoked`，不需要绕 |

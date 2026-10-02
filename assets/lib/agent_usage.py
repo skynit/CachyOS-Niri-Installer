@@ -124,7 +124,18 @@ def total_tokens(counters: dict[str, int], input_includes_cache: bool = False) -
 
 
 def parse_timestamp(value: Any) -> dt.datetime | None:
-    """解析 ISO8601（允许结尾 Z）。失败返回 None，绝不抛异常。"""
+    """解析 ISO8601（允许结尾 Z）或 epoch 数字。失败返回 None，绝不抛异常。"""
+    # DSH 的事件时间是 epoch 毫秒整数。不认数字的话，它的用量会全部被丢掉
+    # （local_date 返回空串，调用方只能跳过）。
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        seconds = float(value)
+        # 1e11 秒 ≈ 公元 5138 年，所以大于它只能是毫秒。
+        if seconds > 100_000_000_000:
+            seconds /= 1000.0
+        try:
+            return dt.datetime.fromtimestamp(seconds, tz=dt.timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
     if not isinstance(value, str) or not value:
         return None
     text = value[:-1] + "+00:00" if value.endswith("Z") else value

@@ -1,0 +1,338 @@
+#!/usr/bin/env python3
+"""采集 DSH（DeepSeek Harness）本机用量，输出一条 display-ready JSON 记录。
+
+数据源：`~/.dsh/sessions/<工作区>/<会话 id>/session*.jsonl.zstd`
+（zstd 压缩的事件流；本机同时存在 v4 / v2 / v0 三种格式，都要能读）。
+
+用量在每条 `assistant/message` 事件的 `data.usage` 里：
+  - v4 / v2: `{inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, totalTokens}`
+  - v0:      `{inputTokens, outputTokens, cacheReadTokens, reasoningTokens}`
+
+语义是**从真实数据判定**的，不是照抄别人的假设：
+
+  * `totalTokens == inputTokens + outputTokens + cacheReadTokens`（839/840 条事件成立）
+    ⇒ `inputTokens` **不含**缓存读，因此标 `exclusive`，总额要单独加缓存读。
+  * `reasoningTokens` **已含在** `outputTokens` 里（90 条事件里 `reasoning > output` 出现 0 次），
+    所以绝不能把它再加一遍。
+
+提示数只认 `user/message` 且 `data.source.kind == "user"`：同一批事件里还混着
+`<system-reminder>`、"Current runtime context" 这类合成条目，用 `source.kind` 区分比猜文本可靠。
+
+成本：DSH 不记录花费，cc-switch 的定价库里也没有 deepseek 条目，所以**默认只统计 token**。
+要金额就在 `~/.config/cachyos-desktop/agents/dsh.json` 里给单价（每百万 token），例如：
+  {"pricing": {"deepseek-v4-flash": {"input": 0.28, "output": 1.1, "cacheRead": 0.028}}}
+
+读取用会话文件（mtime, size）做缓存键：会话是**只追加**的，所以文件一变就重算那一个文件，
+没变就直接用缓存里的按日结果。DSH 正在写的会话文件尾部可能是半截 zstd，解码报错时**不写缓存**，
+下次运行重试——宁可多算一次，也不能把残缺结果固化下来。
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any, Iterator
+
+AGENT_ID = "dsh"
+AGENT_NAME = "DSH"
+
+# 模型名的候选位置，按可信度排序（v4 在 message.source.model，v0 可能只有 message.model）。
+MODEL_PATHS: tuple[tuple[str, ...], ...] = (
+    ("message", "source", "model"),
+    ("message", "source", "replayState", "response", "model"),
+    ("message", "model"),
+    ("model",),
+    ("header", "config", "model"),
+)
+
+
+def lib_dir() -> Path:
+    sibling = Path(__file__).resolve().parent.parent / "assets" / "lib"
+    if (sibling / "agent_usage.py").is_file():
+        return sibling
+    share = os.environ.get("CACHYOS_DESKTOP_SHARE_DIR") or "/usr/local/share/cachyos-desktop"
+    return Path(share) / "assets" / "lib"
+
+
+sys.path.insert(0, str(lib_dir()))
+import agent_usage as au  # noqa: E402
+
+
+def dsh_home() -> Path:
+    return Path(os.environ.get("DSH_HOME") or (Path.home() / ".dsh")).expanduser()
+
+
+def config_dir() -> Path:
+    return Path(os.environ.get("CACHYOS_DESKTOP_CONFIG_DIR") or (Path.home() / ".config" / "cachyos-desktop"))
+
+
+def custom_pricing() -> dict[str, dict[str, float]]:
+    """用户在 agents/dsh.json 里给的单价（每百万 token）。缺省为空=不估算金额。"""
+    path = config_dir() / "agents" / "dsh.json"
+    try:
+        with path.open(encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    table = data.get("pricing")
+    if not isinstance(table, dict):
+        return {}
+    result: dict[str, dict[str, float]] = {}
+    for model, entry in table.items():
+        if not isinstance(entry, dict):
+            continue
+        prices: dict[str, float] = {}
+        for key in ("input", "output", "cacheRead", "cacheCreation"):
+            try:
+                prices[key] = float(entry.get(key) or 0)
+            except (TypeError, ValueError):
+                prices[key] = 0.0
+        result[str(model).lower()] = prices
+    return result
+
+
+def model_from(data: dict[str, Any]) -> str:
+    for path in MODEL_PATHS:
+        node: Any = data
+        for key in path:
+            if not isinstance(node, dict):
+                node = None
+                break
+            node = node.get(key)
+        if isinstance(node, str) and node:
+            return node
+    return ""
+
+
+def counters_from(usage: dict[str, Any]) -> dict[str, int]:
+    """两种格式统一成同一组计数。缺的字段一律当 0。"""
+    return {
+        "inputTokens": au.as_int(usage.get("inputTokens")),
+        "outputTokens": au.as_int(usage.get("outputTokens")),
+        "cacheReadInputTokens": au.as_int(usage.get("cacheReadTokens")),
+        # v4 的 cacheWriteTokens；v0 没有这个字段（也就没有缓存写）。
+        "cacheCreationInputTokens": au.as_int(usage.get("cacheWriteTokens")),
+    }
+
+
+def iter_events(path: Path, status: dict[str, bool]) -> Iterator[Any]:
+    """解压并逐行产出事件。优先用 zstd 命令（流式）；没有就退回 Python 模块。
+
+    解码失败（例如正在写入的半截文件）会把 `status["ok"]` 置为 False，调用方据此不写缓存。
+    """
+    # 首选 zstd CLI：流式、不把 5MB+ 的解压结果一次性放进内存。
+    try:
+        process = subprocess.Popen(
+            ["zstd", "-dc", str(path)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        process = None
+
+    if process is not None and process.stdout is not None:
+        try:
+            for raw in process.stdout:
+                try:
+                    yield json.loads(raw.decode("utf-8", "replace"))
+                except ValueError:
+                    continue
+        finally:
+            process.stdout.close()
+            if process.wait() != 0:
+                status["ok"] = False
+        return
+
+    try:
+        import zstandard  # type: ignore[import-not-found]
+    except ImportError:
+        status["ok"] = False
+        return
+
+    try:
+        with path.open("rb") as handle, zstandard.ZstdDecompressor().stream_reader(handle) as reader:
+            for raw in reader:
+                try:
+                    yield json.loads(raw.decode("utf-8", "replace"))
+                except ValueError:
+                    continue
+    except Exception:  # noqa: BLE001 - 解压库抛的异常类型不稳定，一律视为"读失败"
+        status["ok"] = False
+
+
+def scan_sessions(cache: dict[str, Any]) -> tuple[dict[str, Any], dict[str, dict[str, int]], set[str], int]:
+    """增量扫描会话目录，返回 (per_day, model_usage, sessions, prompts)。"""
+    files = au.collect_files([dsh_home() / "sessions"], "session*.jsonl.zstd")
+    per_day: dict[str, Any] = {}
+    model_usage: dict[str, dict[str, int]] = {}
+    sessions: set[str] = set()
+    prompts = 0
+    known = cache.setdefault("files", {})
+    seen: dict[str, Any] = {}
+
+    for path in files:
+        stamp = au.file_stamp(path)
+        key = str(path)
+        if not stamp:
+            continue
+
+        cached = known.get(key)
+        if cached and cached.get("stamp") == stamp:
+            seen[key] = cached
+            # 会话登记必须来自文件级的 session 字段：只从 perDay 里取会漏掉"有会话但没有任何
+            # 用量事件"的文件（实测 44 个文件里 6 个如此，命中缓存时少算 4 个会话）。
+            if cached.get("session"):
+                sessions.add(cached["session"])
+            # 重放必须与解析分支同构：先按模型合并计数，再单独补一次当天的 prompt 数
+            # （prompt 按天计数，跟着每个模型加一遍会翻倍）。
+            for date, entry in (cached.get("perDay") or {}).items():
+                for model, counters in (entry.get("byModel") or {}).items():
+                    au.merge_day(per_day, date, counters, model)
+                day_prompts = au.as_int(entry.get("prompts", 0))
+                if day_prompts > 0:
+                    au.merge_day(per_day, date, au.empty_counters(), "", day_prompts, entry.get("session") or "")
+                if entry.get("session"):
+                    sessions.add(entry["session"])
+            for model, counters in (cached.get("models") or {}).items():
+                au.add_counters(model_usage.setdefault(model, au.empty_counters()), counters)
+            prompts += au.as_int(cached.get("prompts", 0))
+            continue
+
+        status = {"ok": True}
+        file_per_day: dict[str, Any] = {}
+        file_models: dict[str, dict[str, int]] = {}
+        file_prompts = 0
+        day_prompts: dict[str, int] = {}
+        # 会话 id 取目录名（session-<uuid>）最稳；文件里若有 id 则以其为准。
+        session_id = path.parent.name
+        last_model = ""
+
+        for event in iter_events(path, status):
+            if not isinstance(event, dict):
+                continue
+            kind = event.get("type")
+            data = event.get("data")
+            if kind == "session":
+                # 首行是会话元数据；id 在顶层。
+                candidate = event.get("id")
+                if isinstance(candidate, str) and candidate:
+                    session_id = candidate
+                continue
+            if not isinstance(data, dict):
+                continue
+
+            found = model_from(data)
+            if found:
+                last_model = found
+
+            usage = data.get("usage")
+            if isinstance(usage, dict):
+                counters = counters_from(usage)
+                date = au.local_date(event.get("time"))
+                if date and any(counters.values()):
+                    model = last_model or "unknown"
+                    day = file_per_day.setdefault(date, {"byModel": {}, "prompts": 0, "session": session_id})
+                    au.add_counters(day["byModel"].setdefault(model, au.empty_counters()), counters)
+                    au.merge_day(per_day, date, counters, model)
+                    au.add_counters(file_models.setdefault(model, au.empty_counters()), counters)
+
+            if kind == "user/message":
+                source = data.get("source")
+                # 只认 kind == "user"：合成条目（system-reminder、运行上下文）另有 kind。
+                if isinstance(source, dict) and source.get("kind") == "user":
+                    date = au.local_date(event.get("time"))
+                    if date:
+                        file_prompts += 1
+                        day_prompts[date] = day_prompts.get(date, 0) + 1
+
+        # 读失败多半是"当前会话正在被写入"的半截 zstd。**丢掉整份文件**会让刷新瞬间少算一大截
+        # （实测 prompts 149 → 123、今天用量 368M → 63M），而**固化残缺结果**更糟。
+        # 折中：把已经解出来的部分算进去，但不写缓存——下次运行会从头重扫，拿到完整值。
+        if status["ok"]:
+            seen[key] = {
+                "stamp": stamp,
+                "perDay": file_per_day,
+                "models": file_models,
+                "prompts": file_prompts,
+                "session": session_id,
+            }
+
+        if session_id:
+            sessions.add(session_id)
+
+        for date, count in day_prompts.items():
+            day = file_per_day.setdefault(date, {"byModel": {}, "prompts": 0, "session": session_id})
+            day["prompts"] = au.as_int(day.get("prompts")) + count
+            au.merge_day(per_day, date, au.empty_counters(), "", count, session_id)
+
+        prompts += file_prompts
+        for model, counters in file_models.items():
+            au.add_counters(model_usage.setdefault(model, au.empty_counters()), counters)
+
+    cache["files"] = seen
+    return per_day, model_usage, sessions, prompts
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="采集 DSH（DeepSeek Harness）用量")
+    parser.add_argument("--force", action="store_true", help="忽略缓存，全量重扫")
+    parser.add_argument("--limits-only", action="store_true", help="只取限额（DSH 没有限额端点）")
+    args = parser.parse_args()
+
+    cache = {"files": {}} if args.force else au.load_cache(AGENT_ID)
+
+    if args.limits_only:
+        per_day: dict[str, Any] = {}
+        model_usage: dict[str, dict[str, int]] = {}
+        sessions: set[str] = set()
+        prompts = 0
+    else:
+        per_day, model_usage, sessions, prompts = scan_sessions(cache)
+        au.finalise_sessions(per_day)
+
+    if not args.limits_only and not args.force:
+        au.save_cache(AGENT_ID, cache)
+
+    pricing = au.ccswitch_pricing()
+    pricing.update(custom_pricing())
+
+    status = ""
+    if not per_day:
+        if not (dsh_home() / "sessions").is_dir():
+            status = f"没有找到 DSH 会话目录：{dsh_home() / 'sessions'}"
+        else:
+            status = "DSH 会话目录里还没有可统计的用量"
+
+    record = {
+        "schemaVersion": au.SCHEMA_VERSION,
+        "id": AGENT_ID,
+        "name": AGENT_NAME,
+        "ready": bool(per_day),
+        "hasLocalStats": bool(per_day),
+        "tierLabel": "",
+        "limits": [],
+        "usageStatusText": status,
+        # DSH 的 inputTokens 不含缓存读（见文件头说明），所以是 exclusive。
+        "inputTokenSemantics": "exclusive",
+        "stats": au.build_stats(
+            per_day,
+            model_usage,
+            sessions,
+            prompts,
+            input_includes_cache=False,
+            pricing=pricing,
+        ),
+        "updatedAt": au.dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+    au.write_record(AGENT_ID, record)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

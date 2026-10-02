@@ -10,7 +10,7 @@ var agents = [
     { id: "claude", label: "Claude Code", short: "Claude", icon: "smart_toy" },
     { id: "codex", label: "Codex", short: "Codex", icon: "terminal" },
     { id: "opencode", label: "OpenCode", short: "OpenCode", icon: "code" },
-    { id: "fireworks", label: "Fireworks", short: "Fireworks", icon: "local_fire_department" }
+    { id: "dsh", label: "DSH", short: "DSH", icon: "memory" }
 ];
 
 var MODES = ["today", "week", "total", "bare"];
@@ -301,6 +301,14 @@ function rangeFor(rows, mode) {
 function barText(records, settings) {
     settings = settings || {};
     var rows = summarise(records, settings);
+    // 状态栏默认把所有已启用、有数据的 agent 合计成一个数；也可以钉在某个 agent 上
+    // （settings.barAgent != "auto"）——四个 agent 合计时，单个 agent 的份额是看不出来的。
+    var pinned = settings.barAgent;
+    if (typeof pinned === "string" && pinned !== "" && pinned !== "auto") {
+        rows = rows.filter(function (row) {
+            return row.id === pinned;
+        });
+    }
     var withData = rows.filter(function (row) {
         return row.state !== "waiting";
     });

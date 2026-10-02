@@ -28,11 +28,30 @@ PluginSettings {
         defaultValue: true
     }
 
+    ToggleSetting {
+        settingKey: "show_dsh"
+        label: "DSH（DeepSeek Harness）"
+        defaultValue: true
+    }
+
     StyledText {
         text: "状态条显示"
         font.pixelSize: 16
         font.weight: Font.DemiBold
     }
+    SelectionSetting {
+        settingKey: "barAgent"
+        label: "状态栏统计范围"
+        defaultValue: "auto"
+        options: [
+            { label: "全部 agent 合计", value: "auto" },
+            { label: "只看 Claude Code", value: "claude" },
+            { label: "只看 Codex", value: "codex" },
+            { label: "只看 OpenCode", value: "opencode" },
+            { label: "只看 DSH", value: "dsh" }
+        ]
+    }
+
     SelectionSetting {
         settingKey: "displayMode"
         label: "状态栏显示"
