@@ -90,20 +90,22 @@ test('按设置隐藏 agent', () => {
     assert.ok(!rows.some(row => row.id === 'claude'), '被隐藏的 agent 不应出现');
 });
 
-test('状态栏只显示 token，不显示价格', () => {
+test('状态栏默认只显示数字：不带日期、不带价格', () => {
     const text = usage.barText([record()], {});
-    assert.equal(text, '今天 500');
+    assert.equal(text, '500');
     assert.ok(!text.includes('$'), '状态栏文字里不应出现金额');
 });
 
-test('今天为 0 时回落到最近有数据的一天，并标出日期', () => {
+test('今天为 0 时回落到最近有数据的一天（today 模式仍会标日期）', () => {
     const stale = record({
         stats: Object.assign(record().stats, {
             recentDays: days([['2026-09-22', 12_000_000, 73.5], ['2026-09-23', 0, 0]])
         })
     });
-    const text = usage.barText([stale], {});
-    assert.equal(text, '09-22 12.0M');
+    // 默认（bare）：只给数字，但数字必须来自回落后那一天
+    assert.equal(usage.barText([stale], {}), '12.0M');
+    // 显式选 today：保留日期前缀
+    assert.equal(usage.barText([stale], { displayMode: 'today' }), '09-22 12.0M');
 });
 
 test('没有数据时状态条是占位符，全部隐藏时才为空', () => {
@@ -277,12 +279,12 @@ test('hasRecord 区分"没记录"与"有记录但无数据"', () => {
     assert.equal(withoutRecord.state, 'waiting');
 });
 
-test('已删除的旧 displayMode 值会安全回落到 today', () => {
+test('已删除的旧 displayMode 值会安全回落到 bare', () => {
     // 升级路径：老版本的设置里可能存着 "icon"（只显示图标）。它已不再是合法模式，
     // 但绝不能因此让状态栏空掉或显示异常内容。
-    assert.equal(usage.barText([record()], { displayMode: 'icon' }), '今天 500');
-    assert.equal(usage.barText([record()], { displayMode: '' }), '今天 500');
-    assert.equal(usage.barText([record()], {}), '今天 500');
+    assert.equal(usage.barText([record()], { displayMode: 'icon' }), '500');
+    assert.equal(usage.barText([record()], { displayMode: '' }), '500');
+    assert.equal(usage.barText([record()], {}), '500');
 });
 
 test('折线图接受 QML 传来的"数组样"对象（V4Sequence）', () => {

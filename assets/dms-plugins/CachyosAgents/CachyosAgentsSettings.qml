@@ -55,12 +55,12 @@ PluginSettings {
     SelectionSetting {
         settingKey: "displayMode"
         label: "状态栏显示"
-        defaultValue: "today"
+        defaultValue: "bare"
         options: [
+            { label: "只显示数字（默认，不带日期）", value: "bare" },
             { label: "今天（无数据时显示最近一天）", value: "today" },
             { label: "近 7 天", value: "week" },
-            { label: "累计 token", value: "total" },
-            { label: "只显示数字（不带日期）", value: "bare" }
+            { label: "累计 token", value: "total" }
         ]
     }
     SelectionSetting {

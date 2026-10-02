@@ -315,7 +315,10 @@ function barText(records, settings) {
     if (withData.length === 0)
         return rows.length > 0 ? "—" : "";
 
-    var mode = MODES.indexOf(settings.displayMode) >= 0 ? settings.displayMode : "today";
+    // 默认就是"只显示数字"：状态栏是给一眼扫过的地方，"今天/近 7 天"这种前缀交给弹窗
+    // 和 tooltip 说。老设置里存的非法值（例如已删除的 "icon"）也回落到 bare，
+    // 绝不能因此让状态栏空掉或显示异常内容。
+    var mode = MODES.indexOf(settings.displayMode) >= 0 ? settings.displayMode : "bare";
     var range = rangeFor(withData, mode === "bare" ? "today" : mode);
 
     // 没有任何真实数据就显示占位符：绝不出现"累计 0"这种伪造出来的数字。
