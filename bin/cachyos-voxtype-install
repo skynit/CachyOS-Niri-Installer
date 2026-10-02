@@ -11,6 +11,54 @@ set -Eeuo pipefail
 readonly SCRIPT_NAME="${0##*/}"
 readonly SHARE_DIR="${CACHYOS_DESKTOP_SHARE_DIR:-/usr/local/share/cachyos-desktop}"
 
+# 上游默认模型是**英文专用**的 base.en：中文会输出一段乱码拼音（实测）。
+# 所以把模型/语言/提示词做成安装参数，并在结束后按实际配置给出提示。
+MODEL=""
+LANGUAGE=""
+INITIAL_PROMPT=""
+
+usage() {
+    cat <<EOF
+用法: $SCRIPT_NAME [选项]
+  --model <名称>      设置 Whisper 模型（small、medium、large-v3-turbo …）
+  --language <代码>   设置语言（zh、en、ja …；auto 为自动检测）
+  --prompt <文本>     设置 initial_prompt（用简体中文提示词可让中文输出简体）
+  -h, --help          显示本帮助
+
+中文听写示例：
+  $SCRIPT_NAME --model small --language zh \\
+      --prompt '以下是普通话的句子，请使用简体中文。'
+EOF
+}
+
+parse_args() {
+    while (($# > 0)); do
+        case "$1" in
+            --model | --language | --prompt)
+                if [[ -z ${2:-} ]]; then
+                    printf '%s: %s 需要参数\n' "$SCRIPT_NAME" "$1" >&2
+                    exit 1
+                fi
+                case "$1" in
+                    --model) MODEL="$2" ;;
+                    --language) LANGUAGE="$2" ;;
+                    --prompt) INITIAL_PROMPT="$2" ;;
+                esac
+                shift 2
+                ;;
+            -h | --help)
+                usage
+                exit 0
+                ;;
+            *)
+                printf '%s: 未知参数 %s\n' "$SCRIPT_NAME" "$1" >&2
+                usage >&2
+                exit 1
+                ;;
+        esac
+    done
+}
+
 notify() {
     if command -v dms >/dev/null 2>&1; then
         dms notify "$1" >/dev/null 2>&1 || true
@@ -18,6 +66,9 @@ notify() {
         notify-send "本地听写" "$1" 2>/dev/null || true
     fi
 }
+
+# 先解析参数：这样 --help 在没有终端时也能用，且重开终端时原样带上参数。
+parse_args "$@"
 
 if [[ ! -t 0 || ! -t 1 ]]; then
     if [[ "${CACHYOS_VOXTYPE_TERMINAL:-0}" != 1 ]]; then
@@ -50,12 +101,27 @@ else
     install -m 0644 "$SHARE_DIR/assets/voxtype/config.toml" "$HOME/.config/voxtype/config.toml"
 fi
 
-printf '下载语音模型（约 150MB）…\n'
+# **顺序很重要**：`voxtype setup --download` 下载的是**配置里**指定的模型，
+# 先下载再改模型就会拿到默认的英文模型（原来的写法就是这个坑）。
+if [[ -n $MODEL ]]; then
+    voxtype config set whisper.model "$MODEL" >/dev/null
+fi
+if [[ -n $LANGUAGE ]]; then
+    voxtype config set whisper.language "$LANGUAGE" >/dev/null
+fi
+if [[ -n $INITIAL_PROMPT ]]; then
+    voxtype config set whisper.initial_prompt "$INITIAL_PROMPT" >/dev/null
+fi
+
+printf '下载语音模型（默认约 150MB；多语言模型更大）…\n'
 voxtype setup --download --no-post-install
 
-# GPU 加速：有 DRM 渲染节点就试着打开，失败只是回落到 CPU，不影响功能。
+# GPU 加速：切换变体会**替换 /usr/bin/voxtype**，必须 sudo。
+# 不加 sudo 时 `setup gpu --enable` 只会报 permission denied，然后静默留在 CPU 上（实测）。
 if compgen -G '/dev/dri/renderD*' >/dev/null; then
-    voxtype setup gpu --enable || printf 'GPU 加速未启用，继续用 CPU 推理。\n' >&2
+    if ! sudo voxtype setup gpu --enable; then
+        printf 'GPU 加速未启用，继续用 CPU 推理。\n' >&2
+    fi
 else
     printf '没有可用的 GPU 渲染节点，使用 CPU 推理。\n'
 fi
@@ -67,6 +133,21 @@ voxtype setup systemd
 install -m 0644 "$SHARE_DIR/assets/niri/cachyos-voxtype.kdl" "$HOME/.config/niri/cachyos-voxtype.kdl"
 if command -v niri >/dev/null 2>&1; then
     niri msg action reload-config >/dev/null 2>&1 || true
+fi
+
+# 模型/语言/提示词都是启动时读取的，改过就重启一次，免得"改了没生效"。
+if [[ -n $MODEL || -n $LANGUAGE || -n $INITIAL_PROMPT ]]; then
+    systemctl --user restart voxtype.service >/dev/null 2>&1 || true
+fi
+
+# 英文专用模型（*.en）不能听写中文：装完直接把命令打出来，而不是让人对着乱码猜。
+active_model="$(voxtype config get whisper.model 2>/dev/null || true)"
+if [[ $active_model == *".en"* ]]; then
+    printf '\n提示：当前模型 %s 只支持英文，中文会被转成乱码拼音。听写中文请执行：\n' "$active_model"
+    printf '  cachyos-voxtype-model small    # 多语言模型，约 466MB\n'
+    printf '  voxtype config set whisper.language zh\n'
+    printf "  voxtype config set whisper.initial_prompt '以下是普通话的句子，请使用简体中文。'\n"
+    printf '  systemctl --user restart voxtype\n'
 fi
 
 printf '本地听写已就绪：按 Super+Ctrl+X（或 Super+F9）开始/结束。\n'

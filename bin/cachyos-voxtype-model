@@ -1,12 +1,49 @@
 #!/usr/bin/env bash
 
-# 打开语音模型管理界面（换模型、重新下载）。
+# 语音模型：换模型、重新下载。
+#
+# 不带参数时打开上游的交互式选择界面（TUI）；带模型名时非交互完成——
+# 中文用户照文档执行 `cachyos-voxtype-model small` 即可，不必进 TUI 找菜单。
 
 set -Eeuo pipefail
+
+readonly SCRIPT_NAME="${0##*/}"
+
+usage() {
+    cat <<EOF
+用法: $SCRIPT_NAME [<模型名>]
+  <模型名>      直接切换并下载该模型（如 small、medium、large-v3-turbo）
+  -h, --help    显示本帮助
+
+不带参数时打开交互式界面（voxtype setup model）。
+EOF
+}
 
 command -v voxtype >/dev/null 2>&1 || {
     printf '本地听写未安装。先运行 cachyos-voxtype-install。\n' >&2
     exit 1
 }
+
+if (($# > 0)); then
+    case "$1" in
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        -*)
+            printf '%s: 未知参数 %s\n' "$SCRIPT_NAME" "$1" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+
+    model="$1"
+    voxtype config set whisper.model "$model"
+    # 下载的是配置里指定的模型，所以上面必须先落盘。
+    voxtype setup --download --no-post-install
+    systemctl --user restart voxtype.service >/dev/null 2>&1 || true
+    printf '已切换到模型 %s 并重启 voxtype。\n' "$model"
+    exit 0
+fi
 
 exec kitty --class cachyos-voxtype --title "Voxtype 语音模型" -e voxtype setup model

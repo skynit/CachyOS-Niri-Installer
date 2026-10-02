@@ -696,17 +696,50 @@ cachyos-agent-usage-dsh
 
 ### 本地听写（可选）
 
-基于 [Voxtype](https://github.com/peteonrails/voxtype)，本地 Whisper 推理，不上传音频。
-**刻意不装进默认安装**：语音模型约 150MB，听写也不是所有人的需求。
+基于 [Voxtype](https://github.com/peteonrails/voxtype) 1.1.0，本地推理，**不上传音频**。
+**刻意不装进默认安装**：语音模型体积不小（英文 142MB，多语言 466MB），听写也不是所有人的需求。
 
 ```bash
-cachyos-voxtype-install    # 装 voxtype-bin + wtype、下载模型、按需开 GPU、写好快捷键
-cachyos-voxtype-toggle     # 开始/结束听写（快捷键绑的就是它）
-cachyos-voxtype-config     # 打开 voxtype 的交互式配置
-cachyos-voxtype-model      # 换模型 / 重新下载
-cachyos-voxtype-status     # 输出 Waybar 的 JSON 状态（栏上那个"听写中"）
-cachyos-voxtype-remove     # 卸载：删快捷键、备份配置、移除模型
+cachyos-voxtype-install              # 装 voxtype-bin + wtype、下载模型、按需开 GPU、写好快捷键
+cachyos-voxtype-install --model small --language zh \
+    --prompt '以下是普通话的句子，请使用简体中文。'   # 一步装成中文听写
+cachyos-voxtype-toggle               # 开始/结束听写（快捷键绑的就是它）
+cachyos-voxtype-config               # 打开 voxtype 的交互式配置
+cachyos-voxtype-model                # 交互式换模型
+cachyos-voxtype-model medium         # 非交互切换到指定模型
+cachyos-voxtype-status               # 输出 Waybar 的 JSON 状态（栏上那个"听写中"）
+cachyos-voxtype-remove               # 卸载：删快捷键、备份配置、移除模型
 ```
+
+**中文听写必须换模型。** 上游默认模型是英文专用的 `base.en`，同一段中文会输出成
+`Quinti en tiene chie poutz…` 这样的乱码拼音。`--model` / `--language` / `--prompt`
+三个参数就是为这件事准备的（顺序上安装命令会**先写配置再下载**，否则下的还是英文模型）：
+
+```bash
+cachyos-voxtype-model small                      # 多语言模型，约 466MB
+voxtype config set whisper.language zh           # 明确指定中文，比 auto 更稳
+voxtype config set whisper.initial_prompt '以下是普通话的句子，请使用简体中文。'
+systemctl --user restart voxtype
+```
+
+最后那条 `initial_prompt` 是**实测必要**的：Whisper 会说中文，但默认输出**繁体**
+（`今天天氣不遜我們下午三點開會`）。加上简体提示词后，同一段音频的输出变成
+`今天天气不错,我们下午三点开会。`。安装命令在检测到当前是 `*.en` 模型时，也会直接把这
+几步打印出来。
+
+本机实测数据（`voxtype transcribe` 转写 16kHz 单声道 WAV）：
+
+| 场景 | 模型 | 结果 | 耗时 |
+| --- | --- | --- | --- |
+| 英文 `The quick brown fox jumps over the lazy dog.` | `base.en` | 完全正确 | 0.83s |
+| 中文 `今天天气不错，我们下午三点开会。` | `base.en` | 乱码拼音（英文专用模型） | 0.91s |
+| 同上 | `small` + `zh` | 繁体，字面正确 | 2.99s |
+| 同上 | `small` + `zh` + 简体提示词 | **`今天天气不错,我们下午三点开会。`** | 3.06s（CPU）→ **1.07s（Vulkan GPU）** |
+
+GPU 加速需要替换 `/usr/bin/voxtype`，因此必须由 `sudo` 执行：安装命令里已经带上了
+`sudo voxtype setup gpu --enable`（不带 sudo 时它只会报 permission denied，然后静默留在
+CPU 上，实测就是这个坑）。上游还编进了 9 个引擎（SenseVoice、Paraformer 等 CJK 专用引擎
+在其列），可用 `voxtype info engines` 查看、`voxtype config set engine <名字>` 切换。
 
 安装后快捷键是 **`Super+Ctrl+X`** 与 **`Super+F9`**（都是开始/结束切换）。这两个键
 写在 `~/.config/niri/cachyos-voxtype.kdl`，由主配置用 `include optional=true` 引入——
@@ -721,6 +754,7 @@ Niri 没有条件绑定，用可选 include 才能做到"**装了听写才有这
 栏上的状态控件空闲时不显示文字（自动收起），只在录音/转写时出现；状态从
 `$XDG_RUNTIME_DIR/voxtype/state` 读取，由 `voxtype` 自己维护。用 `cachyos-voxtype-remove`
 卸载时会先把 `~/.config/voxtype` 备份成带时间戳的目录，不会静默丢掉你调过的设备或采样率。
+
 
 ### 主题同步
 
