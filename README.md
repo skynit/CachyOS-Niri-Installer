@@ -123,7 +123,7 @@ AI 编程助手层（与桌面解耦，可单独使用）
 
 | 路径 | 内容 |
 | --- | --- |
-| `/usr/local/bin/cachyos-*` | 本项目的 68 个命令（`agent`、`usage-*`、`voxtype-*`、`crash-*` 等） |
+| `/usr/local/bin/cachyos-*` | 本项目的 69 个命令（`agent`、`usage-*`、`voxtype-*`、`crash-*` 等） |
 | `/usr/local/share/cachyos-desktop/assets/**` | 随包资源：技能、DMS 插件、配置模板、脚本库 |
 | `~/.config/niri/` | 主配置、`cachyos-extras.kdl` 扩展、`dms/` 下生成的配色与快捷键 |
 | `~/.config/waybar/` | 顶栏、底栏与样式 |
@@ -535,6 +535,7 @@ Shift+Print                当前显示器截图
 Super+Shift+S              区域截图并使用 Satty 编辑
 音量、媒体、亮度功能键      通过 DMS IPC 控制
 Super+\                    问 AI：把选中/剪贴板/暂存改动交给 agent
+Super+Shift+\              续接最近的 AI 会话（四个工具合并列表）
 Super+' / Super+F9         开始或结束本地听写（装了听写才有这两个键）
 Super+Ctrl+F2/F3/F4        顶栏、底栏和 Waybar 开关
 Super+Ctrl+F9              开始或停止区域录屏
@@ -651,6 +652,35 @@ cachyos-ask --agent codex --action commit         # 指定用哪个 agent
 | `shell` | 把一句话转成可执行的 bash 命令 |
 
 文本上限 `CACHYOS_ASK_MAX_CHARS`（默认 12000）会截断并注明，避免把 agent 的上下文一次冲爆。
+
+### 跨工具会话续接：cachyos-agent-resume
+
+`Super+Shift+\` 把四个 agent 最近的会话按时间列成一张表——**相对时间、目录、提示数、标题**，
+选中即续接。这是单个 CLI 给不了的：它们各自只看自己的会话，续接语法也各不相同。
+
+```bash
+cachyos-agent-resume                            # 弹选择器（fzf），选中直接续接
+cachyos-agent-resume --list                     # 只输出表格（TAB 分隔，便于脚本与自检）
+cachyos-agent-resume --agent codex --limit 5    # 只看某个 agent / 每人几条
+cachyos-agent-resume --show claude <会话 id>    # 只打印将要执行的命令，不启动
+```
+
+读取的存储都是**轻量索引，绝不遍历会话正文**——codex 的 `sessions` 目录本机有 1.6GB，
+扫一遍就不堪用了：
+
+| agent | 读什么 | 提示数怎么来 |
+| --- | --- | --- |
+| claude | `~/.claude/projects/**/*.jsonl`（按 mtime 取前 N） | 数 `type=user` 行，并扣除工具结果行 |
+| codex | `~/.codex/session_index.jsonl` + rollout 首行的 `cwd` | 数 `history.jsonl` 里属于该会话的行 |
+| opencode | `~/.local/share/opencode/opencode.db`（sqlite3 只读） | `message.data` 里 `role=user` 的条数 |
+| dsh | `~/.dsh/storages/session_projcache/sessions/*.json` | 解压会话文件数 `kind=user` 事件 |
+
+续接命令由 agent 表统一构造：`claude --permission-mode auto --resume <id>`、
+`codex --approve-for-me resume <id>`、`opencode --auto --session <id>`。
+
+> **dsh 的限制（如实说明）**：dsh 按 profile 启动，而它的 `web` profile **不接受 `--resume`**
+> （本机只有 `web` 与 `headless` 两个 profile）。所以 dsh 的条目在表里标注「打开 Web UI」，
+> 选中后打开 Web UI 并告知会话名——不会假装能命令行续接。
 
 ### 跑完提醒：cachyos-agent-console
 
@@ -990,6 +1020,7 @@ https://api.anthropic.com/api/oauth/usage
 | `cachyos-agent-prompt [--inline] <prompt...>` | 带一段 prompt 启动默认 agent |
 | `cachyos-ask [--action <名>] [--agent <id>] [--print] [<文本...>]` | 把选区/剪贴板/暂存改动交给 agent |
 | `cachyos-agent-console <agent> <命令...>` | 跑 agent 并在结束后通知（由启动器自动调用） |
+| `cachyos-agent-resume [--agent <id>] [--limit <n>] [--list] [--show <agent> <id>]` | 跨工具列出最近的会话并续接 |
 | `cachyos-default-agent [<agent>]` | 查看或设置默认 agent |
 | `cachyos-agent-skills [--quiet] [--harness <agent>] [--create-supported]` | 建立技能软链 |
 | `cachyos-agent-usage-update [--force] [--limits-only] [--except <agent>] [agent...]` | 重算用量（`--limits-only` 只刷限额） |

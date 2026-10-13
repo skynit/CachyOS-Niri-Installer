@@ -23,6 +23,8 @@ input {
 }
 
 binds {
+    // 跨工具续接：四个 agent 最近的会话合到一张表，选中即续接。
+    Mod+Shift+Backslash hotkey-overlay-title="续接最近的 AI 会话" { spawn "cachyos-agent-resume"; }
     // 把选中/剪贴板/暂存改动交给 AI agent：Super+\ 一处入口，动作在弹窗里选。
     Mod+Backslash hotkey-overlay-title="问 AI：解释/排查/审查/总结/翻译/提交信息" { spawn "cachyos-ask"; }
     Mod+Ctrl+F2 hotkey-overlay-title="Waybar top" { spawn "cachyos-waybar-top"; }

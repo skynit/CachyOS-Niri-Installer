@@ -197,7 +197,7 @@ for i, (title, lines) in enumerate(extra):
 height_cursor += H5 + GAP
 
 # ---------------------------------------------------------------- 6. AI 层
-H6 = 458
+H6 = 480
 band(height_cursor, H6, "AI 层", "本项目，与桌面解耦", "ai")
 y0 = height_cursor + PAD + 8
 ai_w = (CONTENT_W - PAD * 2 - 2 * 12) / 3
@@ -229,12 +229,13 @@ box(CONTENT_X + PAD + half + 12, mirror_y, half, 64, "配置镜像（可选）",
 # 数据流单独成块：早先用跨层箭头画，结果压住方框、语义也对不上
 # （"崩溃交给 agent" 指到了配置镜像）。集中列成面板，改一条只动一行。
 flow_y = mirror_y + 64 + 12
-box(CONTENT_X + PAD, flow_y, ai_w * 3 + 24, 154, "数据流", [
+box(CONTENT_X + PAD, flow_y, ai_w * 3 + 24, 176, "数据流", [
     "会话日志（Claude / Codex / DSH） → 4 个采集器 → usage/*.json → DMS 用量面板（状态栏与弹窗）",
     "dms-colors.json（DMS 主题引擎） → 主题同步 → Claude 自定义主题 / Hermes skin",
     "systemd-coredump → crash-watch → 桌面通知 → cachyos-agent-crash → 交给 agent 分析",
     "Super+` → 启动层 → agent CLI；Super+\\ → 取选区/剪贴板/暂存改动 → 同一套 agent",
     "agent 退出 → cachyos-agent-console → 通知（长任务或失败）；失败保留窗口",
+    "Super+Shift+\\ → cachyos-agent-resume：四个工具的会话按时间合并 → --resume / resume / --session",
     "api.anthropic.com 限额查询 = 唯一的联网行为（只读复用本机凭据）；其余全部读本地文件",
 ], kind="flow", title_size=14, line_size=12)
 height_cursor += H6 + GAP
@@ -245,7 +246,7 @@ band(height_cursor, H7, "文件与状态", "随包 + 运行时", "state")
 y = height_cursor + PAD + 8
 w4b = (CONTENT_W - PAD * 2 - 3 * 10) / 4
 state = [
-    ("命令", ["/usr/local/bin/cachyos-*", "68 个命令"]),
+    ("命令", ["/usr/local/bin/cachyos-*", "69 个命令"]),
     ("随包资源", ["/usr/local/share/", "cachyos-desktop/assets/**"]),
     ("项目状态", ["~/.config/cachyos-desktop/", "默认 agent 等"]),
     ("运行数据", ["~/.local/state/cachyos-desktop/", "用量、崩溃、备份、日志"]),

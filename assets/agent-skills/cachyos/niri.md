@@ -28,7 +28,7 @@ include "cachyos-extras.kdl"      # 没有 optional：这个文件必须存在
 - 26 个字母键**全部已被占用**。想加两键快捷键只能用非字母键；`Mod+X` 也不行
   （`Super+X` 是 DMS 电源菜单）。实测空闲的非字母键：`Mod+BackSpace`、`Mod+Delete`、
   `Mod+Backslash`、`Mod+Insert`、`Mod+F4/F6/F7/F10/F11/F12`。
-  已被占用的键不要再绑定：`Mod+grave`（启动默认 AI agent）、`Mod+Backslash`（问 AI：解释/排查/审查/总结/翻译/提交信息）、`Super+'` 与 `Mod+F9`（本地听写）
+  已被占用的键不要再绑定：`Mod+grave`（启动默认 AI agent）、`Mod+Backslash`（问 AI：解释/排查/审查/总结/翻译/提交信息）、`Mod+Shift+Backslash`（续接最近的会话）、`Super+'` 与 `Mod+F9`（本地听写）
   （**装了本地听写 Voxtype 后**由 `cachyos-voxtype.kdl` 占用；没装听写时 F9 是空闲的，
   但先确认 `~/.config/niri/cachyos-voxtype.kdl` 是否存在再决定）。
 - 已占用的键不要重复绑定：`niri validate` 会直接报 `duplicate keybind`。

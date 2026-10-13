@@ -152,6 +152,7 @@ launch() {
     local agent="$1"
     local prompt="$2"
     local inline="$3"
+    local resume_id="${4:-}"
     local -a command
 
     if ! cachyos_agent_supported | grep -qx -- "$agent"; then
@@ -169,7 +170,17 @@ launch() {
     sibling_command cachyos-agent-skills --quiet --harness "$agent" || true
 
     # -d ''：argv 是 NUL 分隔的，prompt 里的换行必须留在同一个参数内。
-    mapfile -d '' -t command < <(cachyos_agent_command "$agent" "$prompt")
+    if [[ -n $resume_id ]]; then
+        # 续接走单独一张表：四个工具的续接语法与启动语法并不一样（dsh 甚至没有）。
+        # 注意 mapfile 对"进程替换里的命令失败"仍返回 0，所以只能看数组长度。
+        mapfile -d '' -t command < <(cachyos_agent_resume_command "$agent" "$resume_id")
+        if ((${#command[@]} == 0)); then
+            printf '%s 不支持命令行续接（它的 web profile 没有 --resume）；请在它的界面里选择会话。\n' "$agent" >&2
+            return 2
+        fi
+    else
+        mapfile -d '' -t command < <(cachyos_agent_command "$agent" "$prompt")
+    fi
 
     # bash ≥4.4 里 `exec "${empty[@]}"` 是空操作且返回 0，会表现成"启动成功但什么都没跑"。
     # 正常情况下校验已经挡在前面，这里只是不让库与命令的列表万一漂移时静默通过。
@@ -208,6 +219,7 @@ main() {
     local inline=false
     local pick=false
     local prompt=""
+    local resume_id=""
     local agent=""
     local mode=launch
 
@@ -234,6 +246,11 @@ main() {
             --prompt)
                 (($# >= 2)) || { usage >&2; return 2; }
                 prompt="$2"
+                shift 2
+                ;;
+            --resume)
+                (($# >= 2)) || { usage >&2; return 2; }
+                resume_id="$2"
                 shift 2
                 ;;
             -h|--help)
@@ -305,7 +322,7 @@ main() {
         fi
     fi
 
-    launch "$agent" "$prompt" "$inline"
+    launch "$agent" "$prompt" "$inline" "$resume_id"
 }
 
 main "$@"

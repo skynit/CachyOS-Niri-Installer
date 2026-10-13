@@ -117,6 +117,47 @@ cachyos_agent_command() {
     printf '%s\0' "${command[@]}"
 }
 
+# 续接既有会话的 argv，NUL 分隔（同 cachyos_agent_command）。
+# 四个工具的语法各不相同，所以只在这一处定义：
+#   claude    --resume <session-id>
+#   codex     resume <SESSION_ID>（子命令；无人值守旗标是全局的，放子命令之前）
+#   opencode  --session <id>
+#   dsh       **没有命令行续接**：web profile 不接受 --resume（只有 web/headless 两个
+#             profile，且 web 的参数只有 host/port/no-open/trusted-host）。这里返回 1，
+#             由调用方给用户一条如实的提示，而不是假装能续接。
+cachyos_agent_resume_command() {
+    local agent="${1:-}"
+    local session_id="${2:-}"
+    local -a command
+
+    [[ -n $session_id ]] || return 1
+
+    case "$agent" in
+        claude)
+            command=(claude --permission-mode auto --resume "$session_id")
+            ;;
+        codex)
+            command=(codex --approve-for-me resume "$session_id")
+            ;;
+        opencode)
+            command=(opencode --auto --session "$session_id")
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+
+    printf '%s\0' "${command[@]}"
+}
+
+# 该 agent 是否支持命令行续接（dsh 目前不支持，界面据此标注）。
+cachyos_agent_can_resume() {
+    case "${1:-}" in
+        claude | codex | opencode) printf 'true\n' ;;
+        *) printf 'false\n' ;;
+    esac
+}
+
 # 需要"跑完留住窗口"的 agent：一次性模式会把答案打到 stdout 就退出，
 # 不 hold 的话窗口一闪而过。其余 agent 是交互式，退出即用户主动结束，不必 hold。
 cachyos_agent_hold_window() {

@@ -1,0 +1,374 @@
+#!/usr/bin/env bash
+
+# 跨工具会话续接：把四个 agent 最近的会话列在一起，选一个直接续接。
+#
+# 为什么值得单独做一层：四个工具的续接语法各自不同（claude --resume <id>、
+# codex resume <id>、opencode --session <id>、dsh 没有命令行续接），会话也各存各的
+# 地方；而每个工具自带的"最近会话"入口只看自己。这里把四边按时间合并成一张表。
+#
+# **性能约束**：只读轻量索引，绝不遍历会话正文。codex 的 sessions 目录本机有 1.6GB，
+# 扫一遍就不堪用了，所以走 ~/.codex/session_index.jsonl（id/标题/时间）+ history.jsonl
+# （提示数）。其余同理：
+#   claude   ~/.claude/projects/*/*.jsonl（按 mtime 取前 N，再按需读 cwd 与提示数）
+#   codex    ~/.codex/session_index.jsonl + ~/.codex/history.jsonl
+#   opencode ~/.local/share/opencode/opencode.db（sqlite3 只读查询）
+#   dsh      ~/.dsh/storages/session_projcache/sessions/*.json（cwd/标题）+ 会话文件数提示数
+#
+# dsh 的特殊性：它按 profile 启动，web profile **不接受 --resume**（本机只有 web 与
+# headless 两个 profile）。所以 dsh 的条目会标注"打开 Web UI"，选中后开 Web UI 并提示
+# 会话名，而不是假装能续接。
+
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
+readonly SCRIPT_NAME="${0##*/}"
+
+SHARE_DIR="${CACHYOS_DESKTOP_SHARE_DIR:-/usr/local/share/cachyos-desktop}"
+agent_lib="$SHARE_DIR/assets/lib/agent.sh"
+[[ -r $agent_lib ]] || agent_lib="$SCRIPT_DIR/../assets/lib/agent.sh"
+# shellcheck source=assets/lib/agent.sh
+source "$agent_lib"
+
+limit=8
+agent_filter=""
+list_only=false
+inline=false
+
+usage() {
+    cat <<EOF
+用法: $SCRIPT_NAME [选项]
+
+把四个 agent 最近的会话按时间列在一起，选中即续接。
+
+选项:
+  --agent <id>   只看某个 agent（codex/claude/opencode/dsh）
+  --limit <n>    每个 agent 最多列出多少条（默认 $limit）
+  --list         只输出表格（TAB 分隔：agent/时间/目录/提示数/标题/会话 id）
+  --show <agent> <id>   打印续接该会话将要执行的命令，不启动
+  --inline       在当前终端运行（默认另开 Kitty 窗口）
+  -h, --help     显示本帮助
+
+dsh 的 web profile 不接受 --resume，它的条目会标注"打开 Web UI"。
+EOF
+}
+
+# 相对时间：给一眼看的量级，不追求精确。
+human_age() {
+    local then="$1" now
+    now="$(date +%s)"
+    local delta=$((now - then))
+    ((delta < 0)) && delta=0
+    if ((delta < 60)); then
+        printf '刚刚'
+    elif ((delta < 3600)); then
+        printf '%d 分钟前' "$((delta / 60))"
+    elif ((delta < 86400)); then
+        printf '%d 小时前' "$((delta / 3600))"
+    elif ((delta < 86400 * 30)); then
+        printf '%d 天前' "$((delta / 86400))"
+    else
+        printf '%d 个月前' "$((delta / 86400 / 30))"
+    fi
+}
+
+# 目录只留尾部：路径前半段几乎总是相同的，尾部信息量更大。
+short_dir() {
+    local path="$1"
+    [[ -n $path ]] || { printf '—'; return; }
+    path="${path/#$HOME/~}"
+    if ((${#path} > 34)); then
+        printf '…%s' "${path: -33}"
+    else
+        printf '%s' "$path"
+    fi
+}
+
+# 字段净化：制表符与换行会破坏"按列读取"的结构（read 遇到 IFS 空白还会折叠空字段，
+# 导致整行错位——这个坑真踩过：空标题会让 id 串到前一列，选中后可能续接错误的会话）。
+# 所以这里统一把空值填成 "-"，并把控制字符换成空格。
+field() {
+    local value="${1:-}"
+    # 注意：${value//$'\t'/ } 这种写法里 $'\t' 在双引号内不会展开，会直接让解析器
+    # 报"引号未闭合"（真踩过）。先把控制字符存进变量再替换。
+    local tab=$'\t' newline=$'\n' carriage=$'\r'
+    value="${value//$tab/ }"
+    value="${value//$newline/ }"
+    value="${value//$carriage/}"
+    [[ -n ${value// /} ]] || value='-'
+    printf '%s' "$value"
+}
+
+# 每行：agent <TAB> epoch <TAB> 目录 <TAB> 提示数 <TAB> 标题 <TAB> 会话 id
+list_claude() {
+    local max="$1" file epoch id cwd prompts
+    local root="$HOME/.claude/projects"
+    [[ -d $root ]] || return 0
+
+    while IFS=$'\t' read -r epoch file; do
+        [[ -n $file ]] || continue
+        id="${file##*/}"
+        id="${id%.jsonl}"
+        cwd="$(grep -m1 -o '"cwd":"[^"]*"' "$file" 2>/dev/null | head -1 | sed 's/^"cwd":"//; s/"$//' || true)"
+        # type=user 的行里混着工具结果，会把"提示数"抬高；减掉 toolUseResult 行。
+        prompts=$(( $(grep -c '"type":"user"' "$file" 2>/dev/null || true) - $(grep -c '"toolUseResult"' "$file" 2>/dev/null || true) ))
+        ((prompts < 0)) && prompts=0
+        printf 'claude\t%s\t%s\t%s\t%s\t%s\n' "${epoch%.*}" "$(field "$cwd")" "$prompts" '-' "$id"
+    done < <(find "$root" -name '*.jsonl' -printf '%T@\t%p\n' 2>/dev/null | sort -rn | head -n "$max")
+}
+
+list_codex() {
+    local max="$1"
+    local index="$HOME/.codex/session_index.jsonl"
+    local history="$HOME/.codex/history.jsonl"
+    [[ -r $index ]] || return 0
+
+    # id → rollout 文件：文件名里带 uuid，建一次映射比按 id 反复 find 便宜得多。
+    local file base sid
+    local -A rollout_of=()
+    while IFS= read -r file; do
+        [[ -n $file ]] || continue
+        base="${file##*/}"
+        sid="$(printf '%s' "$base" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1 || true)"
+        [[ -n $sid ]] && rollout_of["$sid"]="$file"
+    done < <(find "$HOME/.codex/sessions" -name 'rollout-*.jsonl' 2>/dev/null)
+
+    local updated id title epoch cwd prompts rollout
+    while IFS=$'\t' read -r updated id title; do
+        [[ -n $id ]] || continue
+        epoch="$(date -d "$updated" +%s 2>/dev/null || printf '0')"
+        rollout="${rollout_of[$id]:-}"
+        cwd=""
+        if [[ -n $rollout && -r $rollout ]]; then
+            cwd="$(head -1 "$rollout" 2>/dev/null | grep -o '"cwd":"[^"]*"' | head -1 | sed 's/^"cwd":"//; s/"$//' || true)"
+        fi
+        prompts=0
+        if [[ -r $history ]]; then
+            prompts="$(grep -c "\"session_id\":\"$id\"" "$history" 2>/dev/null || true)"
+        fi
+        printf 'codex\t%s\t%s\t%s\t%s\t%s\n' "$epoch" "$(field "$cwd")" "${prompts:-0}" "$(field "$title")" "$id"
+    done < <(jq -r '[.updated_at // "", .id // "", (.thread_name // "")] | @tsv' "$index" 2>/dev/null |
+        sort -r | head -n "$max")
+}
+
+list_opencode() {
+    local max="$1"
+    local db="$HOME/.local/share/opencode/opencode.db"
+    [[ -r $db ]] || return 0
+    command -v sqlite3 >/dev/null 2>&1 || return 0
+
+    local query rows
+    # 先试带"提示数"的查询；session_message 的列名随版本可能变，失败就退回不带提示数的版本。
+    # opencode 把角色放在 message.data 的 JSON 里（表本身没有 role 列），所以用 json_extract。
+    query="select s.id, s.directory, s.title, s.time_updated,
+                  (select count(*) from message m
+                    where m.session_id = s.id and json_extract(m.data, '$.role') = 'user')
+           from session s where s.parent_id is null
+           order by s.time_updated desc limit $max;"
+    rows="$(sqlite3 -separator $'\t' "file:$db?mode=ro" "$query" 2>/dev/null || true)"
+    if [[ -z $rows ]]; then
+        query="select s.id, s.directory, s.title, s.time_updated, '-'
+               from session s where s.parent_id is null
+               order by s.time_updated desc limit $max;"
+        rows="$(sqlite3 -separator $'\t' "file:$db?mode=ro" "$query" 2>/dev/null || true)"
+    fi
+    [[ -n $rows ]] || return 0
+
+    local id directory title updated prompts
+    while IFS=$'\t' read -r id directory title updated prompts; do
+        [[ -n $id ]] || continue
+        # time_updated 是毫秒
+        printf 'opencode\t%s\t%s\t%s\t%s\t%s\n' "$((updated / 1000))" "$(field "$directory")" "$(field "${prompts:-}")" "$(field "$title")" "$id"
+    done <<<"$rows"
+}
+
+list_dsh() {
+    local max="$1"
+    local cache="$HOME/.dsh/storages/session_projcache/sessions"
+    [[ -d $cache ]] || return 0
+
+    local file file_mtime epoch id cwd title prompts session_file last_ms
+    while IFS=$'\t' read -r file_mtime file; do
+        [[ -n $file ]] || continue
+        id="${file##*/}"
+        id="${id%.json}"
+        cwd="$(jq -r '.record.identity.cwd // ""' "$file" 2>/dev/null || true)"
+        title="$(jq -r '.record.rows.title.val // ""' "$file" 2>/dev/null || true)"
+        # 缓存文件的 mtime 会被 DSH 启动时统一刷新（所有会话看起来都是"刚刚"），
+        # 所以时间取记录里的最后一条消息时间，取不到再退回 mtime。
+        last_ms="$(jq -r '.record.rows.timeContext.val.lastMessageTime // 0' "$file" 2>/dev/null || printf '0')"
+        if [[ $last_ms =~ ^[0-9]+$ ]] && ((last_ms > 0)); then
+            epoch="$((last_ms / 1000))"
+        else
+            epoch="${file_mtime%.*}"
+        fi
+        prompts='—'
+        session_file="$(find "$HOME/.dsh/sessions" -maxdepth 3 -path "*/$id/session*.jsonl.zstd" 2>/dev/null | head -1 || true)"
+        if [[ -n $session_file ]] && command -v zstd >/dev/null 2>&1; then
+            # 实测 8.7MB 的会话解压加计数约 0.05s，所以只对要显示的前 N 条做。
+            prompts="$(zstd -dc "$session_file" 2>/dev/null | grep -c '"kind":"user"' || true)"
+        fi
+        printf 'dsh\t%s\t%s\t%s\t%s\t%s\n' "$epoch" "$(field "$cwd")" "$(field "${prompts}")" "$(field "$title")" "$id"
+    done < <(find "$cache" -maxdepth 1 -name '*.json' -printf '%T@\t%p\n' 2>/dev/null | sort -rn | head -n "$max")
+}
+
+collect_rows() {
+    local wanted=("$@")
+    local agent
+    for agent in "${wanted[@]}"; do
+        case "$agent" in
+            claude) list_claude "$limit" ;;
+            codex) list_codex "$limit" ;;
+            opencode) list_opencode "$limit" ;;
+            dsh) list_dsh "$limit" ;;
+        esac
+    done
+}
+
+format_row() {
+    local agent="$1" epoch="$2" dir="$3" prompts="$4" title="$5" id="$6"
+    local age marker=""
+    age="$(human_age "$epoch")"
+    [[ "$(cachyos_agent_can_resume "$agent")" == true ]] || marker=' [打开 Web UI]'
+    # 标题可能很长，压到 40 字以内，避免把 fzf 的列挤没
+    local tab=$'\t'
+    title="${title//$tab/ }"
+    ((${#title} > 40)) && title="${title:0:39}…"
+    printf '%-8s %-9s %-36s %4s  %s%s\n' \
+        "$agent" "$age" "$(short_dir "$dir")" "$prompts" "$title" "$marker"
+}
+
+pick_row() {
+    local table="$1"
+    if [[ -t 0 ]]; then
+        printf '%s\n' "$table" | fzf --delimiter='\t' --with-nth=2 --prompt='续接哪个会话> ' --reverse | cut -f1
+        return 0
+    fi
+    command -v kitty >/dev/null 2>&1 || return 1
+    local selection_file
+    selection_file="$(mktemp)"
+    if kitty --class cachyos-agent-pick sh -c \
+        "printf '%s\n' $(printf '%q' "$table") | fzf --delimiter='\t' --with-nth=2 --prompt='续接哪个会话> ' --reverse | cut -f1 > $(printf '%q' "$selection_file")"; then
+        cat "$selection_file" 2>/dev/null || true
+    fi
+    rm -f "$selection_file"
+}
+
+# ------------------------------------------------------------------ 参数
+show_agent=""
+show_id=""
+while (($# > 0)); do
+    case "$1" in
+        --agent)
+            [[ -n ${2:-} ]] || { printf '%s: --agent 需要参数\n' "$SCRIPT_NAME" >&2; exit 2; }
+            agent_filter="$2"
+            shift 2
+            ;;
+        --limit)
+            [[ ${2:-} =~ ^[0-9]+$ ]] || { printf '%s: --limit 需要数字\n' "$SCRIPT_NAME" >&2; exit 2; }
+            limit="$2"
+            shift 2
+            ;;
+        --list)
+            list_only=true
+            shift
+            ;;
+        --show)
+            [[ -n ${2:-} && -n ${3:-} ]] || { printf '%s: --show 需要 <agent> <id>\n' "$SCRIPT_NAME" >&2; exit 2; }
+            show_agent="$2"
+            show_id="$3"
+            shift 3
+            ;;
+        --inline)
+            inline=true
+            shift
+            ;;
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        *)
+            printf '%s: 未知参数 %s\n' "$SCRIPT_NAME" "$1" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+done
+
+if [[ -n $show_agent ]]; then
+    if ! cachyos_agent_supported | grep -qx -- "$show_agent"; then
+        printf '%s: 不支持的 agent %s\n' "$SCRIPT_NAME" "$show_agent" >&2
+        exit 2
+    fi
+    printf '%s\n' "$(cachyos_agent_name "$show_agent") 的续接命令："
+    # mapfile 即使进程替换里的命令失败也返回 0，所以判据必须是"数组是否为空"。
+    if mapfile -d '' -t argv < <(cachyos_agent_resume_command "$show_agent" "$show_id") \
+        && ((${#argv[@]} > 0)); then
+        # %q 逐个转义（id 里不会有空格，但保持与其他命令一致的引用风格），再去掉首个空格。
+        printf ' %q' "${argv[@]}" | sed 's/^ //'
+        printf '\n'
+    else
+        printf ' （无：%s 的 web profile 不接受 --resume，选中它会打开 Web UI）\n' "$show_agent"
+    fi
+    exit 0
+fi
+
+wanted=(codex claude opencode dsh)
+if [[ -n $agent_filter ]]; then
+    if ! cachyos_agent_supported | grep -qx -- "$agent_filter"; then
+        printf '%s: 不支持的 agent %s（可选：%s）\n' \
+            "$SCRIPT_NAME" "$agent_filter" "$(cachyos_agent_supported | paste -sd' ')" >&2
+        exit 2
+    fi
+    wanted=("$agent_filter")
+fi
+
+rows="$(collect_rows "${wanted[@]}" | sort -t$'\t' -k2,2nr || true)"
+
+if [[ -z ${rows//[[:space:]]/} ]]; then
+    printf '没有找到任何会话记录。\n' >&2
+    printf '  （claude/codex/opencode/dsh 的会话分别存在各自的目录里，用过一次才会有）\n' >&2
+    exit 4
+fi
+
+if [[ $list_only == true ]]; then
+    printf '%s\n' "$rows"
+    exit 0
+fi
+
+# 表格：第一列是 fzf 的键（agent:id），第二列给人看。
+table=""
+while IFS=$'\t' read -r agent epoch dir prompts title id; do
+    [[ -n $agent ]] || continue
+    table+="$agent:$id"$'\t'"$(format_row "$agent" "$epoch" "$dir" "$prompts" "$title" "$id")"$'\n'
+done <<<"$rows"
+
+if [[ -z ${table//[[:space:]]/} ]]; then
+    printf '没有可显示的会话。\n' >&2
+    exit 4
+fi
+
+chosen="$(pick_row "$table" || true)"
+[[ -n $chosen ]] || { printf '已取消。\n'; exit 1; }
+
+# 键里用第一个冒号分割（会话 id 本身不含冒号；agent 名也不含）。
+chosen_agent="${chosen%%:*}"
+chosen_id="${chosen#*:}"
+
+launch_args=()
+[[ $inline == true ]] && launch_args+=(--inline)
+
+if [[ "$(cachyos_agent_can_resume "$chosen_agent")" != true ]]; then
+    # dsh：没有命令行续接，只能把 Web UI 打开，并如实告诉用户会话名。
+    title=""
+    while IFS=$'\t' read -r agent _epoch _dir _prompts row_title id; do
+        [[ $agent == "$chosen_agent" && $id == "$chosen_id" ]] && title="$row_title"
+    done <<<"$rows"
+    if command -v dms >/dev/null 2>&1; then
+        dms notify "${chosen_agent} 的 web profile 不支持命令行续接；已打开 Web UI，请在其中选择会话${title:+「$title」}" >/dev/null 2>&1 || true
+    fi
+    printf '%s 不支持命令行续接（web profile 没有 --resume），已为你打开 Web UI。\n' "$chosen_agent" >&2
+    exec "$SCRIPT_DIR/cachyos-agent" "${launch_args[@]}" "$chosen_agent"
+fi
+
+exec "$SCRIPT_DIR/cachyos-agent" "${launch_args[@]}" "$chosen_agent" --resume "$chosen_id"
