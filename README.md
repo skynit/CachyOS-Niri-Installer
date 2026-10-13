@@ -80,23 +80,44 @@ DSH 峰值 471.9M）：
 
 ## 系统构成
 
+![完整架构图：从硬件到 AI 编程助手层](docs/images/architecture.png)
+
+上图是完整的层级与数据流。源文件是 `docs/images/architecture.svg`，由
+`docs/make-architecture.py` 生成（改结构后重跑一次脚本即可，不要手改 SVG）。
+
+一句话概括：**CachyOS 基础系统 → 官方 Niri 会话 → DMS/Quickshell 外壳 → 周边组件**，
+AI 编程助手作为**独立的一层**挂在旁边，只通过"配置文件、桌面通知、本地状态文件"与桌面交互，
+不依赖桌面也能单独使用。
+
+<details>
+<summary>纯文本版（便于终端里阅读与 grep，内容与上图一致）</summary>
+
 ```text
 CachyOS（Arch 派生，x86-64-v3/v4 优化仓库 + linux-cachyos 内核）
 └── 官方 Niri（Wayland 滚动平铺合成器，项目只提供配置，不打补丁）
-    ├── DankMaterialShell + Quickshell   面板、启动器、通知、锁屏、动态主题
-    ├── Waybar ×2                        顶栏与底栏（项目自带配置与模块脚本）
+    ├── DankMaterialShell + Quickshell   栏、启动器、通知、锁屏、动态主题
+    ├── Waybar ×2                        顶栏与底栏（可选：机器上跑 DMS 自带栏时不启动）
     ├── Kitty                            默认终端
     ├── Fcitx5 + RIME（雾凇拼音）         中文输入
     └── Ly（ly@tty2.service）            登录管理器（安装器会停用其它显示管理器）
 
-AI 层（与桌面解耦，可单独使用）
+AI 编程助手层（与桌面解耦，可单独使用）
 ├── agent 启动层        Super+` 启动默认 agent；多个则弹选择器
-├── 技能分发            cachyos / diagnose-crash 软链进 Claude、Codex、CC Switch
+├── 技能分发            cachyos / diagnose-crash 软链进 Claude、Codex、OpenCode、CC Switch
 ├── 崩溃诊断            systemd-coredump 监听 + 一键交给 agent 分析
-├── 用量面板            Claude / Codex / OpenCode / DSH 的 token 与费用
+├── 用量面板            Claude / Codex / OpenCode / DSH 的 token 与费用（状态栏默认只显示数字）
 ├── 主题同步            把 DMS 的明暗与完整配色推给 agent
-└── 本地听写（可选）    Voxtype + Waybar 状态模块
+├── 本地听写（可选）    Voxtype + Whisper，Super+'（或 Super+F9）开始/结束
+└── 配置镜像（可选）    CC Switch ↔ Codex Desktop 的非敏感字段镜像
+
+数据流
+├── 会话日志(claude/codex/dsh) → 4 个采集器 → usage/*.json → DMS 用量面板
+├── dms-colors.json → 主题同步 → Claude 自定义主题 / Hermes skin
+├── systemd-coredump → crash-watch → 通知 → cachyos-agent-crash → agent 分析
+└── api.anthropic.com 限额查询 = 唯一的联网行为（只读复用本机凭据）
 ```
+
+</details>
 
 主要文件位置：
 
@@ -109,8 +130,9 @@ AI 层（与桌面解耦，可单独使用）
 | `~/.config/DankMaterialShell/` | DMS 设置，以及 `plugins/CachyosAgents/` 用量面板插件 |
 | `~/.config/cachyos-desktop/` | 本项目自身状态（默认 agent 等） |
 | `~/.local/state/cachyos-desktop/` | 用量记录、崩溃记录、首次登录日志、配置备份 |
-| `~/.config/systemd/user/cachyos-*` | 5 个用户单元：崩溃监听、主题 path、用量定时器 |
+| `~/.config/systemd/user/cachyos-*` | 5 个用户单元：崩溃监听、主题 path 与 service、用量 service 与 timer |
 | `~/.claude/`、`~/.codex/`、`~/.cc-switch/` | 技能软链与 agent 配置镜像 |
+| `docs/`（仓库内） | 架构图源文件与生成脚本；`docs/images/` 放截图与架构图 |
 
 ## 使用前提
 
@@ -512,6 +534,7 @@ Ctrl+Print                 当前窗口截图
 Shift+Print                当前显示器截图
 Super+Shift+S              区域截图并使用 Satty 编辑
 音量、媒体、亮度功能键      通过 DMS IPC 控制
+Super+' / Super+F9         开始或结束本地听写（装了听写才有这两个键）
 Super+Ctrl+F2/F3/F4        顶栏、底栏和 Waybar 开关
 Super+Ctrl+F9              开始或停止区域录屏
 Super+Shift+F9             开始或停止 GIF 录屏
@@ -651,10 +674,11 @@ cachyos-crash-mute SomeApp off      # 恢复提醒
 
 ### 用量统计
 
-安装器会装上 DMS 面板插件 **CachyOS Agents 用量**：**状态栏只显示 token 用量**（没有图标、
-没有金额），点开是每个 agent 的明细（今天/累计的 token 与费用、会话与提示数、按费用排序的
-模型、最近 7 天的**折线图**）。默认登记 Claude Code、Codex、OpenCode 与 **DSH（DeepSeek Harness）**，
-每个都能在插件设置里单独关掉。
+安装器会装上 DMS 面板插件 **CachyOS Agents 用量**：**状态栏默认只显示 token 数字**——没有图标、
+没有金额、也不带"今天/近 7 天"这类前缀（想要日期前缀就在插件设置里改「状态栏显示」；也可把统计
+范围钉到某一个 agent）。点开是每个 agent 的明细（今天/累计的 token 与费用、会话与提示数、按费用
+排序的模型、最近 7 天的**折线图**）。默认登记 Claude Code、Codex、OpenCode 与
+**DSH（DeepSeek Harness）**，每个都能在插件设置里单独关掉。
 
 ```bash
 cachyos-agent-usage-update            # 刷新所有 agent 的用量记录（面板每 15 分钟自己调一次）
@@ -708,7 +732,7 @@ cachyos-voxtype-toggle               # 开始/结束听写（快捷键绑的就�
 cachyos-voxtype-config               # 打开 voxtype 的交互式配置
 cachyos-voxtype-model                # 交互式换模型
 cachyos-voxtype-model medium         # 非交互切换到指定模型
-cachyos-voxtype-status               # 输出 Waybar 的 JSON 状态（栏上那个"听写中"）
+cachyos-voxtype-status               # 输出 Waybar 的 JSON 状态（Waybar 没跑时看通知）
 cachyos-voxtype-remove               # 卸载：删快捷键、备份配置、移除模型
 ```
 

@@ -1,0 +1,197 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1680" height="1568" viewBox="0 0 1680 1568" role="img" aria-label="CachyOS + Niri + DankMaterialShell 架构图">
+<rect x="0" y="0" width="1680" height="100%" fill="#ffffff"/>
+<text x="46" y="80" font-size="26" font-weight="700" fill="#111418" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">CachyOS + Niri + DankMaterialShell 架构</text>
+<text x="46" y="108" font-size="14.5" font-weight="400" fill="#57606a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">从硬件到 AI 编程助手层：每层的归属、数据流向，以及安装器明确不改动的部分</text>
+<rect x="46" y="130" width="1588" height="104" rx="14" fill="#ffffff" stroke="#adb5bd" stroke-width="1.6"/>
+<rect x="46" y="130" width="156" height="104" rx="14" fill="#f1f3f5" stroke="#adb5bd" stroke-width="1.6"/>
+<rect x="188" y="130" width="14" height="104" rx="0" fill="#f1f3f5" stroke="none" stroke-width="0"/>
+<line x1="202" y1="130" x2="202" y2="234" stroke="#adb5bd" stroke-width="1.6"/>
+<text x="124.0" y="164" font-size="17" font-weight="700" fill="#495057" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="middle">硬件</text>
+<text x="124.0" y="188" font-size="12.5" font-weight="400" fill="#495057" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="middle" opacity="0.72">自动探测</text>
+<rect x="238.0" y="156" width="336.5" height="68" rx="9" fill="#f1f3f5" stroke="#adb5bd" stroke-width="1.3"/>
+<text x="251.0" y="180" font-size="14.5" font-weight="700" fill="#495057" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">CPU</text>
+<text x="251.0" y="199" font-size="12.5" font-weight="400" fill="#495057" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">x86-64-v3/v4 · Zen4</text>
+<text x="251.0" y="216" font-size="12.5" font-weight="400" fill="#495057" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">→ 决定用哪套优化仓库</text>
+<rect x="586.5" y="156" width="336.5" height="68" rx="9" fill="#f1f3f5" stroke="#adb5bd" stroke-width="1.3"/>
+<text x="599.5" y="180" font-size="14.5" font-weight="700" fill="#495057" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">GPU</text>
+<text x="599.5" y="199" font-size="12.5" font-weight="400" fill="#495057" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">AMD / NVIDIA / Intel</text>
+<text x="599.5" y="216" font-size="12.5" font-weight="400" fill="#495057" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">Vulkan / mesa 用户态驱动</text>
+<rect x="935.0" y="156" width="336.5" height="68" rx="9" fill="#f1f3f5" stroke="#adb5bd" stroke-width="1.3"/>
+<text x="948.0" y="180" font-size="14.5" font-weight="700" fill="#495057" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">音频与蓝牙</text>
+<text x="948.0" y="199" font-size="12.5" font-weight="400" fill="#495057" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">PipeWire + WirePlumber</text>
+<text x="948.0" y="216" font-size="12.5" font-weight="400" fill="#495057" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">bluez、fwupd</text>
+<rect x="1283.5" y="156" width="336.5" height="68" rx="9" fill="#f1f3f5" stroke="#adb5bd" stroke-width="1.3"/>
+<text x="1296.5" y="180" font-size="14.5" font-weight="700" fill="#495057" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">I2C / DDC</text>
+<text x="1296.5" y="199" font-size="12.5" font-weight="400" fill="#495057" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">亮度与外接屏控制</text>
+<text x="1296.5" y="216" font-size="12.5" font-weight="400" fill="#495057" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">i2c-dev udev 规则</text>
+<rect x="46" y="250" width="1588" height="116" rx="14" fill="#ffffff" stroke="#8c959f" stroke-width="1.6"/>
+<rect x="46" y="250" width="156" height="116" rx="14" fill="#eef2f6" stroke="#8c959f" stroke-width="1.6"/>
+<rect x="188" y="250" width="14" height="116" rx="0" fill="#eef2f6" stroke="none" stroke-width="0"/>
+<line x1="202" y1="250" x2="202" y2="366" stroke="#8c959f" stroke-width="1.6"/>
+<text x="124.0" y="284" font-size="17" font-weight="700" fill="#24292f" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="middle">基础系统</text>
+<text x="124.0" y="308" font-size="12.5" font-weight="400" fill="#24292f" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="middle" opacity="0.72">CachyOS 官方</text>
+<rect x="238.0" y="274" width="268.4" height="78" rx="9" fill="#eef2f6" stroke="#8c959f" stroke-width="1.3"/>
+<text x="251.0" y="298" font-size="14.5" font-weight="700" fill="#24292f" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">内核</text>
+<text x="251.0" y="317" font-size="12.5" font-weight="400" fill="#24292f" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">linux-cachyos</text>
+<text x="251.0" y="334" font-size="12.5" font-weight="400" fill="#24292f" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">sched-ext / BORE</text>
+<rect x="516.4" y="274" width="268.4" height="78" rx="9" fill="#eef2f6" stroke="#8c959f" stroke-width="1.3"/>
+<text x="529.4" y="298" font-size="14.5" font-weight="700" fill="#24292f" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">软件包</text>
+<text x="529.4" y="317" font-size="12.5" font-weight="400" fill="#24292f" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">pacman + paru</text>
+<text x="529.4" y="334" font-size="12.5" font-weight="400" fill="#24292f" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">x86-64-v3/v4 仓库</text>
+<rect x="794.8" y="274" width="268.4" height="78" rx="9" fill="#eef2f6" stroke="#8c959f" stroke-width="1.3"/>
+<text x="807.8" y="298" font-size="14.5" font-weight="700" fill="#24292f" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">服务管理</text>
+<text x="807.8" y="317" font-size="12.5" font-weight="400" fill="#24292f" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">systemd</text>
+<text x="807.8" y="334" font-size="12.5" font-weight="400" fill="#24292f" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">用户单元与定时器</text>
+<rect x="1073.1999999999998" y="274" width="268.4" height="78" rx="9" fill="#eef2f6" stroke="#8c959f" stroke-width="1.3"/>
+<text x="1086.1999999999998" y="298" font-size="14.5" font-weight="700" fill="#24292f" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">文件系统</text>
+<text x="1086.1999999999998" y="317" font-size="12.5" font-weight="400" fill="#24292f" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">btrfs + snapper</text>
+<text x="1086.1999999999998" y="334" font-size="12.5" font-weight="400" fill="#24292f" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">安装前做包快照</text>
+<rect x="1351.6" y="274" width="268.4" height="78" rx="9" fill="#eef2f6" stroke="#8c959f" stroke-width="1.3"/>
+<text x="1364.6" y="298" font-size="14.5" font-weight="700" fill="#24292f" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">登录</text>
+<text x="1364.6" y="317" font-size="12.5" font-weight="400" fill="#24292f" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">Ly（ly@tty2）</text>
+<text x="1364.6" y="334" font-size="12.5" font-weight="400" fill="#24292f" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">停用其它显示管理器</text>
+<rect x="46" y="382" width="1588" height="150" rx="14" fill="#ffffff" stroke="#4dabf7" stroke-width="1.6"/>
+<rect x="46" y="382" width="156" height="150" rx="14" fill="#e7f5ff" stroke="#4dabf7" stroke-width="1.6"/>
+<rect x="188" y="382" width="14" height="150" rx="0" fill="#e7f5ff" stroke="none" stroke-width="0"/>
+<line x1="202" y1="382" x2="202" y2="532" stroke="#4dabf7" stroke-width="1.6"/>
+<text x="124.0" y="416" font-size="17" font-weight="700" fill="#0b4f8a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="middle">Wayland 会话</text>
+<text x="124.0" y="440" font-size="12.5" font-weight="400" fill="#0b4f8a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="middle" opacity="0.72">官方 Niri</text>
+<rect x="238" y="404" width="300" height="116" rx="9" fill="#e7f5ff" stroke="#4dabf7" stroke-width="1.3"/>
+<text x="251" y="428" font-size="14.5" font-weight="700" fill="#0b4f8a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">官方 Niri（滚动平铺合成器）</text>
+<text x="251" y="447" font-size="12.5" font-weight="400" fill="#0b4f8a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">项目只提供配置与扩展，</text>
+<text x="251" y="464" font-size="12.5" font-weight="400" fill="#0b4f8a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">不打补丁、不替换二进制。</text>
+<rect x="556.0" y="404" width="258.5" height="116" rx="9" fill="#e7f5ff" stroke="#4dabf7" stroke-width="1.3"/>
+<text x="569.0" y="428" font-size="13.5" font-weight="700" fill="#0b4f8a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">config.kdl</text>
+<text x="569.0" y="447" font-size="12" font-weight="400" fill="#0b4f8a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">主配置（@HOME@ 渲染）</text>
+<rect x="824.5" y="404" width="258.5" height="116" rx="9" fill="#e7f5ff" stroke="#4dabf7" stroke-width="1.3"/>
+<text x="837.5" y="428" font-size="13.5" font-weight="700" fill="#0b4f8a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">cachyos-extras.kdl</text>
+<text x="837.5" y="447" font-size="12" font-weight="400" fill="#0b4f8a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">项目快捷键与窗口规则</text>
+<rect x="1093.0" y="404" width="258.5" height="116" rx="9" fill="#e7f5ff" stroke="#4dabf7" stroke-width="1.3"/>
+<text x="1106.0" y="428" font-size="13.5" font-weight="700" fill="#0b4f8a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">dms/*.kdl</text>
+<text x="1106.0" y="447" font-size="12" font-weight="400" fill="#0b4f8a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">DMS 生成的配色/布局/输出</text>
+<rect x="1361.5" y="404" width="258.5" height="116" rx="9" fill="#e7f5ff" stroke="#4dabf7" stroke-width="1.3"/>
+<text x="1374.5" y="428" font-size="13.5" font-weight="700" fill="#0b4f8a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">cachyos-voxtype.kdl</text>
+<text x="1374.5" y="447" font-size="12" font-weight="400" fill="#0b4f8a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">可选 include：听写按键</text>
+<rect x="46" y="548" width="1588" height="168" rx="14" fill="#ffffff" stroke="#9775fa" stroke-width="1.6"/>
+<rect x="46" y="548" width="156" height="168" rx="14" fill="#f3f0ff" stroke="#9775fa" stroke-width="1.6"/>
+<rect x="188" y="548" width="14" height="168" rx="0" fill="#f3f0ff" stroke="none" stroke-width="0"/>
+<line x1="202" y1="548" x2="202" y2="716" stroke="#9775fa" stroke-width="1.6"/>
+<text x="124.0" y="582" font-size="17" font-weight="700" fill="#4c2d9c" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="middle">桌面外壳</text>
+<text x="124.0" y="606" font-size="12.5" font-weight="400" fill="#4c2d9c" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="middle" opacity="0.72">DMS + Quickshell</text>
+<rect x="238" y="570" width="262" height="134" rx="9" fill="#f3f0ff" stroke="#9775fa" stroke-width="1.3"/>
+<text x="251" y="594" font-size="14.5" font-weight="700" fill="#4c2d9c" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">DankMaterialShell + Quickshell</text>
+<text x="251" y="613" font-size="12.5" font-weight="400" fill="#4c2d9c" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">栏、启动器、通知、锁屏、</text>
+<text x="251" y="630" font-size="12.5" font-weight="400" fill="#4c2d9c" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">OSD、电源菜单</text>
+<text x="251" y="647" font-size="12.5" font-weight="400" fill="#4c2d9c" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">（本项目不自研外壳）</text>
+<rect x="516.0" y="570" width="361.3333333333333" height="62" rx="9" fill="#f3f0ff" stroke="#9775fa" stroke-width="1.3"/>
+<text x="529.0" y="594" font-size="14" font-weight="700" fill="#4c2d9c" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">DMS 栏</text>
+<text x="529.0" y="613" font-size="12" font-weight="400" fill="#4c2d9c" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">状态栏控件与托盘</text>
+<rect x="887.3333333333333" y="570" width="361.3333333333333" height="62" rx="9" fill="#f3f0ff" stroke="#9775fa" stroke-width="1.3"/>
+<text x="900.3333333333333" y="594" font-size="14" font-weight="700" fill="#4c2d9c" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">动态主题</text>
+<text x="900.3333333333333" y="613" font-size="12" font-weight="400" fill="#4c2d9c" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">matugen → dms-colors.json</text>
+<rect x="1258.6666666666665" y="570" width="361.3333333333333" height="62" rx="9" fill="#f3f0ff" stroke="#9775fa" stroke-width="1.3"/>
+<text x="1271.6666666666665" y="594" font-size="14" font-weight="700" fill="#4c2d9c" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">插件</text>
+<text x="1271.6666666666665" y="613" font-size="12" font-weight="400" fill="#4c2d9c" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">CachyosAgents 用量面板</text>
+<rect x="516" y="642" width="1104.0" height="62" rx="9" fill="#f3f0ff" stroke="#9775fa" stroke-width="1.3"/>
+<text x="529" y="666" font-size="14" font-weight="700" fill="#4c2d9c" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">本项目的接入点</text>
+<text x="529" y="685" font-size="12.5" font-weight="400" fill="#4c2d9c" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">状态栏插件（只显示 token 数）、主题同步、通知（崩溃与听写）</text>
+<rect x="46" y="732" width="1588" height="128" rx="14" fill="#ffffff" stroke="#ffa94d" stroke-width="1.6"/>
+<rect x="46" y="732" width="156" height="128" rx="14" fill="#fff4e6" stroke="#ffa94d" stroke-width="1.6"/>
+<rect x="188" y="732" width="14" height="128" rx="0" fill="#fff4e6" stroke="none" stroke-width="0"/>
+<line x1="202" y1="732" x2="202" y2="860" stroke="#ffa94d" stroke-width="1.6"/>
+<text x="124.0" y="766" font-size="17" font-weight="700" fill="#8a4b08" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="middle">周边组件</text>
+<text x="124.0" y="790" font-size="12.5" font-weight="400" fill="#8a4b08" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="middle" opacity="0.72">可选/附加</text>
+<rect x="238.0" y="754" width="222.0" height="88" rx="9" fill="#fff4e6" stroke="#ffa94d" stroke-width="1.3"/>
+<text x="251.0" y="778" font-size="14" font-weight="700" fill="#8a4b08" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">Waybar</text>
+<text x="251.0" y="797" font-size="12" font-weight="400" fill="#8a4b08" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">顶/底栏（可选）</text>
+<text x="251.0" y="814" font-size="12" font-weight="400" fill="#8a4b08" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">听写状态模块</text>
+<rect x="470.0" y="754" width="222.0" height="88" rx="9" fill="#fff4e6" stroke="#ffa94d" stroke-width="1.3"/>
+<text x="483.0" y="778" font-size="14" font-weight="700" fill="#8a4b08" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">niri-sidebar</text>
+<text x="483.0" y="797" font-size="12" font-weight="400" fill="#8a4b08" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">固定版二进制</text>
+<text x="483.0" y="814" font-size="12" font-weight="400" fill="#8a4b08" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">SHA256 校验</text>
+<rect x="702.0" y="754" width="222.0" height="88" rx="9" fill="#fff4e6" stroke="#ffa94d" stroke-width="1.3"/>
+<text x="715.0" y="778" font-size="14" font-weight="700" fill="#8a4b08" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">fuzzel</text>
+<text x="715.0" y="797" font-size="12" font-weight="400" fill="#8a4b08" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">应用启动器</text>
+<rect x="934.0" y="754" width="222.0" height="88" rx="9" fill="#fff4e6" stroke="#ffa94d" stroke-width="1.3"/>
+<text x="947.0" y="778" font-size="14" font-weight="700" fill="#8a4b08" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">satty + 录屏</text>
+<text x="947.0" y="797" font-size="12" font-weight="400" fill="#8a4b08" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">截图标注 / 录屏</text>
+<rect x="1166.0" y="754" width="222.0" height="88" rx="9" fill="#fff4e6" stroke="#ffa94d" stroke-width="1.3"/>
+<text x="1179.0" y="778" font-size="14" font-weight="700" fill="#8a4b08" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">waypaper + awww</text>
+<text x="1179.0" y="797" font-size="12" font-weight="400" fill="#8a4b08" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">壁纸与守护</text>
+<rect x="1398.0" y="754" width="222.0" height="88" rx="9" fill="#fff4e6" stroke="#ffa94d" stroke-width="1.3"/>
+<text x="1411.0" y="778" font-size="14" font-weight="700" fill="#8a4b08" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">Fcitx5 + RIME</text>
+<text x="1411.0" y="797" font-size="12" font-weight="400" fill="#8a4b08" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">雾凇拼音</text>
+<rect x="46" y="876" width="1588" height="420" rx="14" fill="#ffffff" stroke="#38d9a9" stroke-width="1.6"/>
+<rect x="46" y="876" width="156" height="420" rx="14" fill="#e6fcf5" stroke="#38d9a9" stroke-width="1.6"/>
+<rect x="188" y="876" width="14" height="420" rx="0" fill="#e6fcf5" stroke="none" stroke-width="0"/>
+<line x1="202" y1="876" x2="202" y2="1296" stroke="#38d9a9" stroke-width="1.6"/>
+<text x="124.0" y="910" font-size="17" font-weight="700" fill="#0b5f4a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="middle">AI 层</text>
+<text x="124.0" y="934" font-size="12.5" font-weight="400" fill="#0b5f4a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="middle" opacity="0.72">本项目，与桌面解耦</text>
+<rect x="238.0" y="898" width="452.6666666666667" height="96" rx="9" fill="#e6fcf5" stroke="#38d9a9" stroke-width="1.3"/>
+<text x="251.0" y="922" font-size="14.5" font-weight="700" fill="#0b5f4a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">统一启动层</text>
+<text x="251.0" y="941" font-size="12.5" font-weight="400" fill="#0b5f4a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">cachyos-agent</text>
+<text x="251.0" y="958" font-size="12.5" font-weight="400" fill="#0b5f4a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">Super+` 启动默认 agent；</text>
+<text x="251.0" y="975" font-size="12.5" font-weight="400" fill="#0b5f4a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">多个则弹选择器</text>
+<rect x="702.6666666666667" y="898" width="452.6666666666667" height="96" rx="9" fill="#e6fcf5" stroke="#38d9a9" stroke-width="1.3"/>
+<text x="715.6666666666667" y="922" font-size="14.5" font-weight="700" fill="#0b5f4a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">技能分发</text>
+<text x="715.6666666666667" y="941" font-size="12.5" font-weight="400" fill="#0b5f4a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">cachyos / diagnose-crash</text>
+<text x="715.6666666666667" y="958" font-size="12.5" font-weight="400" fill="#0b5f4a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">软链进 Claude、Codex、</text>
+<text x="715.6666666666667" y="975" font-size="12.5" font-weight="400" fill="#0b5f4a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">OpenCode、CC Switch</text>
+<rect x="1167.3333333333335" y="898" width="452.6666666666667" height="96" rx="9" fill="#e6fcf5" stroke="#38d9a9" stroke-width="1.3"/>
+<text x="1180.3333333333335" y="922" font-size="14.5" font-weight="700" fill="#0b5f4a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">崩溃诊断</text>
+<text x="1180.3333333333335" y="941" font-size="12.5" font-weight="400" fill="#0b5f4a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">systemd-coredump →</text>
+<text x="1180.3333333333335" y="958" font-size="12.5" font-weight="400" fill="#0b5f4a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">cachyos-crash-watch →</text>
+<text x="1180.3333333333335" y="975" font-size="12.5" font-weight="400" fill="#0b5f4a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">通知 → agent 分析</text>
+<rect x="238.0" y="1008" width="452.6666666666667" height="78" rx="9" fill="#e6fcf5" stroke="#38d9a9" stroke-width="1.3"/>
+<text x="251.0" y="1032" font-size="14.5" font-weight="700" fill="#0b5f4a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">用量统计</text>
+<text x="251.0" y="1051" font-size="12.5" font-weight="400" fill="#0b5f4a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">4 个采集器读本机会话日志 →</text>
+<text x="251.0" y="1068" font-size="12.5" font-weight="400" fill="#0b5f4a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">usage/*.json → DMS 用量面板</text>
+<rect x="702.6666666666667" y="1008" width="452.6666666666667" height="78" rx="9" fill="#e6fcf5" stroke="#38d9a9" stroke-width="1.3"/>
+<text x="715.6666666666667" y="1032" font-size="14.5" font-weight="700" fill="#0b5f4a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">主题同步</text>
+<text x="715.6666666666667" y="1051" font-size="12.5" font-weight="400" fill="#0b5f4a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">dms-colors.json → Claude 主题</text>
+<text x="715.6666666666667" y="1068" font-size="12.5" font-weight="400" fill="#0b5f4a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">与 Hermes skin（path 单元跟随）</text>
+<rect x="1167.3333333333335" y="1008" width="452.6666666666667" height="78" rx="9" fill="#e6fcf5" stroke="#38d9a9" stroke-width="1.3"/>
+<text x="1180.3333333333335" y="1032" font-size="14.5" font-weight="700" fill="#0b5f4a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">本地听写（可选）</text>
+<text x="1180.3333333333335" y="1051" font-size="12.5" font-weight="400" fill="#0b5f4a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">Voxtype + Whisper（Super+'）</text>
+<text x="1180.3333333333335" y="1068" font-size="12.5" font-weight="400" fill="#0b5f4a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">本地推理，音频不上传</text>
+<rect x="238" y="1100" width="1382.0" height="52" rx="9" fill="#e6fcf5" stroke="#38d9a9" stroke-width="1.3"/>
+<text x="251" y="1124" font-size="14" font-weight="700" fill="#0b5f4a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">配置镜像（可选）</text>
+<text x="251" y="1143" font-size="12" font-weight="400" fill="#0b5f4a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">cachyos-ai-config-sync：CC Switch ↔ Codex Desktop 的非敏感字段镜像（会改写 Codex 自己的 auth.json，改前备份）</text>
+<rect x="238" y="1164" width="1382.0" height="132" rx="9" fill="#ffffff" stroke="#0ca678" stroke-width="1.3"/>
+<text x="251" y="1188" font-size="14" font-weight="700" fill="#0b5f4a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">数据流</text>
+<text x="251" y="1207" font-size="12" font-weight="400" fill="#0b5f4a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">会话日志（Claude / Codex / DSH） → 4 个采集器 → usage/*.json → DMS 用量面板（状态栏与弹窗）</text>
+<text x="251" y="1224" font-size="12" font-weight="400" fill="#0b5f4a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">dms-colors.json（DMS 主题引擎） → 主题同步 → Claude 自定义主题 / Hermes skin</text>
+<text x="251" y="1241" font-size="12" font-weight="400" fill="#0b5f4a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">systemd-coredump → crash-watch → 桌面通知 → cachyos-agent-crash → 交给 agent 分析</text>
+<text x="251" y="1258" font-size="12" font-weight="400" fill="#0b5f4a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">Super+` → 启动层 → agent CLI（Claude / Codex / OpenCode，默认值可记忆）</text>
+<text x="251" y="1275" font-size="12" font-weight="400" fill="#0b5f4a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">api.anthropic.com 限额查询 = 唯一的联网行为（只读复用本机凭据）；其余全部读本地文件</text>
+<rect x="46" y="1312" width="1588" height="118" rx="14" fill="#ffffff" stroke="#ced4da" stroke-width="1.6"/>
+<rect x="46" y="1312" width="156" height="118" rx="14" fill="#f8f9fa" stroke="#ced4da" stroke-width="1.6"/>
+<rect x="188" y="1312" width="14" height="118" rx="0" fill="#f8f9fa" stroke="none" stroke-width="0"/>
+<line x1="202" y1="1312" x2="202" y2="1430" stroke="#ced4da" stroke-width="1.6"/>
+<text x="124.0" y="1346" font-size="17" font-weight="700" fill="#495057" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="middle">文件与状态</text>
+<text x="124.0" y="1370" font-size="12.5" font-weight="400" fill="#495057" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="middle" opacity="0.72">随包 + 运行时</text>
+<rect x="238.0" y="1334" width="338.0" height="80" rx="9" fill="#f8f9fa" stroke="#ced4da" stroke-width="1.3"/>
+<text x="251.0" y="1358" font-size="14" font-weight="700" fill="#495057" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">命令</text>
+<text x="251.0" y="1377" font-size="12" font-weight="400" fill="#495057" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">/usr/local/bin/cachyos-*</text>
+<text x="251.0" y="1394" font-size="12" font-weight="400" fill="#495057" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">66 个命令</text>
+<rect x="586.0" y="1334" width="338.0" height="80" rx="9" fill="#f8f9fa" stroke="#ced4da" stroke-width="1.3"/>
+<text x="599.0" y="1358" font-size="14" font-weight="700" fill="#495057" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">随包资源</text>
+<text x="599.0" y="1377" font-size="12" font-weight="400" fill="#495057" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">/usr/local/share/</text>
+<text x="599.0" y="1394" font-size="12" font-weight="400" fill="#495057" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">cachyos-desktop/assets/**</text>
+<rect x="934.0" y="1334" width="338.0" height="80" rx="9" fill="#f8f9fa" stroke="#ced4da" stroke-width="1.3"/>
+<text x="947.0" y="1358" font-size="14" font-weight="700" fill="#495057" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">项目状态</text>
+<text x="947.0" y="1377" font-size="12" font-weight="400" fill="#495057" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">~/.config/cachyos-desktop/</text>
+<text x="947.0" y="1394" font-size="12" font-weight="400" fill="#495057" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">默认 agent 等</text>
+<rect x="1282.0" y="1334" width="338.0" height="80" rx="9" fill="#f8f9fa" stroke="#ced4da" stroke-width="1.3"/>
+<text x="1295.0" y="1358" font-size="14" font-weight="700" fill="#495057" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">运行数据</text>
+<text x="1295.0" y="1377" font-size="12" font-weight="400" fill="#495057" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">~/.local/state/cachyos-desktop/</text>
+<text x="1295.0" y="1394" font-size="12" font-weight="400" fill="#495057" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start" opacity="0.88">用量、崩溃、备份、日志</text>
+<rect x="46" y="1446" width="1588" height="76" rx="14" fill="#ffffff" stroke="#8c959f" stroke-width="1.6"/>
+<rect x="46" y="1446" width="156" height="76" rx="14" fill="#eef2f6" stroke="#8c959f" stroke-width="1.6"/>
+<rect x="188" y="1446" width="14" height="76" rx="0" fill="#eef2f6" stroke="none" stroke-width="0"/>
+<line x1="202" y1="1446" x2="202" y2="1522" stroke="#8c959f" stroke-width="1.6"/>
+<text x="124.0" y="1480" font-size="17" font-weight="700" fill="#24292f" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="middle">明确不改动</text>
+<text x="124.0" y="1504" font-size="12.5" font-weight="400" fill="#24292f" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="middle" opacity="0.72">安装器承诺</text>
+<text x="244" y="1484" font-size="14.5" font-weight="600" fill="#24292f" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">CachyOS 软件源与内核 · 引导器 · NetworkManager 连接 · Secure Boot 配置 · Windows 分区</text>
+<text x="244" y="1508" font-size="12.5" font-weight="400" fill="#57606a" font-family="'Noto Sans CJK SC','Noto Sans SC','Source Han Sans SC',sans-serif" text-anchor="start">覆盖范围限于本项目管理的用户配置与 /usr/local 下的资源；安装前写入包快照，便于回滚</text>
+</svg>
