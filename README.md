@@ -583,22 +583,30 @@ Super+Alt+2                聚焦或启动 Kitty
 ### Agent 启动层
 
 
-安装时会**自动确定默认 agent**：只探测到 1 个可用的 agent（`claude`/`codex`/`opencode`）就直接设为默认，
-按下 `Super+\`` 立刻能用；探测到多个则留空——第一次按会弹出选择器，选一次之后就被记住。
+安装时会**自动确定默认 agent**：只探测到 1 个可用的 agent 就直接设为默认，按下 `Super+\` 立刻能用；
+探测到多个则留空——第一次按会弹出选择器，选一次之后就被记住。
 
+安装器把四个 AI 编程 agent 接成同一套入口，并自动带上各自的"无人值守"旗标——这些旗标每个
+agent 都不一样，散落在快捷键里很难维护：
 
-安装器把三个 AI 编程 agent 接成同一套入口，并自动带上各自的"无人值守"旗标——这些旗标
-每个 agent 都不一样，散落在快捷键里很难维护：
-
-| agent | 包 | 无人值守旗标 |
+| agent | 包 / 形态 | 无人值守旗标 |
 | --- | --- | --- |
 | `opencode` | `opencode` | `--auto` |
 | `claude` | `claude-code` | `--permission-mode auto` |
 | `codex` | `openai-codex` | `--approve-for-me` |
+| `dsh` | `dsh`（按 profile 启动的 harness） | 无——审批策略在 profile 里，命令层不掺和 |
+
+`dsh` 的形态与前三个不同：**不带 prompt** 时进入交互 profile（默认 `dsh web`，可用
+`CACHYOS_DSH_PROFILE` 换成别的，例如 `tui`）；**带 prompt** 时走 `dsh headless` 一次性模式，
+答完就退出——所以它的窗口会**跑完留住**，否则答案一闪而过读不到。技能链接到 `~/.dsh/skills`。
+
+**怎么改默认 agent**——三种方式等价，改完立刻生效（不用重启 Niri）：
 
 ```bash
 cachyos-default-agent                 # 查看当前默认 agent（未设置时无输出）
-cachyos-default-agent codex           # 设为默认
+cachyos-default-agent claude          # ① 直接设为某个 agent：codex / claude / opencode / dsh
+cachyos-agent --pick                  # ② 弹选择器，选中即记住
+$EDITOR ~/.config/cachyos-desktop/agent   # ③ 手工写文件名（0600，两端空白会被去掉）
 cachyos-agent                         # 启动默认 agent；没有默认值时弹选择器
 cachyos-agent --pick                  # 强制重新选择
 cachyos-agent claude                  # 启动指定 agent

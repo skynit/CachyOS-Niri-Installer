@@ -59,12 +59,25 @@ argv_count() {
     printf '%s' "${#argv[@]}"
 }
 
-assert_equal 'codex claude opencode' "$(cachyos_agent_supported | paste -sd' ')" \
-    '支持的 agent 清单固定为 codex/claude/opencode'
+assert_equal 'codex claude opencode dsh' "$(cachyos_agent_supported | paste -sd' ')" \
+    '支持的 agent 清单固定为 codex/claude/opencode/dsh'
 
 assert_equal 'Codex' "$(cachyos_agent_name codex)" 'codex 的显示名'
 assert_equal 'Claude Code' "$(cachyos_agent_name claude)" 'claude 的显示名'
 assert_equal 'OpenCode' "$(cachyos_agent_name opencode)" 'opencode 的显示名'
+assert_equal 'DSH' "$(cachyos_agent_name dsh)" 'dsh 的显示名'
+assert_equal 'dsh' "$(cachyos_agent_binary dsh)" 'dsh 的二进制名'
+assert_equal '.dsh/skills' "$(cachyos_agent_skill_relpaths dsh)" 'dsh 的技能目录'
+
+# dsh 是按 profile 启动的 harness：无 prompt 进交互 profile，有 prompt 走 headless 一次性模式。
+# 它没有"无人值守"旗标（审批策略在 profile 里），所以这里不该凭空加旗标。
+assert_equal 'dsh|web' "$(argv_of dsh)" 'dsh 无 prompt 时进默认交互 profile'
+assert_equal 'dsh|headless|--|审查这个改动' "$(argv_of dsh '审查这个改动')" \
+    'dsh 带 prompt 时走 headless 一次性模式'
+assert_equal 'dsh|tui' "$(CACHYOS_DSH_PROFILE=tui argv_of dsh)" \
+    'dsh 的交互 profile 可用 CACHYOS_DSH_PROFILE 指定'
+assert_equal 'true' "$(cachyos_agent_hold_window dsh)" 'dsh 需要跑完留住窗口（否则读不到答案）'
+assert_equal 'false' "$(cachyos_agent_hold_window claude)" '交互式 agent 不需要留住窗口'
 
 assert_equal 'opencode|--auto' "$(argv_of opencode)" \
     'opencode 无 prompt 时使用 --auto'
@@ -168,7 +181,7 @@ assert_equal '.agents/skills' "$(cachyos_agent_skill_relpaths opencode)" \
 assert_equal 'cachyos-agent' "$CACHYOS_AGENT_WINDOW_CLASS" \
     '所有 agent 共用一个窗口 class'
 
-assert_equal "$(printf 'codex\tCodex\nclaude\tClaude Code\nopencode\tOpenCode')" \
+assert_equal "$(printf 'codex\tCodex\nclaude\tClaude Code\nopencode\tOpenCode\ndsh\tDSH')" \
     "$(cachyos_agent_list_display)" '显示清单的 id 与名称对齐'
 
 # 未知 agent 必须既不输出 argv、也不静默成功。

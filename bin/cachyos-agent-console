@@ -19,10 +19,13 @@ readonly DEFAULT_MIN_SECONDS=15
 
 usage() {
     cat <<EOF
-Usage: $SCRIPT_NAME <agent> <命令...>
+Usage: $SCRIPT_NAME [--hold] <agent> <命令...>
 
 在独立窗口里运行 agent，结束时按需发通知、失败时保留窗口。一般由 cachyos-agent 自动调用，
 不需要手工执行。
+
+  --hold   无论成功失败都留住窗口。给"一次性模式"的 agent 用（例如 dsh headless：
+           答案打到 stdout 就退出，不 hold 的话窗口一闪而过，等于什么都没看到）。
 
 配置（可选）：$NOTIFY_MODE_FILE
   auto    默认：超过 ${DEFAULT_MIN_SECONDS} 秒或失败才提醒
@@ -34,12 +37,34 @@ Usage: $SCRIPT_NAME <agent> <命令...>
 EOF
 }
 
-case "${1:-}" in
-    -h | --help | "")
-        usage
-        exit 0
-        ;;
-esac
+hold=false
+while (($# > 0)); do
+    case "$1" in
+        --hold)
+            hold=true
+            shift
+            ;;
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            printf '%s: 未知参数 %s\n' "$SCRIPT_NAME" "$1" >&2
+            usage >&2
+            exit 2
+            ;;
+        *) break ;;
+    esac
+done
+
+if (($# == 0)); then
+    usage >&2
+    exit 2
+fi
 
 readonly AGENT_ID="$1"
 shift
@@ -134,6 +159,12 @@ fi
 if ((status != 0)); then
     # 失败时保留窗口：报错往往就在最后几屏，一闪而过等于白跑。
     printf '\n%s 退出码 %d，窗口保留供查看。按 Enter 关闭。\n' "$label" "$status"
+    if [[ -t 0 ]]; then
+        read -r || true
+    fi
+elif [[ $hold == true ]]; then
+    # 一次性模式（dsh headless）：答案就在刚才的输出里，留住窗口让人读完。
+    printf '\n按 Enter 关闭窗口。'
     if [[ -t 0 ]]; then
         read -r || true
     fi

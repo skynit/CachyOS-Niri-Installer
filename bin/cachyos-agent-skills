@@ -61,7 +61,8 @@ known_skill_relpaths() {
         '.gemini/config/skills' \
         '.pi/agent/skills' \
         '.hermes/skills' \
-        '.cc-switch/skills'
+        '.cc-switch/skills' \
+        '.dsh/skills'
 
     local profile
     for profile in "$HOME"/.hermes/profiles/*/skills; do

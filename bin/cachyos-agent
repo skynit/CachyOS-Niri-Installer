@@ -193,7 +193,12 @@ launch() {
     local console_path=""
     console_path="$(sibling_path cachyos-agent-console 2>/dev/null || true)"
     if [[ -n $console_path ]]; then
-        window_command=("$console_path" "$agent" "${command[@]}")
+        local -a console_args=()
+        # 一次性模式的 agent（如 dsh headless）答完就退出，必须留住窗口才能读到答案。
+        if [[ "$(cachyos_agent_hold_window "$agent" 2>/dev/null || printf 'false')" == true ]]; then
+            console_args+=(--hold)
+        fi
+        window_command=("$console_path" "${console_args[@]}" "$agent" "${command[@]}")
     fi
 
     exec kitty --class "$CACHYOS_AGENT_WINDOW_CLASS" -e "${window_command[@]}"

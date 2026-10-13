@@ -20,7 +20,7 @@ CACHYOS_AGENT_LIB_PROTOCOL=2
 
 # 支持的 agent id，每行一个。
 cachyos_agent_supported() {
-    printf '%s\n' codex claude opencode
+    printf '%s\n' codex claude opencode dsh
 }
 
 # 人类可读名。未知 id 返回 1 且不输出。
@@ -29,6 +29,7 @@ cachyos_agent_name() {
         codex) printf '%s\n' 'Codex' ;;
         claude) printf '%s\n' 'Claude Code' ;;
         opencode) printf '%s\n' 'OpenCode' ;;
+        dsh) printf '%s\n' 'DSH' ;;
         *) return 1 ;;
     esac
 }
@@ -44,6 +45,7 @@ cachyos_agent_binary() {
         codex) printf '%s\n' codex ;;
         claude) printf '%s\n' claude ;;
         opencode) printf '%s\n' opencode ;;
+        dsh) printf '%s\n' dsh ;;
         *) return 1 ;;
     esac
 }
@@ -53,6 +55,7 @@ cachyos_agent_skill_relpaths() {
         codex) printf '%s\n' '.codex/skills' ;;
         claude) printf '%s\n' '.claude/skills' ;;
         opencode) printf '%s\n' '.agents/skills' ;;
+        dsh) printf '%s\n' '.dsh/skills' ;;
         *) return 1 ;;
     esac
 }
@@ -82,6 +85,17 @@ cachyos_agent_command() {
         opencode)
             command=(opencode --auto)
             ;;
+        dsh)
+            # dsh 不是普通 agent CLI，而是按 profile 启动的 harness：
+            #   无 prompt → 进入交互 profile（默认 web，可用 CACHYOS_DSH_PROFILE 换）
+            #   有 prompt → headless 一次性模式：答完打印结果就退出
+            # 它没有"无人值守"旗标——审批策略由 profile 决定，命令这一层不掺和。
+            if [[ -n $prompt ]]; then
+                command=(dsh headless)
+            else
+                command=(dsh "${CACHYOS_DSH_PROFILE:-web}")
+            fi
+            ;;
         *)
             return 1
             ;;
@@ -94,7 +108,22 @@ cachyos_agent_command() {
         esac
     fi
 
+    # dsh headless 把答案打到 stdout 就退出：窗口若立刻关闭，用户根本读不到结果。
+    # 由 cachyos-agent-console 的 --hold 负责留住窗口，这里只声明"谁需要"。
+    if [[ $agent == dsh && -n $prompt ]]; then
+        :
+    fi
+
     printf '%s\0' "${command[@]}"
+}
+
+# 需要"跑完留住窗口"的 agent：一次性模式会把答案打到 stdout 就退出，
+# 不 hold 的话窗口一闪而过。其余 agent 是交互式，退出即用户主动结束，不必 hold。
+cachyos_agent_hold_window() {
+    case "${1:-}" in
+        dsh) printf 'true\n' ;;
+        *) printf 'false\n' ;;
+    esac
 }
 
 # "id<TAB>名称" —— 给 fzf 选择器和 --list 用。
