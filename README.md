@@ -123,7 +123,7 @@ AI 编程助手层（与桌面解耦，可单独使用）
 
 | 路径 | 内容 |
 | --- | --- |
-| `/usr/local/bin/cachyos-*` | 本项目的 66 个命令（`agent`、`usage-*`、`voxtype-*`、`crash-*` 等） |
+| `/usr/local/bin/cachyos-*` | 本项目的 68 个命令（`agent`、`usage-*`、`voxtype-*`、`crash-*` 等） |
 | `/usr/local/share/cachyos-desktop/assets/**` | 随包资源：技能、DMS 插件、配置模板、脚本库 |
 | `~/.config/niri/` | 主配置、`cachyos-extras.kdl` 扩展、`dms/` 下生成的配色与快捷键 |
 | `~/.config/waybar/` | 顶栏、底栏与样式 |
@@ -534,6 +534,7 @@ Ctrl+Print                 当前窗口截图
 Shift+Print                当前显示器截图
 Super+Shift+S              区域截图并使用 Satty 编辑
 音量、媒体、亮度功能键      通过 DMS IPC 控制
+Super+\                    问 AI：把选中/剪贴板/暂存改动交给 agent
 Super+' / Super+F9         开始或结束本地听写（装了听写才有这两个键）
 Super+Ctrl+F2/F3/F4        顶栏、底栏和 Waybar 开关
 Super+Ctrl+F9              开始或停止区域录屏
@@ -562,12 +563,14 @@ Super+Alt+2                聚焦或启动 Kitty
 | 能力 | 入口 | 默认安装 | 依赖 |
 | --- | --- | --- | --- |
 | 统一启动层 | `Super+\`` → `cachyos-agent` | 是 | 至少一个 agent CLI |
+| 按需提问 | `Super+\` → `cachyos-ask` | 是 | 选区/剪贴板，或 git 仓库 |
 | 技能分发 | `cachyos-agent-skills` | 是 | agent 自身的技能目录 |
 | 崩溃诊断 | `cachyos-crash-watch` + `cachyos-agent-crash` | 是 | `systemd-coredump` |
 | 用量统计与面板 | `cachyos-agent-usage-*` + DMS 插件 | 是 | 本机 agent 会话记录 |
 | 主题同步 | `cachyos-agent-theme-sync` | 是 | DMS 生成的配色文件 |
 | 配置镜像 | `cachyos-ai-config-sync` | 是（有 CC Switch 时生效） | CC Switch 数据库 |
 | 本地听写 | `cachyos-voxtype-*` | 否（可选组件） | Voxtype 与语音模型 |
+| 跑完提醒 | `cachyos-agent-console` | 是 | 桌面通知（DMS 或 notify-send） |
 
 四条设计原则：
 
@@ -613,6 +616,48 @@ cachyos-agent-prompt "审查这个改动"     # 带一段 prompt 启动默认 ag
 - 三个 agent 的 `-p`/`--help` 之类参数不会被误当成选项：`claude` 与 `codex` 的 prompt
   统一用 `--` 分隔（`opencode` 走自己的 `--prompt`）。prompt 里的换行、引号、反斜杠、
   `$`、制表符都原样传给 agent。
+
+### 按需提问：cachyos-ask
+
+`Super+\` 会把**手边的东西**直接交给默认 agent：选中的文字 → 主选区，复制的报错/日志 →
+剪贴板，`commit` / `review` 动作在没有文本时自动改用**当前仓库的暂存改动**。选完动作就开新
+Kitty 窗口，agent 带着这段上下文起来——省掉"复制 → 切窗口 → 粘贴 → 补一句要求"。
+
+```bash
+cachyos-ask                       # 弹动作选择器（解释/排查/审查/总结/翻译/提交信息/转命令）
+cachyos-ask --action fix          # 直接指定动作，对剪贴板里的报错用
+cachyos-ask --action shell "找出占用 8080 的进程并杀掉"
+cachyos-ask --action review       # 无文本时用 git diff --cached
+cachyos-ask --print --action explain "一段文字"   # 只打印将发送的 prompt，不启动 agent
+cachyos-ask --agent codex --action commit         # 指定用哪个 agent
+```
+
+| 动作 | 做什么 |
+| --- | --- |
+| `explain` | 解释这段在做什么、关键点与坑 |
+| `fix` | 定位报错原因 + 可执行的修复步骤 |
+| `review` | 审查改动里的真问题，按严重程度排序 |
+| `summarize` | 用中文总结，保留关键事实与数字 |
+| `translate` | 翻成自然的中文技术表达 |
+| `commit` | 按暂存改动写一条规范的提交信息 |
+| `shell` | 把一句话转成可执行的 bash 命令 |
+
+文本上限 `CACHYOS_ASK_MAX_CHARS`（默认 12000）会截断并注明，避免把 agent 的上下文一次冲爆。
+
+### 跑完提醒：cachyos-agent-console
+
+agent 都在自己的 Kitty 窗口里跑，长任务时人早就切走了。`cachyos-agent` 的新窗口模式现在套一层
+包装：**跑完发一条桌面通知**（长任务或失败时），**失败时窗口不关**，让你能直接读到报错。
+
+打扰程度可配 `~/.config/cachyos-desktop/agent-notify`：
+
+```text
+auto    默认：超过 15 秒或失败才提醒
+always  每次结束都提醒
+off     不提醒
+```
+
+阈值可用 `CACHYOS_AGENT_NOTIFY_MIN_SECONDS` 覆盖（例如设为 0 便于自检）。
 
 ### Agent 技能
 
@@ -935,6 +980,8 @@ https://api.anthropic.com/api/oauth/usage
 | --- | --- |
 | `cachyos-agent [<agent>]` | 启动默认或指定 agent；`--inline` 当前终端、`--pick` 重选、`--list` 列出、`--validate <id>` 校验 |
 | `cachyos-agent-prompt [--inline] <prompt...>` | 带一段 prompt 启动默认 agent |
+| `cachyos-ask [--action <名>] [--agent <id>] [--print] [<文本...>]` | 把选区/剪贴板/暂存改动交给 agent |
+| `cachyos-agent-console <agent> <命令...>` | 跑 agent 并在结束后通知（由启动器自动调用） |
 | `cachyos-default-agent [<agent>]` | 查看或设置默认 agent |
 | `cachyos-agent-skills [--quiet] [--harness <agent>] [--create-supported]` | 建立技能软链 |
 | `cachyos-agent-usage-update [--force] [--limits-only] [--except <agent>] [agent...]` | 重算用量（`--limits-only` 只刷限额） |

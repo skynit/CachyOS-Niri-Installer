@@ -1,0 +1,255 @@
+#!/usr/bin/env bash
+
+# 把"手边的东西"直接交给 AI agent：选中的文字、剪贴板、或当前仓库的暂存改动。
+#
+# 为什么需要它：agent CLI 本身不知道你刚才看到什么。出错信息在终端里、代码在编辑器里、
+# 日志在剪贴板里——每次都要"复制 → 切窗口 → 粘贴 → 补一句要求"。这个命令把最后两步省掉：
+# 选动作（解释/排查/审查/总结/翻译/写提交信息/转命令），剩下的交给默认 agent。
+#
+# 它是 cachyos-agent 的前端：文本在这里收集与排版，启动仍走 cachyos-agent --prompt，
+# 所以默认 agent、选择器、窗口类别这些行为完全一致。
+
+set -Eeuo pipefail
+
+readonly SCRIPT_NAME="${0##*/}"
+SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SELF_DIR
+readonly MAX_CHARS="${CACHYOS_ASK_MAX_CHARS:-12000}"
+
+action=""
+agent=""
+print_only=false
+inline=false
+
+usage() {
+    cat <<EOF
+用法: $SCRIPT_NAME [选项] [文本...]
+
+把选中的文字、剪贴板内容或当前仓库的暂存改动交给默认 AI agent。
+
+选项:
+  --action <名>   直接指定动作（不指定时，有终端就弹选择器）
+  --agent <id>    指定 agent（默认用 cachyos-default-agent 记住的那个）
+  --print         只打印将要发送的 prompt，不启动 agent（便于脚本化与自检）
+  --inline        在当前终端运行 agent（默认另开 Kitty 窗口）
+  -h, --help      显示本帮助
+
+动作:
+  explain    解释这段内容在做什么、关键点与坑
+  fix        定位报错原因并给出可执行的修复步骤
+  review     审查改动（正确性/边界/并发/安全/性能，按严重程度排序）
+  summarize  用中文总结，保留关键事实与数字
+  translate  翻译成自然的中文技术表达
+  commit     写一条提交信息（无文本时用 git diff --cached）
+  shell      把一句话变成 bash 命令
+
+文本来源（按优先级）: 命令行参数 → 主选区 → 剪贴板；
+commit/review 在没有文本、选区也为空时，自动改用当前仓库的暂存改动。
+
+环境变量:
+  CACHYOS_ASK_MAX_CHARS   文本上限，默认 $MAX_CHARS 字符，超出会截断并注明
+EOF
+}
+
+actions() {
+    cat <<'ACTIONS'
+explain	解释：这段在做什么、关键点与坑
+fix	排查：定位报错原因 + 可执行的修复步骤
+review	审查：改动里的真问题，按严重程度排序
+summarize	总结：保留关键事实与数字
+translate	翻译：翻成自然的中文技术表达
+commit	提交信息：按暂存改动写一条规范的 commit message
+shell	转命令：把一句话变成可执行的 bash 命令
+ACTIONS
+}
+
+template_for() {
+    case "$1" in
+        explain)
+            printf '解释下面这段内容：它在做什么、关键点是什么、有没有坑。先给结论再展开。'
+            ;;
+        fix)
+            printf '下面这段输出出错了。请定位原因，并给出可直接执行的修复步骤（先给结论，再给命令或补丁）。'
+            ;;
+        review)
+            printf '审查下面的改动，只指出真实问题（正确性、边界条件、并发、安全、性能），按严重程度排序，不要泛泛而谈。'
+            ;;
+        summarize)
+            printf '用中文总结下面这段内容，保留关键事实与数字，不要添加评论。'
+            ;;
+        translate)
+            printf '把下面内容翻译成自然的中文技术表达，代码、命令与专有名词保留原文。'
+            ;;
+        commit)
+            printf '根据下面的改动写一条提交信息：第一行不超过 72 字符、用祈使句，需要时再补正文列表。只输出提交信息本身。'
+            ;;
+        shell)
+            printf '把下面这句话转换成可执行的 bash 命令，先给命令，再逐条简要说明参数；如有危险操作请显式提醒。'
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+valid_action() {
+    actions | cut -f1 | grep -qx -- "$1"
+}
+
+# 读取主选区/剪贴板；没有 wl-clipboard 或内容为空都返回空。
+primary_selection() {
+    command -v wl-paste >/dev/null 2>&1 || return 0
+    wl-paste --primary --no-newline 2>/dev/null || true
+}
+
+clipboard_text() {
+    command -v wl-paste >/dev/null 2>&1 || return 0
+    wl-paste --no-newline 2>/dev/null || true
+}
+
+staged_changes() {
+    command -v git >/dev/null 2>&1 || return 0
+    git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+    local diff
+    diff="$(git diff --cached --no-color 2>/dev/null || true)"
+    [[ -n $diff ]] || return 0
+    printf '（仓库：%s，分支：%s，以下为 git diff --cached）\n%s' \
+        "$(git rev-parse --show-toplevel 2>/dev/null)" \
+        "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" \
+        "$diff"
+}
+
+truncate_text() {
+    local text="$1"
+    if ((${#text} > MAX_CHARS)); then
+        printf '%s\n\n…（内容过长，已截断到前 %d 个字符）' "${text:0:MAX_CHARS}" "$MAX_CHARS"
+    else
+        printf '%s' "$text"
+    fi
+}
+
+pick_action() {
+    local selection_file inner
+    # stdin 是管道时（脚本调用）不能用 fzf 的默认界面，所以要判断的不是 stdout。
+    if [[ -t 0 ]]; then
+        actions | fzf --delimiter='\t' --with-nth=2 --prompt='要做什么> ' --reverse | cut -f1
+        return 0
+    fi
+    if ! command -v kitty >/dev/null 2>&1; then
+        printf 'explain'
+        return 0
+    fi
+    selection_file="$(mktemp)"
+    inner="$(printf '%q' "$SELF_DIR/$SCRIPT_NAME") --list-actions | fzf --delimiter='\t' --with-nth=2 --prompt='要做什么> ' --reverse | cut -f1"
+    if kitty --class cachyos-agent-pick sh -c "$inner > $(printf '%q' "$selection_file")"; then
+        cat "$selection_file" 2>/dev/null || true
+    fi
+    rm -f "$selection_file"
+}
+
+# ------------------------------------------------------------------ 参数
+text_args=()
+while (($# > 0)); do
+    case "$1" in
+        --action)
+            [[ -n ${2:-} ]] || { printf '%s: --action 需要参数\n' "$SCRIPT_NAME" >&2; exit 2; }
+            action="$2"
+            shift 2
+            ;;
+        --agent)
+            [[ -n ${2:-} ]] || { printf '%s: --agent 需要参数\n' "$SCRIPT_NAME" >&2; exit 2; }
+            agent="$2"
+            shift 2
+            ;;
+        --print)
+            print_only=true
+            shift
+            ;;
+        --inline)
+            inline=true
+            shift
+            ;;
+        --list-actions)
+            actions
+            exit 0
+            ;;
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        --)
+            shift
+            text_args+=("$@")
+            break
+            ;;
+        -*)
+            printf '%s: 未知参数 %s\n' "$SCRIPT_NAME" "$1" >&2
+            usage >&2
+            exit 2
+            ;;
+        *)
+            text_args+=("$1")
+            shift
+            ;;
+    esac
+done
+
+if [[ -n $action ]] && ! valid_action "$action"; then
+    printf '%s: 不支持的动作 %s\n可用动作: %s\n' \
+        "$SCRIPT_NAME" "$action" "$(actions | cut -f1 | tr '\n' ' ')" >&2
+    exit 2
+fi
+
+if [[ -z $action ]]; then
+    action="$(pick_action)"
+    [[ -n $action ]] || action="explain"
+    valid_action "$action" || action="explain"
+fi
+
+# ------------------------------------------------------------------ 收集文本
+text=""
+source_label=""
+if ((${#text_args[@]} > 0)); then
+    text="${text_args[*]}"
+    source_label="命令行给出的文本"
+else
+    if [[ $action == commit || $action == review ]]; then
+        text="$(staged_changes)"
+        [[ -n $text ]] && source_label="当前仓库的暂存改动"
+    fi
+    if [[ -z $text ]]; then
+        text="$(primary_selection)"
+        [[ -n $text ]] && source_label="当前选中的文字"
+    fi
+    if [[ -z $text ]]; then
+        text="$(clipboard_text)"
+        [[ -n $text ]] && source_label="剪贴板内容"
+    fi
+fi
+
+if [[ -z ${text//[[:space:]]/} ]]; then
+    printf '%s: 没有拿到任何文本。\n' "$SCRIPT_NAME" >&2
+    printf '  请先选中一段文字、复制到剪贴板，或直接把文本作为参数传进来；\n' >&2
+    printf '  例如：%s --action fix "make: *** [Makefile:3: all] Error 1"\n' "$SCRIPT_NAME" >&2
+    exit 3
+fi
+
+prompt="$(template_for "$action")"
+[[ -n $source_label ]] && prompt+=$'\n\n'"（以下是$source_label）"
+prompt+=$'\n\n---\n'
+prompt+="$(truncate_text "$text")"
+
+if [[ $print_only == true ]]; then
+    printf '%s\n' "$prompt"
+    exit 0
+fi
+
+# ------------------------------------------------------------------ 交给 agent
+launch_args=()
+[[ $inline == true ]] && launch_args+=(--inline)
+[[ -n $agent ]] && launch_args+=("$agent")
+
+if command -v cachyos-agent >/dev/null 2>&1; then
+    exec cachyos-agent "${launch_args[@]}" --prompt "$prompt"
+fi
+exec "$SELF_DIR/cachyos-agent" "${launch_args[@]}" --prompt "$prompt"

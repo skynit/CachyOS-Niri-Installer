@@ -197,12 +197,13 @@ for i, (title, lines) in enumerate(extra):
 height_cursor += H5 + GAP
 
 # ---------------------------------------------------------------- 6. AI 层
-H6 = 420
+H6 = 458
 band(height_cursor, H6, "AI 层", "本项目，与桌面解耦", "ai")
 y0 = height_cursor + PAD + 8
 ai_w = (CONTENT_W - PAD * 2 - 2 * 12) / 3
 row1 = [
-    ("统一启动层", ["cachyos-agent", "Super+` 启动默认 agent；", "多个则弹选择器"]),
+    ("统一启动层 + 按需提问", ["cachyos-agent（Super+`）", "cachyos-ask（Super+\\）：选区 /",
+                          "剪贴板 / 暂存改动 → 动作 → agent"]),
     ("技能分发", ["cachyos / diagnose-crash", "软链进 Claude、Codex、", "OpenCode、CC Switch"]),
     ("崩溃诊断", ["systemd-coredump →", "cachyos-crash-watch →", "通知 → agent 分析"]),
 ]
@@ -217,18 +218,23 @@ row2 = [
 for i, (title, lines) in enumerate(row2):
     box(CONTENT_X + PAD + i * (ai_w + 12), row2_y, ai_w, 78, title, lines, "ai")
 mirror_y = row2_y + 78 + 14
-box(CONTENT_X + PAD, mirror_y, ai_w * 3 + 24, 52, "配置镜像（可选）",
-    ["cachyos-ai-config-sync：CC Switch ↔ Codex Desktop 的非敏感字段镜像"
-     "（会改写 Codex 自己的 auth.json，改前备份）"], "ai", title_size=14, line_size=12)
+half = (ai_w * 3 + 24 - 12) / 2
+box(CONTENT_X + PAD, mirror_y, half, 64, "跑完提醒",
+    ["cachyos-agent-console：长任务或失败时", "发桌面通知，失败时窗口不关"], "ai",
+    title_size=14, line_size=12)
+box(CONTENT_X + PAD + half + 12, mirror_y, half, 64, "配置镜像（可选）",
+    ["cachyos-ai-config-sync：CC Switch ↔ Codex", "Desktop 的非敏感字段镜像"], "ai",
+    title_size=14, line_size=12)
 
 # 数据流单独成块：早先用跨层箭头画，结果压住方框、语义也对不上
 # （"崩溃交给 agent" 指到了配置镜像）。集中列成面板，改一条只动一行。
-flow_y = mirror_y + 52 + 12
-box(CONTENT_X + PAD, flow_y, ai_w * 3 + 24, 132, "数据流", [
+flow_y = mirror_y + 64 + 12
+box(CONTENT_X + PAD, flow_y, ai_w * 3 + 24, 154, "数据流", [
     "会话日志（Claude / Codex / DSH） → 4 个采集器 → usage/*.json → DMS 用量面板（状态栏与弹窗）",
     "dms-colors.json（DMS 主题引擎） → 主题同步 → Claude 自定义主题 / Hermes skin",
     "systemd-coredump → crash-watch → 桌面通知 → cachyos-agent-crash → 交给 agent 分析",
-    "Super+` → 启动层 → agent CLI（Claude / Codex / OpenCode，默认值可记忆）",
+    "Super+` → 启动层 → agent CLI；Super+\\ → 取选区/剪贴板/暂存改动 → 同一套 agent",
+    "agent 退出 → cachyos-agent-console → 通知（长任务或失败）；失败保留窗口",
     "api.anthropic.com 限额查询 = 唯一的联网行为（只读复用本机凭据）；其余全部读本地文件",
 ], kind="flow", title_size=14, line_size=12)
 height_cursor += H6 + GAP
@@ -239,7 +245,7 @@ band(height_cursor, H7, "文件与状态", "随包 + 运行时", "state")
 y = height_cursor + PAD + 8
 w4b = (CONTENT_W - PAD * 2 - 3 * 10) / 4
 state = [
-    ("命令", ["/usr/local/bin/cachyos-*", "66 个命令"]),
+    ("命令", ["/usr/local/bin/cachyos-*", "68 个命令"]),
     ("随包资源", ["/usr/local/share/", "cachyos-desktop/assets/**"]),
     ("项目状态", ["~/.config/cachyos-desktop/", "默认 agent 等"]),
     ("运行数据", ["~/.local/state/cachyos-desktop/", "用量、崩溃、备份、日志"]),

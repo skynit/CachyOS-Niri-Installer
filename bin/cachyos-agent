@@ -51,6 +51,21 @@ Options:
 EOF
 }
 
+# 同目录兄弟命令的路径；找不到返回非 0。数组调用（如 kitty -e）需要路径而不是"执行它"。
+sibling_path() {
+    local name="$1"
+
+    if command -v "$name" >/dev/null 2>&1; then
+        command -v "$name"
+        return 0
+    fi
+    if [[ -x $SELF_DIR/$name ]]; then
+        printf '%s' "$SELF_DIR/$name"
+        return 0
+    fi
+    return 127
+}
+
 # 未安装时回落到同目录的兄弟命令，使仓库内直接运行也可用。
 sibling_command() {
     local name="$1"
@@ -171,7 +186,17 @@ launch() {
     if [[ $inline == true ]]; then
         exec "${command[@]}"
     fi
-    exec kitty --class "$CACHYOS_AGENT_WINDOW_CLASS" -e "${command[@]}"
+
+    # 新窗口模式套一层 console 包装：跑完发通知（长任务不必盯着），失败时窗口不关。
+    # 包装器缺失时退回原样启动——提醒是加分项，不能因此让 agent 起不来。
+    local -a window_command=("${command[@]}")
+    local console_path=""
+    console_path="$(sibling_path cachyos-agent-console 2>/dev/null || true)"
+    if [[ -n $console_path ]]; then
+        window_command=("$console_path" "$agent" "${command[@]}")
+    fi
+
+    exec kitty --class "$CACHYOS_AGENT_WINDOW_CLASS" -e "${window_command[@]}"
 }
 
 main() {

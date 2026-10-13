@@ -23,6 +23,8 @@ input {
 }
 
 binds {
+    // 把选中/剪贴板/暂存改动交给 AI agent：Super+\ 一处入口，动作在弹窗里选。
+    Mod+Backslash hotkey-overlay-title="问 AI：解释/排查/审查/总结/翻译/提交信息" { spawn "cachyos-ask"; }
     Mod+Ctrl+F2 hotkey-overlay-title="Waybar top" { spawn "cachyos-waybar-top"; }
     Mod+Ctrl+F3 hotkey-overlay-title="Waybar bottom" { spawn "cachyos-waybar-bottom"; }
     Mod+Ctrl+F4 hotkey-overlay-title="Toggle Waybar" { spawn "cachyos-waybar-toggle"; }

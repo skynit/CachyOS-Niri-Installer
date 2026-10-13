@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+
+# 在独立窗口里运行 AI agent，并在结束时给出桌面通知。
+#
+# 为什么需要这一层：agent 都在自己的 Kitty 窗口里跑，跑长任务时人早就切去干别的了，
+# 而 `cachyos-agent` 以前是 `kitty -e <agent 命令>`——窗口一关什么都没留下。这层包装补两件事：
+#   1. **跑完提醒**：超过阈值（默认 15 秒）或失败时发一条桌面通知，长任务不必盯着看；
+#   2. **失败不关窗**：退出码非 0 时窗口留着，让你能直接读报错，而不是一闪而过。
+#
+# 打扰程度可配：~/.config/cachyos-desktop/agent-notify 写 auto（默认）/ always / off。
+
+set -Eeuo pipefail
+
+readonly SCRIPT_NAME="${0##*/}"
+readonly STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/cachyos-desktop"
+readonly CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/cachyos-desktop"
+readonly NOTIFY_MODE_FILE="$CONFIG_DIR/agent-notify"
+readonly DEFAULT_MIN_SECONDS=15
+
+usage() {
+    cat <<EOF
+Usage: $SCRIPT_NAME <agent> <命令...>
+
+在独立窗口里运行 agent，结束时按需发通知、失败时保留窗口。一般由 cachyos-agent 自动调用，
+不需要手工执行。
+
+配置（可选）：$NOTIFY_MODE_FILE
+  auto    默认：超过 ${DEFAULT_MIN_SECONDS} 秒或失败才提醒
+  always  每次结束都提醒
+  off     不提醒
+环境变量：
+  CACHYOS_AGENT_NOTIFY_MIN_SECONDS   覆盖 auto 的秒数阈值
+  CACHYOS_AGENT_NOTIFY_MODE          覆盖配置文件里的模式
+EOF
+}
+
+case "${1:-}" in
+    -h | --help | "")
+        usage
+        exit 0
+        ;;
+esac
+
+readonly AGENT_ID="$1"
+shift
+
+if (($# == 0)); then
+    printf '%s: 缺少要运行的命令\n' "$SCRIPT_NAME" >&2
+    exit 2
+fi
+
+notify() {
+    local message="$1"
+    if command -v dms >/dev/null 2>&1; then
+        dms notify "$message" >/dev/null 2>&1 && return 0
+    fi
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send "AI agent" "$message" >/dev/null 2>&1 && return 0
+    fi
+    return 1
+}
+
+notify_mode() {
+    local mode="${CACHYOS_AGENT_NOTIFY_MODE:-}"
+    if [[ -z $mode && -r $NOTIFY_MODE_FILE ]]; then
+        mode="$(tr -d '[:space:]' < "$NOTIFY_MODE_FILE")"
+    fi
+    case "$mode" in
+        always | off) printf '%s' "$mode" ;;
+        *) printf 'auto' ;;
+    esac
+}
+
+min_seconds() {
+    local value="${CACHYOS_AGENT_NOTIFY_MIN_SECONDS:-$DEFAULT_MIN_SECONDS}"
+    [[ $value =~ ^[0-9]+$ ]] || value="$DEFAULT_MIN_SECONDS"
+    printf '%s' "$value"
+}
+
+human_duration() {
+    local seconds="$1"
+    if ((seconds < 60)); then
+        printf '%d 秒' "$seconds"
+    elif ((seconds < 3600)); then
+        printf '%d 分 %d 秒' "$((seconds / 60))" "$((seconds % 60))"
+    else
+        printf '%d 小时 %d 分' "$((seconds / 3600))" "$(((seconds % 3600) / 60))"
+    fi
+}
+
+agent_label() {
+    local id="$1"
+    case "$id" in
+        claude) printf 'Claude Code' ;;
+        codex) printf 'Codex' ;;
+        opencode) printf 'OpenCode' ;;
+        dsh) printf 'DSH' ;;
+        *) printf '%s' "$id" ;;
+    esac
+}
+
+mkdir -p "$STATE_DIR"
+
+started_at="$(date +%s)"
+status=0
+# 不能用 `if ! "$@"; then status=$?`：`!` 会把状态取反，`$?` 永远是 0，
+# 失败会被当成成功、永远不通知（这个 bug 真踩过，测试里也加了一条守着）。
+status=0
+"$@" || status=$?
+elapsed=$(( $(date +%s) - started_at ))
+
+label="$(agent_label "$AGENT_ID")"
+here="${PWD/#$HOME/~}"
+mode="$(notify_mode)"
+should_notify=false
+case "$mode" in
+    always) should_notify=true ;;
+    off) should_notify=false ;;
+    *)
+        if ((status != 0)) || ((elapsed >= $(min_seconds))); then
+            should_notify=true
+        fi
+        ;;
+esac
+
+if [[ $should_notify == true ]]; then
+    if ((status == 0)); then
+        notify "$label 已完成（$(human_duration "$elapsed")）· $here" || true
+    else
+        notify "$label 失败：退出码 $status（$(human_duration "$elapsed")）· $here" || true
+    fi
+fi
+
+if ((status != 0)); then
+    # 失败时保留窗口：报错往往就在最后几屏，一闪而过等于白跑。
+    printf '\n%s 退出码 %d，窗口保留供查看。按 Enter 关闭。\n' "$label" "$status"
+    if [[ -t 0 ]]; then
+        read -r || true
+    fi
+fi
+
+exit "$status"
