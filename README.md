@@ -651,6 +651,24 @@ cachyos-ask --agent codex --action commit         # 指定用哪个 agent
 | `commit` | 按暂存改动写一条规范的提交信息 |
 | `shell` | 把一句话转成可执行的 bash 命令 |
 
+**同一天复用同一个会话**（默认行为）。问一问基本都是同一上下文里的连续追问——同一个报错、同一段代码，
+每次新开会话会让 agent 丢掉前文。所以它会找该 agent **当天最近的那个会话**，带着新问题继续问：
+
+| 情况 | 行为 |
+| --- | --- |
+| 当天已有该 agent 的会话 | 续接它（`claude --resume` / `codex resume` / `opencode --session` / `dsh headless --session-id`） |
+| 最近会话是过去的日子 | 开新会话 |
+| 换了 agent，或还没设默认 agent | 开新会话（没默认值时先弹选择器） |
+| 加了 `--new`，或 `CACHYOS_ASK_SESSION=new` | 强制开新会话 |
+
+会话判断复用 `cachyos-agent-resume` 的枚举（它已经读遍四个工具的存储、且有测试），这里不重复解析任何存储格式。
+
+`--show` 只打印将要执行的命令，便于确认它是续接还是新开：
+
+```bash
+cachyos-ask --show --action explain "这段代码什么意思"
+```
+
 文本上限 `CACHYOS_ASK_MAX_CHARS`（默认 12000）会截断并注明，避免把 agent 的上下文一次冲爆。
 
 ### 跨工具会话续接：cachyos-agent-resume
@@ -678,9 +696,10 @@ cachyos-agent-resume --show claude <会话 id>    # 只打印将要执行的命�
 续接命令由 agent 表统一构造：`claude --permission-mode auto --resume <id>`、
 `codex --approve-for-me resume <id>`、`opencode --auto --session <id>`。
 
-> **dsh 的限制（如实说明）**：dsh 按 profile 启动，而它的 `web` profile **不接受 `--resume`**
-> （本机只有 `web` 与 `headless` 两个 profile）。所以 dsh 的条目在表里标注「打开 Web UI」，
-> 选中后打开 Web UI 并告知会话名——不会假装能命令行续接。
+> **dsh 的续接（更正）**：它的 `web` profile 不接受 `--resume`，所以**选择器**里的 dsh 条目会打开
+> Web UI 让你在其中挑会话；但 `headless` profile 可以用 `--session-id` **采纳既有会话**——
+> `cachyos-ask` 的同天复用正是走这条路（`dsh headless --session-id <id> "<问题>"`）。
+> 也就是说"dsh 没有命令行续接"只对 web profile 成立，之前那句话写窄了。
 
 ### 跑完提醒：cachyos-agent-console
 

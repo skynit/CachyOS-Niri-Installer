@@ -117,17 +117,19 @@ cachyos_agent_command() {
     printf '%s\0' "${command[@]}"
 }
 
-# 续接既有会话的 argv，NUL 分隔（同 cachyos_agent_command）。
+# 续接既有会话的 argv，NUL 分隔（同 cachyos_agent_command）。第三个参数是可选的新 prompt：
+# "带着这个问题继续那个会话" 是 cachyos-ask 每天复用同一会话的关键。
 # 四个工具的语法各不相同，所以只在这一处定义：
-#   claude    --resume <session-id>
-#   codex     resume <SESSION_ID>（子命令；无人值守旗标是全局的，放子命令之前）
-#   opencode  --session <id>
-#   dsh       **没有命令行续接**：web profile 不接受 --resume（只有 web/headless 两个
-#             profile，且 web 的参数只有 host/port/no-open/trusted-host）。这里返回 1，
-#             由调用方给用户一条如实的提示，而不是假装能续接。
+#   claude    --resume <session-id> [-- <prompt>]
+#   codex     resume <SESSION_ID> [PROMPT]（无人值守旗标是全局的，放子命令之前）
+#   opencode  --session <id> [--prompt <prompt>]
+#   dsh       web profile 不能续接，但 **headless 可以**：--session-id <id> <prompt>
+#             （采用既有会话、答完就退出）。因此 dsh 只有在给出 prompt 时才有续接命令。
+# 任何拼不出来的情况都返回 1（并且不输出），由调用方决定退回新会话还是报错。
 cachyos_agent_resume_command() {
     local agent="${1:-}"
     local session_id="${2:-}"
+    local prompt="${3:-}"
     local -a command
 
     [[ -n $session_id ]] || return 1
@@ -135,12 +137,19 @@ cachyos_agent_resume_command() {
     case "$agent" in
         claude)
             command=(claude --permission-mode auto --resume "$session_id")
+            [[ -n $prompt ]] && command+=(-- "$prompt")
             ;;
         codex)
             command=(codex --approve-for-me resume "$session_id")
+            [[ -n $prompt ]] && command+=("$prompt")
             ;;
         opencode)
             command=(opencode --auto --session "$session_id")
+            [[ -n $prompt ]] && command+=(--prompt "$prompt")
+            ;;
+        dsh)
+            [[ -n $prompt ]] || return 1
+            command=(dsh headless --session-id "$session_id" "$prompt")
             ;;
         *)
             return 1
@@ -150,7 +159,9 @@ cachyos_agent_resume_command() {
     printf '%s\0' "${command[@]}"
 }
 
-# 该 agent 是否支持命令行续接（dsh 目前不支持，界面据此标注）。
+# 该 agent 是否支持"交互式"命令行续接（选择器用这个判据）。
+# dsh 的 web profile 没有 --resume，只有给出 prompt 时才能走 headless 采用既有会话，
+# 所以选择器里它仍然标注为"打开 Web UI"，而 cachyos-ask 会用到 headless 那条路径。
 cachyos_agent_can_resume() {
     case "${1:-}" in
         claude | codex | opencode) printf 'true\n' ;;

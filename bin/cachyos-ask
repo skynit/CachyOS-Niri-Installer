@@ -19,7 +19,9 @@ readonly MAX_CHARS="${CACHYOS_ASK_MAX_CHARS:-12000}"
 action=""
 agent=""
 print_only=false
+show_only=false
 inline=false
+new_session=false
 
 usage() {
     cat <<EOF
@@ -31,6 +33,8 @@ usage() {
   --action <名>   直接指定动作（不指定时，有终端就弹选择器）
   --agent <id>    指定 agent（默认用 cachyos-default-agent 记住的那个）
   --print         只打印将要发送的 prompt，不启动 agent（便于脚本化与自检）
+  --show          只打印将要执行的启动命令，不启动
+  --new           强制开新会话（默认：同一天内复用最近那个会话继续问）
   --inline        在当前终端运行 agent（默认另开 Kitty 窗口）
   -h, --help      显示本帮助
 
@@ -48,6 +52,11 @@ commit/review 在没有文本、选区也为空时，自动改用当前仓库的
 
 环境变量:
   CACHYOS_ASK_MAX_CHARS   文本上限，默认 $MAX_CHARS 字符，超出会截断并注明
+  CACHYOS_ASK_SESSION     day（默认，同一天复用会话）/ new（每次都开新会话）
+
+为什么默认复用会话：问一问的场景基本都是同一上下文里的连续追问（同一个报错、同一段代码），
+每次都新开一个会话会让 agent 丢掉前文。所以默认找该 agent **当天最近的那个会话**继续问；
+跨天或换 agent 时自然就开新会话。用 --new 或 CACHYOS_ASK_SESSION=new 可以强制新开。
 EOF
 }
 
@@ -165,6 +174,14 @@ while (($# > 0)); do
             print_only=true
             shift
             ;;
+        --show)
+            show_only=true
+            shift
+            ;;
+        --new)
+            new_session=true
+            shift
+            ;;
         --inline)
             inline=true
             shift
@@ -244,12 +261,56 @@ if [[ $print_only == true ]]; then
     exit 0
 fi
 
+# ------------------------------------------------------------------ 同一天复用会话
+# 目标 agent：显式指定的，或当前默认的（没有默认值时 cachyos-agent 会弹选择器，
+# 那种情况下无法预先知道是哪个 agent，于是不复用、直接开新会话）。
+target_agent="$agent"
+if [[ -z $target_agent ]]; then
+    target_agent="$(cachyos-default-agent 2>/dev/null || true)"
+fi
+
+resume_id=""
+reuse=true
+[[ $new_session == true || ${CACHYOS_ASK_SESSION:-} == new ]] && reuse=false
+
+if [[ $reuse == true && -n $target_agent ]]; then
+    # 会话枚举复用 cachyos-agent-resume（它已经读遍了四个工具的存储，且有测试）。
+    # 优先用同目录的兄弟命令：仓库内运行时行为确定（也便于测试隔离到假 HOME）。
+    resume_helper="$SELF_DIR/cachyos-agent-resume"
+    [[ -x $resume_helper ]] || resume_helper="$(command -v cachyos-agent-resume 2>/dev/null || true)"
+    latest=""
+    if [[ -n $resume_helper ]]; then
+        latest="$("$resume_helper" --list --agent "$target_agent" --limit 1 2>/dev/null | head -1 || true)"
+    fi
+    if [[ -n $latest ]]; then
+        latest_epoch="$(cut -f2 <<<"$latest")"
+        latest_id="$(cut -f6 <<<"$latest")"
+        if [[ $latest_epoch =~ ^[0-9]+$ && -n $latest_id ]]; then
+            if [[ "$(date -d "@$latest_epoch" +%Y-%m-%d 2>/dev/null)" == "$(date +%Y-%m-%d)" ]]; then
+                resume_id="$latest_id"
+            fi
+        fi
+    fi
+fi
+
 # ------------------------------------------------------------------ 交给 agent
 launch_args=()
 [[ $inline == true ]] && launch_args+=(--inline)
-[[ -n $agent ]] && launch_args+=("$agent")
+[[ -n $target_agent ]] && launch_args+=("$target_agent")
+[[ -n $resume_id ]] && launch_args+=(--resume "$resume_id")
+launch_args+=(--prompt "$prompt")
 
 if command -v cachyos-agent >/dev/null 2>&1; then
-    exec cachyos-agent "${launch_args[@]}" --prompt "$prompt"
+    agent_command=(cachyos-agent)
+else
+    agent_command=("$SELF_DIR/cachyos-agent")
 fi
-exec "$SELF_DIR/cachyos-agent" "${launch_args[@]}" --prompt "$prompt"
+
+if [[ $show_only == true ]]; then
+    printf '%s' "${agent_command[0]}"
+    printf ' %q' "${launch_args[@]}"
+    printf '\n'
+    exit 0
+fi
+
+exec "${agent_command[@]}" "${launch_args[@]}"

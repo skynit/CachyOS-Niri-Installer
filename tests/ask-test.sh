@@ -189,6 +189,71 @@ assert_equal '7' "$console_status" 'console：退出码原样传回（否则窗�
 CACHYOS_AGENT_NOTIFY_MODE=auto CACHYOS_AGENT_NOTIFY_MIN_SECONDS=0 console opencode sh -c 'exit 0' </dev/null >/dev/null 2>&1
 assert_contains "$(cat "$STUB_LOG")" "OpenCode 已完成" 'console：阈值可调（0 秒即通知）'
 
+# ---- 7.5 同一天复用会话（问一问的默认行为）-----------------------------------
+# 造一个"今天"的 claude 会话，并把默认 agent 设成 claude：--show 里应出现 --resume。
+ask_home="$WORK_DIR/ask-home"
+mkdir -p "$ask_home/.claude/projects/-home-u-proj" "$ask_home/.config/cachyos-desktop"
+printf 'claude\n' > "$ask_home/.config/cachyos-desktop/agent"
+session_file="$ask_home/.claude/projects/-home-u-proj/sess-today.jsonl"
+cat > "$session_file" <<'JSONL'
+{"type":"summary","sessionId":"sess-today"}
+{"type":"user","cwd":"/home/u/proj","sessionId":"sess-today","message":{"role":"user"}}
+JSONL
+touch "$session_file"
+
+show_ask() {
+    PATH="$stub_dir:$PATH" HOME="$ask_home" "$PROJECT_DIR/bin/cachyos-ask" --show "$@"
+}
+today_cmd="$(show_ask --action explain "接着问一句")"
+if [[ $today_cmd == *"--resume sess-today"* ]]; then
+    pass '复用：当天有会话时带着 prompt 续接它'
+else
+    fail '复用：当天有会话却没续接' "$today_cmd"
+fi
+
+touch -d '3 days ago' "$session_file"
+old_cmd="$(show_ask --action explain "新的一天")"
+if [[ $old_cmd != *"--resume"* ]]; then
+    pass '复用：最近会话是过去的日子时开新会话'
+else
+    fail '复用：跨天了还去续接' "$old_cmd"
+fi
+
+touch "$session_file"
+new_cmd="$(show_ask --new --action explain "我要新会话")"
+if [[ $new_cmd != *"--resume"* ]]; then
+    pass '复用：--new 强制开新会话'
+else
+    fail '复用：--new 没有生效' "$new_cmd"
+fi
+
+env_cmd="$(CACHYOS_ASK_SESSION=new show_ask --action explain "环境变量控制")"
+if [[ $env_cmd != *"--resume"* ]]; then
+    pass '复用：CACHYOS_ASK_SESSION=new 也能强制新会话'
+else
+    fail '复用：环境变量没有生效' "$env_cmd"
+fi
+
+# dsh 当天有会话时走 headless --session-id（它没有交互式续接，但能采纳既有会话）
+dsh_home="$WORK_DIR/dsh-home"
+mkdir -p "$dsh_home/.dsh/storages/session_projcache/sessions" "$dsh_home/.config/cachyos-desktop"
+printf 'dsh\n' > "$dsh_home/.config/cachyos-desktop/agent"
+dsh_sid="session-deadbeef-0000-1111-2222-333344445555"
+python3 - "$dsh_home/.dsh/storages/session_projcache/sessions/$dsh_sid.json" "$(date +%s)000" <<'EOF_INNER'
+import json, sys
+json.dump({"version": 1, "record": {
+    "identity": {"cwd": "/home/u/dsh"},
+    "rows": {"title": {"val": "dsh 会话"},
+             "timeContext": {"val": {"lastMessageTime": int(sys.argv[2])}}},
+}}, open(sys.argv[1], "w"))
+EOF_INNER
+dsh_cmd="$(PATH="$stub_dir:$PATH" HOME="$dsh_home" "$PROJECT_DIR/bin/cachyos-ask" --show --action explain "继续问")"
+if [[ $dsh_cmd == *"--resume $dsh_sid"* ]]; then
+    pass '复用：dsh 当天会话也会被续接（headless --session-id）'
+else
+    fail '复用：dsh 没走续接' "$dsh_cmd"
+fi
+
 # ---- 8. 启动器走 console 包装 -------------------------------------------------
 # 用受控的 HOME 指定默认 agent：直接读宿主的默认值会让断言随机器而变。
 launcher_home="$WORK_DIR/home"

@@ -173,9 +173,11 @@ launch() {
     if [[ -n $resume_id ]]; then
         # 续接走单独一张表：四个工具的续接语法与启动语法并不一样（dsh 甚至没有）。
         # 注意 mapfile 对"进程替换里的命令失败"仍返回 0，所以只能看数组长度。
-        mapfile -d '' -t command < <(cachyos_agent_resume_command "$agent" "$resume_id")
+        # 带 prompt 时走"续接那个会话并继续提问"（cachyos-ask 每天复用它）。
+        mapfile -d '' -t command < <(cachyos_agent_resume_command "$agent" "$resume_id" "$prompt")
         if ((${#command[@]} == 0)); then
-            printf '%s 不支持命令行续接（它的 web profile 没有 --resume）；请在它的界面里选择会话。\n' "$agent" >&2
+            printf '%s 没有可用的续接命令（dsh 的 web profile 不能续接，只有带 prompt 时才走 headless）；\n' "$agent" >&2
+            printf '  请在它的界面里选择会话，或用 cachyos-ask 带着问题续接。\n' >&2
             return 2
         fi
     else

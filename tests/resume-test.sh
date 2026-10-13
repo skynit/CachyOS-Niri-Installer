@@ -215,8 +215,10 @@ dsh_err="$(PATH="$stub_dir:$PATH" HOME="$home" "$PROJECT_DIR/bin/cachyos-agent" 
 dsh_status=$?
 set -e
 assert_equal '2' "$dsh_status" '启动器：dsh 续接退出码 2'
-if [[ $dsh_err == *"不支持命令行续接"* ]]; then
-    pass '启动器：dsh 续接给出如实的说明'
+# dsh 的 web profile 不能续接，但 headless 可以用 --session-id 采纳会话；
+# 报错文案必须说清这一点，而不是笼统地说"不支持"。
+if [[ $dsh_err == *"没有可用的续接命令"* && $dsh_err == *"headless"* ]]; then
+    pass '启动器：dsh 续接给出如实的说明（并指出 headless 那条路）'
 else
     fail '启动器：dsh 续接的说明不对' "$dsh_err"
 fi
