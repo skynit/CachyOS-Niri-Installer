@@ -2,7 +2,7 @@
   "id": "cachyosAgents",
   "name": "CachyOS Agents 用量",
   "description": "Claude Code / Codex / OpenCode / DSH 的 token 与费用统计，数据由本机采集",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "author": "skynit",
   "type": "widget",
   "capabilities": [

@@ -161,6 +161,30 @@ done
 if command -v node >/dev/null 2>&1; then
     if node --check "$PLUGIN_SRC/Usage.js" >/dev/null 2>&1; then
         pass '随包副本：Usage.js 语法有效（node --check）'
+
+# "设为默认 agent"按钮：弹窗只做展示（点它 → source.setDefaultAgent），进程在数据源层。
+# 这么分是为了让弹窗不依赖 Quickshell 运行时，能被单独语法校验（qmllint）。
+if grep -q '设为默认' "$PLUGIN_SRC/UsageDetails.qml"; then
+    pass '默认 agent：弹窗里有「设为默认」按钮'
+else
+    fail '默认 agent：弹窗里没有按钮'
+fi
+if grep -q 'installedAgents' "$PLUGIN_SRC/UsageDetails.qml" &&     grep -q 'parseAgentState' "$PLUGIN_SRC/UsageSource.qml"; then
+    pass '默认 agent：状态来自数据源，解析走 Usage.js'
+else
+    fail '默认 agent：弹窗与数据源的分工不对'
+fi
+if grep -q 'cachyos-default-agent' "$PLUGIN_SRC/UsageSource.qml"; then
+    pass '默认 agent：数据源调用 cachyos-default-agent'
+else
+    fail '默认 agent：数据源没有调用 cachyos-default-agent'
+fi
+if grep -q 'Quickshell.Io' "$PLUGIN_SRC/UsageDetails.qml"; then
+    fail '默认 agent：弹窗不该依赖 Quickshell（那样无法单独校验）'
+else
+    pass '默认 agent：弹窗保持纯展示（无 Quickshell 依赖）'
+fi
+
     else
         fail '随包副本：Usage.js 语法无效'
     fi

@@ -346,3 +346,27 @@ test('compactLabel 只给数字，供竖排状态栏使用', () => {
     assert.equal(usage.compactLabel([], {}), '');
     assert.equal(usage.compactLabel([{ id: 'claude' }], {}), '—');
 });
+
+test('parseAgentState：解析当前默认与已安装清单', () => {
+    const state = usage.parseAgentState([
+        'default=dsh',
+        'list=codex\tCodex',
+        'list=claude\tClaude Code  (未安装)',
+        'list=dsh\tDSH',
+        ''
+    ].join('\n'));
+    assert.equal(state.default, 'dsh');
+    assert.deepEqual(Object.keys(state.installed).sort(), ['codex', 'dsh']);
+    // 未安装的 agent 不能给"设为默认"按钮：设了之后 Super+` 起不来
+    assert.equal(state.installed.claude, undefined);
+});
+
+test('parseAgentState：异常输入退化成安全空值', () => {
+    // 断言基本值而不是整个对象：这个文件用的是 strict 断言，对象比较对
+    // "结构相同"也会因原型/引用细节报错，没必要为它绕。
+    for (const input of [null, undefined, '乱七八糟的输出', 'default=\nlist=\t\n']) {
+        const state = usage.parseAgentState(input);
+        assert.equal(state.default, '');
+        assert.equal(Object.keys(state.installed).length, 0);
+    }
+});

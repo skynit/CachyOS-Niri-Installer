@@ -762,6 +762,8 @@ cachyos-crash-mute SomeApp off      # 恢复提醒
 范围钉到某一个 agent）。点开是每个 agent 的明细（今天/累计的 token 与费用、会话与提示数、按费用
 排序的模型、最近 7 天的**折线图**）。默认登记 Claude Code、Codex、OpenCode 与
 **DSH（DeepSeek Harness）**，每个都能在插件设置里单独关掉。
+每张卡片右上角有「**设为默认**」按钮——点一下就把 `Super+\`` 的默认 agent 换成它；当前默认的卡片显示
+「默认」徽标。只有**已安装**的 agent 才出现按钮：把没装的设成默认，按 `Super+\`` 只会起不来。
 
 ```bash
 cachyos-agent-usage-update            # 刷新所有 agent 的用量记录（面板每 15 分钟自己调一次）

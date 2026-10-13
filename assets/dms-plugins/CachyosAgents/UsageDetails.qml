@@ -24,6 +24,17 @@ Column {
     readonly property int hiddenRows: root.rows.length - root.listedRows.length
     readonly property var fresh: Usage.freshness(root.source.updatedAt, Date.now(), (root.source.refreshSeconds + 60) * 1000)
 
+    // 默认 agent 的状态由 source 提供（UsageSource 负责跑进程）；弹窗保持纯展示，
+    // 因此不依赖 Quickshell 运行时，能被单独渲染与校验。
+    // 只有"装了"的 agent 才给按钮——设成默认之后 Super+` 起不来，那种按钮等于陷阱。
+    readonly property string defaultAgent: root.source.defaultAgent || ""
+    readonly property var installedAgents: root.source.installedAgents || ({})
+
+    function setDefaultAgent(id) {
+        if (root.source.setDefaultAgent)
+            root.source.setDefaultAgent(id);
+    }
+
     RowLayout {
         id: header
         width: root.width - root.leftPadding - root.rightPadding
@@ -146,6 +157,26 @@ Column {
                                 visible: card.agent.state !== "ready"
                                 font.pixelSize: 11
                                 color: Theme.surfaceVariantText
+                            }
+                            // 当前默认：给个徽标而不是按钮，避免"点了没反应"的错觉。
+                            StyledText {
+                                visible: root.defaultAgent === card.agent.id
+                                text: "默认"
+                                font.pixelSize: 10
+                                font.weight: Font.DemiBold
+                                color: Theme.primary
+                            }
+                            DankButton {
+                                visible: root.installedAgents[card.agent.id] === true
+                                    && root.defaultAgent !== card.agent.id
+                                text: "设为默认"
+                                buttonHeight: 26
+                                horizontalPadding: 8
+                                backgroundColor: "transparent"
+                                textColor: Theme.primary
+                                Accessible.role: Accessible.Button
+                                Accessible.name: "把 " + card.agent.label + " 设为默认 AI agent"
+                                onClicked: root.setDefaultAgent(card.agent.id)
                             }
                         }
 
@@ -326,6 +357,15 @@ Column {
 
     StyledText {
         width: root.width - root.leftPadding - root.rightPadding
+        visible: (root.source.agentStateError || "").length > 0
+        text: root.source.agentStateError || ""
+        font.pixelSize: 11
+        color: Theme.error
+        wrapMode: Text.WordWrap
+    }
+
+    StyledText {
+        width: root.width - root.leftPadding - root.rightPadding
         text: root.listedRows.length === 0
             ? (root.rows.length === 0
                 ? "没有启用的 agent，可在设置里打开"
@@ -336,4 +376,15 @@ Column {
         color: Theme.surfaceVariantText
         wrapMode: Text.WordWrap
     }
+
+    StyledText {
+        width: root.width - root.leftPadding - root.rightPadding
+        text: root.defaultAgent.length > 0
+            ? "默认 agent：" + root.defaultAgent + "（Super+` 直接启动它）"
+            : "还没有默认 agent：按 Super+` 会先让你选一个"
+        font.pixelSize: 11
+        color: Theme.surfaceVariantText
+        wrapMode: Text.WordWrap
+    }
+
 }

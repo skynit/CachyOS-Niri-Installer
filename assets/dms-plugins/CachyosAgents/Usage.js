@@ -329,6 +329,32 @@ function barText(records, settings) {
     return range.caption + " " + formatTokens(range.tokens);
 }
 
+// 解析"当前默认 agent + 各 agent 是否已安装"的合并输出，给面板上的「设为默认」按钮用。
+//
+// 输入是这条命令的输出（两个稳定接口拼起来，面板不解析会话文件）：
+//   default=<id>                      ← cachyos-default-agent（没设时为空行）
+//   list=<id>\t<名称>[  (未安装)]      ← cachyos-agent --list
+//
+// 返回 { default: string, installed: { id: true } }。任何异常输入都退化成安全空值：
+// 面板宁可少一个按钮，也不能因为解析失败而崩掉或把没装的 agent 设成默认。
+function parseAgentState(text) {
+    var state = { default: "", installed: {} };
+    var lines = String(text === null || text === undefined ? "" : text).split("\n");
+    for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        if (line.indexOf("default=") === 0) {
+            state.default = line.slice(8).trim();
+        } else if (line.indexOf("list=") === 0) {
+            var rest = line.slice(5);
+            var id = rest.split("\t")[0].trim();
+            // 未安装的 agent 不提供按钮：设成默认后 Super+` 会起不来。
+            if (id.length > 0 && rest.indexOf("(未安装)") < 0)
+                state.installed[id] = true;
+        }
+    }
+    return state;
+}
+
 // 把最近几天的用量算成折线图坐标。放在这里而不是 QML 里，是为了能直接跑 node 测试。
 // width/height 是画布尺寸，inset 是四周留白；返回 [] 表示没有数据可画。
 function chartPoints(days, width, height, inset) {
