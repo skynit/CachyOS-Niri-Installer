@@ -134,6 +134,8 @@ AI 编程助手层（与桌面解耦，可单独使用）
 | `~/.claude/`、`~/.codex/`、`~/.cc-switch/` | 技能软链与 agent 配置镜像 |
 | `docs/`（仓库内） | 架构图源文件与生成脚本；`docs/images/` 放截图与架构图 |
 
+完整的命令清单不需要在文档里维护：安装后 `ls /usr/local/bin/cachyos-*` 就是全部 （当前 69 个）。本文详述的是 AI 编程助手层、听写、崩溃诊断这几组；其余是桌面与系统维护类（`dms-*`、`niri-*`、`waybar-*`、`record-*`、`nightlight*`、`ddc-*`、`thunar-*`、`pkg-*` 等），`<命令> --help` 都带中文用法说明。
+
 ## 使用前提
 
 - 已通过 CachyOS 官方安装器完成基础系统安装。
@@ -572,6 +574,7 @@ Super+Alt+2                聚焦或启动 Kitty
 | 配置镜像 | `cachyos-ai-config-sync` | 是（有 CC Switch 时生效） | CC Switch 数据库 |
 | 本地听写 | `cachyos-voxtype-*` | 否（可选组件） | Voxtype 与语音模型 |
 | 跑完提醒 | `cachyos-agent-console` | 是 | 桌面通知（DMS 或 notify-send） |
+| 跨工具会话续接 | `Super+Shift+\` → `cachyos-agent-resume` | 是 | 四个工具各自的会话存储 |
 
 四条设计原则：
 
