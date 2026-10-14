@@ -1,0 +1,191 @@
+#!/usr/bin/env bash
+
+# 把一次 OOM 事件交给默认 AI agent 诊断。
+#
+# 为什么不复用 cachyos-agent-crash：OOM 是 **SIGKILL**，内核不写核心转储，
+# `coredumpctl` 里根本查不到它。崩溃诊断那套（core dump、回溯、信号）对 OOM 全部
+# 失效，需要的证据也完全不同：cgroup 限额、memory.peak、PSI 压力、swap 水位。
+# 所以这里单独成型，诊断方法放在 diagnose-oom skill 里，只维护一份。
+
+set -Eeuo pipefail
+
+readonly SCRIPT_NAME="${0##*/}"
+readonly SHARE_DIR="${CACHYOS_DESKTOP_SHARE_DIR:-/usr/local/share/cachyos-desktop}"
+readonly STATE_DIR="$HOME/.local/state/cachyos-desktop"
+readonly LAST_OOM_FILE="$STATE_DIR/agents/last-oom"
+
+# 先赋值再 readonly：readonly 会掩盖命令替换的失败，而这里失败会让后续 $SELF_DIR/...
+# 静默指向根目录。
+SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SELF_DIR
+
+# 诊断方法写在 skill 里，只维护一份，换哪个 agent 都照它做。
+skill_path="$SHARE_DIR/assets/agent-skills/diagnose-oom/SKILL.md"
+if [[ ! -r $skill_path ]]; then
+    skill_path="$SELF_DIR/../assets/agent-skills/diagnose-oom/SKILL.md"
+fi
+
+usage() {
+    cat <<EOF
+Usage: $SCRIPT_NAME [--latest]
+
+把最近一次 OOM 事件交给默认 AI agent 诊断。通常由 OOM 通知触发。
+
+事实来自 $LAST_OOM_FILE（由 cachyos-oom-watch 写入）：触发来源、受害者、
+内存 cgroup、systemd unit、PSI 压力值。
+
+选项：
+  --latest    诊断最近一次记录的 OOM（默认行为）
+  -h, --help  显示本帮助
+
+诊断方法见：$skill_path
+EOF
+}
+
+oom_field() {
+    sed -n "s/^$1=//p" "$LAST_OOM_FILE" 2>/dev/null | head -1
+}
+
+sibling_cachyos_agent() {
+    if command -v cachyos-agent >/dev/null 2>&1; then
+        cachyos-agent "$@"
+    else
+        "$SELF_DIR/cachyos-agent" "$@"
+    fi
+}
+
+# 三层触发里 oomd / kernel 两种来源必须用不同的问题去问，否则 agent 会拿错假设
+# 往下查。这里按 layer 决定提示词里最该强调的那句话。
+layer_hint() {
+    case "$1" in
+        kernel-memcg)
+            printf '这是**受限 cgroup 内**的内核 OOM：机器整体可能仍有空闲内存，被杀的进程是撞到了它所在 scope 的限额或该 cgroup 的回收失败。重点查是哪个 cgroup、限额多少、为什么涨上去。\n'
+            ;;
+        kernel-global)
+            printf '这是**全局**内核 OOM（constraint=CONSTRAINT_NONE）：整机内存真的耗尽了。重点查谁在涨、swap 是否已打满。\n'
+            ;;
+        oomd)
+            printf '这是 systemd-oomd 主动杀进程（不是内核 OOM）：它由 swap 使用率或内存压力触发，通常发生在真正耗尽之前。重点查是哪个 unit、以及为什么它的内存/交换占用最高。\n'
+            ;;
+        psi)
+            printf '这**还不是 OOM**，只是 PSI 内存压力超过阈值：目前没有进程被杀。目标是趁还没丢工作，判断压力来自谁、是否需要立刻减负。\n'
+            ;;
+        *)
+            printf '触发来源未知，请先按下面的事实自行判断。\n'
+            ;;
+    esac
+}
+
+live_context() {
+    local unit="$1"
+
+    printf '当前内存与交换：\n'
+    free -h 2>/dev/null | sed 's/^/  /' || true
+    printf '\n当前内存压力（PSI）：\n'
+    if [[ -r /proc/pressure/memory ]]; then
+        sed 's/^/  /' /proc/pressure/memory
+    else
+        printf '  /proc/pressure/memory 不可读\n'
+    fi
+    printf '\n当前占用最高的 cgroup（按内存）：\n'
+    systemd-cgtop -m --iterations=1 -n 1 2>/dev/null | head -12 | sed 's/^/  /' || true
+    if [[ -n $unit && -d /sys/fs/cgroup$unit ]]; then
+        printf '\n该 unit 的 cgroup 记录：\n'
+        printf '  memory.max      = %s\n' "$(cat "/sys/fs/cgroup$unit/memory.max" 2>/dev/null || echo '?')"
+        printf '  memory.peak     = %s\n' "$(cat "/sys/fs/cgroup$unit/memory.peak" 2>/dev/null || echo '?')"
+        printf '  memory.events   = %s\n' "$(tr '\n' ' ' < "/sys/fs/cgroup$unit/memory.events" 2>/dev/null || echo '?')"
+    fi
+}
+
+main() {
+    local layer="unknown"
+    local when="unknown"
+    local victim_pid=""
+    local victim_comm="unknown"
+    local victim_rss_kb=""
+    local memcg="unknown"
+    local unit=""
+    local constraint="unknown"
+    local marked_cg=""
+    local psi_full=""
+    local facts
+    local hint
+    local prompt
+
+    case "${1:-}" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        "" | --latest) ;;
+        *)
+            printf '%s: 未知参数 %s\n' "$SCRIPT_NAME" "$1" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+
+    # -f 而不是 -r：目标是目录时 -r 为真，oom_field 会静默失败。
+    if [[ ! -f $LAST_OOM_FILE ]]; then
+        printf '没有记录到 OOM：%s\n' "$LAST_OOM_FILE" >&2
+        printf 'watcher 是否在跑：systemctl --user status cachyos-oom-watch.service\n' >&2
+        exit 1
+    fi
+
+    layer="$(oom_field layer)"
+    when="$(oom_field time)"
+    victim_pid="$(oom_field victim_pid)"
+    victim_comm="$(oom_field victim_comm)"
+    victim_rss_kb="$(oom_field victim_rss_kb)"
+    memcg="$(oom_field memcg)"
+    unit="$(oom_field unit)"
+    constraint="$(oom_field constraint)"
+    marked_cg="$(oom_field marked_cg)"
+    psi_full="$(oom_field psi_full_avg60)"
+
+    layer="${layer:-unknown}"
+    when="${when:-unknown}"
+    victim_comm="${victim_comm:-unknown}"
+    [[ -n $memcg ]] || memcg="（未记录）"
+    [[ -n $constraint ]] || constraint="（未记录）"
+
+    facts="  触发来源： $layer
+  时间：     $when"
+
+    if [[ -n $victim_pid || $victim_comm != "unknown" ]]; then
+        facts+=$'\n'"  受害者：   $victim_comm (PID ${victim_pid:-?})"
+    fi
+    if [[ -n $victim_rss_kb ]]; then
+        facts+=$'\n'"  被杀时驻留内存： $((victim_rss_kb / 1024)) MB"
+    fi
+    facts+=$'\n'"  内存 cgroup： $memcg"
+    [[ -n $unit ]] && facts+=$'\n'"  systemd unit： $unit"
+    facts+=$'\n'"  OOM 约束： $constraint"
+    [[ -n $marked_cg ]] && facts+=$'\n'"  oomd 标记的 cgroup： $marked_cg"
+    [[ -n $psi_full ]] && facts+=$'\n'"  PSI full avg60： ${psi_full}%"
+
+    hint="$(layer_hint "$layer")"
+
+    prompt="$(
+        cat <<PROMPT
+本机发生了内存耗尽（OOM）事件，我想知道原因并避免它再次发生。
+
+cachyos-oom-watch 记录到的事实：
+$facts
+
+$hint
+请使用 diagnose-oom skill：它说明了如何调查、该报告什么、以及什么情况下值得处理或上报。
+如果你的 harness 没有 skill 机制，就直接读这个文件并照它做：
+
+  $skill_path
+
+以下是触发时刻之外的**实时**上下文，供对照（OOM 已经过去，实时数据只反映当前状态）：
+
+$(live_context "$unit")
+PROMPT
+    )"
+
+    sibling_cachyos_agent --prompt "$prompt"
+}
+
+main "$@"

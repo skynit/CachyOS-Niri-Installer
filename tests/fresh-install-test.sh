@@ -239,22 +239,24 @@ pass '首次登录初始化阶段执行完毕（不因个别步骤失败而中�
 for command_name in cachyos-agent cachyos-agent-prompt cachyos-agent-skills cachyos-default-agent \
                     cachyos-agent-usage-claude cachyos-agent-usage-codex cachyos-agent-usage-dsh \
                     cachyos-agent-usage-update cachyos-agent-theme-sync cachyos-crash-watch \
-                    cachyos-crash-mute cachyos-toggle-crash-capture cachyos-voxtype-install; do
+                    cachyos-crash-mute cachyos-toggle-crash-capture cachyos-voxtype-install \
+                    cachyos-oom-watch cachyos-agent-oom cachyos-toggle-oom-capture; do
     assert_file "$FAKE_ROOT/usr/local/bin/$command_name" "装出命令 $command_name"
 done
 
 # 2) 随包资产（技能、库、插件、模板）
 for asset in assets/lib/agent.sh assets/lib/agent_usage.py assets/lib/agent_theme.py \
              assets/agent-skills/cachyos/SKILL.md assets/agent-skills/diagnose-crash/SKILL.md \
+             assets/agent-skills/diagnose-oom/SKILL.md \
              assets/dms-plugins/CachyosAgents/plugin.json assets/dms-plugins/CachyosAgents/Usage.js \
              assets/dms/add-agents-bar-widget.jq assets/dms/enable-dms-plugin.jq \
              assets/voxtype/config.toml assets/niri/cachyos-voxtype.kdl; do
     assert_file "$FAKE_ROOT/usr/local/share/cachyos-desktop/$asset" "装出资产 $asset"
 done
 
-# 3) systemd 用户单元（含本轮新增的用量定时器）
+# 3) systemd 用户单元（含用量定时器与 OOM 监听）
 for unit in cachyos-crash-watch.service cachyos-agent-theme.service cachyos-agent-theme.path \
-            cachyos-agent-usage.service cachyos-agent-usage.timer; do
+            cachyos-agent-usage.service cachyos-agent-usage.timer cachyos-oom-watch.service; do
     assert_file "$SANDBOX_HOME/.config/systemd/user/$unit" "装出单元 $unit"
 done
 

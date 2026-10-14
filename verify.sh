@@ -399,7 +399,7 @@ check_ai_agent_stack() {
     check_file "$share_dir/assets/lib/agent_usage.py"
     check_file "$share_dir/assets/lib/agent_theme.py"
     check_file "$share_dir/assets/lib/tui.sh"
-    for skill in cachyos diagnose-crash; do
+    for skill in cachyos diagnose-crash diagnose-oom; do
         check_file "$skill_root/$skill/SKILL.md"
     done
 
@@ -425,7 +425,7 @@ check_ai_agent_stack() {
     # 技能软链只在对应 harness 目录存在时才有意义；目录不存在是正常的，不算失败。
     for harness_dir in .claude/skills .codex/skills; do
         [[ -d "$HOME/$harness_dir" ]] || continue
-        for skill in cachyos diagnose-crash; do
+        for skill in cachyos diagnose-crash diagnose-oom; do
             link="$HOME/$harness_dir/$skill"
             if [[ -L "$link" && "$(readlink -f "$link")" == "$skill_root/$skill" ]]; then
                 pass "agent skill symlink is current: $harness_dir/$skill"
@@ -444,6 +444,14 @@ check_ai_agent_stack() {
         fail "crash watch does not read the crash-capture-off flag"
     fi
 
+    # OOM 监听与崩溃监听对称：同样跟随 niri 会话，同样要求"关闭"能跨登录保持。
+    if grep -q 'ConditionPathExists=!.*oom-capture-off' \
+        "$SCRIPT_DIR/assets/systemd/user/cachyos-oom-watch.service"; then
+        pass "oom watch honours the disable flag across logins"
+    else
+        fail "oom watch does not read the oom-capture-off flag"
+    fi
+
     # 用量记录靠定时器周期性重算；定时器没起来，面板就会一直显示安装那一刻的数字。
     if systemctl --user is-enabled --quiet cachyos-agent-usage.timer 2>/dev/null; then
         pass "agent usage refresh timer is enabled"
@@ -460,6 +468,12 @@ check_ai_agent_stack() {
         pass "cachyos-crash-watch.service is enabled"
     else
         warn "cachyos-crash-watch.service is not enabled (run: systemctl --user enable --now cachyos-crash-watch.service)"
+    fi
+
+    if systemctl --user is-enabled --quiet cachyos-oom-watch.service 2>/dev/null; then
+        pass "cachyos-oom-watch.service is enabled"
+    else
+        warn "cachyos-oom-watch.service is not enabled (run: systemctl --user enable --now cachyos-oom-watch.service)"
     fi
 }
 

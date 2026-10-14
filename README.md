@@ -103,8 +103,9 @@ CachyOS（Arch 派生，x86-64-v3/v4 优化仓库 + linux-cachyos 内核）
 
 AI 编程助手层（与桌面解耦，可单独使用）
 ├── agent 启动层        Super+` 启动默认 agent；多个则弹选择器
-├── 技能分发            cachyos / diagnose-crash 软链进 Claude、Codex、OpenCode、CC Switch
+├── 技能分发            cachyos / diagnose-crash / diagnose-oom 软链进 Claude、Codex、OpenCode、CC Switch
 ├── 崩溃诊断            systemd-coredump 监听 + 一键交给 agent 分析
+├── OOM 诊断            内核 memcg / systemd-oomd / PSI 内存压力监听 + 一键交给 agent 分析
 ├── 用量面板            Claude / Codex / OpenCode / DSH 的 token 与费用（状态栏默认只显示数字）
 ├── 主题同步            把 DMS 的明暗与完整配色推给 agent
 ├── 本地听写（可选）    Voxtype + Whisper，Super+'（或 Super+F9）开始/结束
@@ -114,6 +115,7 @@ AI 编程助手层（与桌面解耦，可单独使用）
 ├── 会话日志(claude/codex/dsh) → 4 个采集器 → usage/*.json → DMS 用量面板
 ├── dms-colors.json → 主题同步 → Claude 自定义主题 / Hermes skin
 ├── systemd-coredump → crash-watch → 通知 → cachyos-agent-crash → agent 分析
+├── 内存压力/OOM 事件 → oom-watch → 通知 → cachyos-agent-oom → agent 分析
 └── api.anthropic.com 限额查询 = 唯一的联网行为（只读复用本机凭据）
 ```
 
@@ -123,18 +125,18 @@ AI 编程助手层（与桌面解耦，可单独使用）
 
 | 路径 | 内容 |
 | --- | --- |
-| `/usr/local/bin/cachyos-*` | 本项目的 69 个命令（`agent`、`usage-*`、`voxtype-*`、`crash-*` 等） |
+| `/usr/local/bin/cachyos-*` 等 | 本项目的 72 个命令：`cachyos-*` 71 个（`agent`、`usage-*`、`voxtype-*`、`crash-*`、`oom-*` 等），另加 `terminal-here` |
 | `/usr/local/share/cachyos-desktop/assets/**` | 随包资源：技能、DMS 插件、配置模板、脚本库 |
 | `~/.config/niri/` | 主配置、`cachyos-extras.kdl` 扩展、`dms/` 下生成的配色与快捷键 |
 | `~/.config/waybar/` | 顶栏、底栏与样式 |
 | `~/.config/DankMaterialShell/` | DMS 设置，以及 `plugins/CachyosAgents/` 用量面板插件 |
 | `~/.config/cachyos-desktop/` | 本项目自身状态（默认 agent 等） |
-| `~/.local/state/cachyos-desktop/` | 用量记录、崩溃记录、首次登录日志、配置备份 |
-| `~/.config/systemd/user/cachyos-*` | 5 个用户单元：崩溃监听、主题 path 与 service、用量 service 与 timer |
+| `~/.local/state/cachyos-desktop/` | 用量记录、崩溃与 OOM 记录、首次登录日志、配置备份 |
+| `~/.config/systemd/user/cachyos-*` | 6 个用户单元：崩溃监听、OOM 监听、主题 path 与 service、用量 service 与 timer |
 | `~/.claude/`、`~/.codex/`、`~/.cc-switch/` | 技能软链与 agent 配置镜像 |
 | `docs/`（仓库内） | 架构图源文件与生成脚本；`docs/images/` 放截图与架构图 |
 
-完整的命令清单不需要在文档里维护：安装后 `ls /usr/local/bin/cachyos-*` 就是全部 （当前 69 个）。本文详述的是 AI 编程助手层、听写、崩溃诊断这几组；其余是桌面与系统维护类（`dms-*`、`niri-*`、`waybar-*`、`record-*`、`nightlight*`、`ddc-*`、`thunar-*`、`pkg-*` 等），`<命令> --help` 都带中文用法说明。
+完整的命令清单不需要在文档里维护：安装后 `ls /usr/local/bin/` 里本项目的 72 个命令（`cachyos-*` 71 个，另加 `terminal-here`）就是全部。本文详述的是 AI 编程助手层、听写、崩溃与 OOM 诊断这几组；其余是桌面与系统维护类（`dms-*`、`niri-*`、`waybar-*`、`record-*`、`nightlight*`、`ddc-*`、`thunar-*`、`pkg-*` 等），`<命令> --help` 都带中文用法说明。
 
 ## 使用前提
 
@@ -569,6 +571,7 @@ Super+Alt+2                聚焦或启动 Kitty
 | 按需提问 | `Super+\` → `cachyos-ask` | 是 | 选区/剪贴板，或 git 仓库 |
 | 技能分发 | `cachyos-agent-skills` | 是 | agent 自身的技能目录 |
 | 崩溃诊断 | `cachyos-crash-watch` + `cachyos-agent-crash` | 是 | `systemd-coredump` |
+| OOM 诊断 | `cachyos-oom-watch` + `cachyos-agent-oom` | 是 | 内核 oom-kill、systemd-oomd、PSI 内存压力 |
 | 用量统计与面板 | `cachyos-agent-usage-*` + DMS 插件 | 是 | 本机 agent 会话记录 |
 | 主题同步 | `cachyos-agent-theme-sync` | 是 | DMS 生成的配色文件 |
 | 配置镜像 | `cachyos-ai-config-sync` | 是（有 CC Switch 时生效） | CC Switch 数据库 |
@@ -721,11 +724,13 @@ off     不提醒
 
 ### Agent 技能
 
-安装器把两份技能软链到各 harness 的技能目录，让 agent 知道这套桌面该怎么改：
+安装器把三份技能软链到各 harness 的技能目录，让 agent 知道这套桌面该怎么改：
 
 - `cachyos`：Niri、DMS、`cachyos-*` 命令的正确用法，以及"哪些配置受安装器托管、
   改前要先 `cachyos-config protect`"。
 - `diagnose-crash`：如何从 `coredumpctl` 事实判断崩溃该归因于用户配置还是上游 bug。
+- `diagnose-oom`：如何从内核 oom-kill、systemd-oomd 与 PSI 内存压力事实判断是谁吃光了内存，
+  以及该调应用、调 systemd-oomd 还是加 swap。
 
 只为**已存在**的技能目录建立软链（`~/.agents/skills`、`~/.claude/skills`、`~/.codex/skills`、
 `~/.gemini/config/skills`、`~/.pi/agent/skills`、`~/.hermes/skills` 及每个已存在的
@@ -776,6 +781,37 @@ cachyos-crash-mute SomeApp off      # 恢复提醒
   静音只是不再提醒，程序该崩还是会崩。
 - **`cachyos-agent-crash` 只把事实交给 agent**，诊断方法本身写在 `diagnose-crash` 技能里，
   因此换任何默认 agent 都适用，方法也只维护一份。
+
+### OOM 诊断
+
+内存耗尽与进程崩溃是**两条独立链路**。`cachyos-crash-watch` 订阅的是 systemd-coredump 的固定
+MESSAGE_ID，而 OOM 由内核以 **SIGKILL** 结束进程——**既不产生 core dump，那条 MESSAGE_ID 也就
+永远不会出现**，所以崩溃监听对 OOM 完全无感，必须有另一套监听。
+
+`cachyos-oom-watch.service` 常驻盯着三种来源：
+
+1. **内核 memcg OOM**：某个 cgroup 打到 `memory.max` 时内核直接杀进程，内核日志里是 `oom-kill`；
+2. **systemd-oomd kill**：oomd 依据 PSI 与 swap 占用提前动手，杀掉整个 cgroup；
+3. **PSI 内存压力提前预警**：内存还没耗尽、但压力已经持续吃紧时先提醒——这是唯一还来得及处理的时机。
+
+`cachyos-toggle-oom-capture` 与 `cachyos-toggle-crash-capture` 是同一套实现：关闭时写一个标记文件
+`~/.local/state/cachyos-desktop/toggles/oom-capture-off`，单元里的 `ConditionPathExists=!` 让它在
+下次登录时也不再启动，同时立刻停掉当前会话的监听——所以"关掉"是一次性动作，不用每次登录再关一遍。
+
+OOM 发生后，事实会记录到 `~/.local/state/cachyos-desktop/agents/last-oom`（与崩溃的 `last-crash`
+并列），并发出一条通知。
+
+诊断入口：
+
+```bash
+cachyos-agent-oom --latest          # 用默认 agent 诊断最近一次记录到的 OOM
+cachyos-toggle-oom-capture off      # 关闭 OOM 监听（本次会话 + 下次登录都不启动）
+cachyos-toggle-oom-capture on       # 恢复 OOM 监听
+journalctl -k | grep oom-kill       # 手动核对内核的 OOM 记录
+```
+
+诊断方法本身写在 `diagnose-oom` 技能里，`cachyos-agent-oom` 只把事实交给 agent——与崩溃链路一样，
+换任何默认 agent 都适用，方法也只维护一份。
 
 ### 用量统计
 
@@ -990,6 +1026,7 @@ cachyos-ai-config-sync sync     # 重新生成镜像
 | `~/.config/DankMaterialShell/dms-colors.json` | 主题同步 |
 | `~/.codex/auth.json`（只用于更新 provider 认证块） | 配置镜像 |
 | `systemd-coredump` 的记录 | 崩溃诊断 |
+| 内核 `oom-kill`、systemd-oomd 日志与 PSI 内存压力 | OOM 诊断 |
 
 写出的内容：
 
@@ -997,6 +1034,7 @@ cachyos-ai-config-sync sync     # 重新生成镜像
 | --- | --- |
 | `~/.local/state/cachyos-desktop/agents/usage/*.json` | 各 agent 的用量记录与增量缓存 |
 | `~/.local/state/cachyos-desktop/agents/last-crash` | 最近一次崩溃（供 `cachyos-agent-crash` 读取） |
+| `~/.local/state/cachyos-desktop/agents/last-oom` | 最近一次 OOM（供 `cachyos-agent-oom` 读取） |
 | `~/.local/state/cachyos-desktop/agents/crash-muted.txt` | 崩溃静音名单 |
 | `~/.local/state/cachyos-desktop/post-login.log` | 首次登录初始化日志 |
 | `~/.claude/themes/cachyos.json`、`~/.hermes/skins/cachyos.yaml` | 主题产物 |
@@ -1033,6 +1071,7 @@ https://api.anthropic.com/api/oauth/usage
 | `Super+\`` 每次都弹选择器 | 没设默认 agent，或记录里的名字已失效 | `cachyos-default-agent codex` |
 | agent 里没有 `cachyos` 技能 | 对应 harness 目录首次运行才生成 | `cachyos-agent-skills --create-supported` |
 | 崩溃没有通知 | 总开关关闭 / 程序在静音名单 / 还在去重窗口内 | `cachyos-toggle-crash-capture on`、`cachyos-crash-mute <程序名> off` |
+| OOM 没有通知 | OOM 捕获总开关关闭（`oom-capture-off`） | `cachyos-toggle-oom-capture on`，或直接 `cachyos-agent-oom --latest` 诊断最近一次 |
 | 明暗切换后 agent 主题没变 | `theme.path` 单元未启用，或配色文件缺失 | `systemctl --user status cachyos-agent-theme.path`、`cachyos-agent-theme-sync --status` |
 | 没有 `cachyos-voxtype-*` 命令 | 听写是可选组件，未安装 | `cachyos-voxtype-install` |
 
@@ -1053,6 +1092,9 @@ https://api.anthropic.com/api/oauth/usage
 | `cachyos-agent-crash <pid> [comm] [exe] [signal]` | 把一次崩溃交给 agent 分析 |
 | `cachyos-crash-mute [<program>] [off]` | 静音某个程序，或取消静音 |
 | `cachyos-toggle-crash-capture [toggle\|off\|on]` | 崩溃捕捉总开关 |
+| `cachyos-oom-watch` | OOM 与内存压力监听（由 systemd 用户单元拉起，一般不用手跑） |
+| `cachyos-agent-oom --latest` | 把最近一次 OOM 交给 agent 分析 |
+| `cachyos-toggle-oom-capture [toggle\|off\|on]` | OOM 捕捉总开关 |
 | `cachyos-agent-theme-sync [--dry-run] [--quiet] [--status]` | 同步明暗与完整配色 |
 | `cachyos-ai-config-sync status\|sync` | 查看或重建 AI 配置镜像 |
 | `cachyos-voxtype-install` / `-model` / `-config` / `-status` / `-toggle` / `-remove` | 本地听写（见上一节） |
@@ -1149,6 +1191,7 @@ cachyos-agent --list        # 确认三个 agent 的安装状态
 
 - `tests/agent-test.sh` —— agent 表、argv 逐字保真、以及 launcher 与选择器的端到端往返。
 - `tests/crash-test.sh` —— 崩溃字段解析（含缺失字段的对齐）与静音名单的名字截断。
+- `tests/oom-test.sh` —— OOM 事件解析与去重（内核两条消息只提醒一次），与崩溃测试对称。
 - `tests/usage-test.sh` —— 用量采集：同日多条用量必须累加、缓存与全量结果一致、
   缓存版本失配要作废、两种 input 语义下的计费。
 - `tests/dms-plugin-test.sh` —— 状态栏接线：只增不覆盖、幂等、尊重用户关掉的插件开关。
@@ -1201,7 +1244,7 @@ AI Agent 这一层是**借鉴 [Omarchy](https://omarchy.org/) 的设计**做的�
 | 崩溃记录先写、通知后发 | 同 | 通知可能丢（无 D-Bus、勿扰、通知服务刚死），记录是诊断入口的唯一依赖 |
 | 崩溃详情以独立 argv 传参，绝不拼命令字符串 | 同 | 进程名是攻击者可控的 |
 | 崩溃去重 + 按程序静音 | 同，另加"每程序最多一条待处理通知" | 崩溃循环会反复转储 |
-| 诊断方法只写一份（skill），prompt 里只放事实 | `assets/agent-skills/diagnose-crash/` | 换任何 agent 都适用，方法也只维护一份 |
+| 诊断方法只写一份（skill），prompt 里只放事实 | `assets/agent-skills/diagnose-crash/`（OOM 对称：`diagnose-oom/`） | 换任何 agent 都适用，方法也只维护一份 |
 | 把系统知识做成技能并软链给各 harness | `cachyos-agent-skills` + `cachyos` 技能 | 让 agent 知道哪些配置受托管、改前先 `protect` |
 | 在脚注里写清"为什么"与被否决的替代方案 | 本项目沿用同一风格 | 这是 Omarchy 最值得学的一点 |
 
@@ -1221,7 +1264,20 @@ AI Agent 这一层是**借鉴 [Omarchy](https://omarchy.org/) 的设计**做的�
 ### 已知限制
 
 - 崩溃监听只在服务运行期间生效：服务重启（例如更新）窗口内的崩溃不会被补报——
-  `journalctl -f -n 0` 有意不重播历史。
+  订阅用 `journalctl -f -n 1` 建立，再按"订阅时刻"这一水位把带出来的那条历史记录丢掉。
+  历史版本用的是 `-f -n 0`，而实测 systemd 262 上 `-n 0` 只要和任何过滤条件组合
+  （`MESSAGE_ID=` / `-k` / `-t` / `-u`）就会静默返回 0 行：服务看着 active、日志里
+  一句错误都没有，实际永远收不到任何崩溃——所以**不要**把它改回去。
+- OOM 监听同样只跟**新消息**：`journalctl` 的 follow 流配一个"启动时间戳"水位
+  （`-f -n 1` 带出的那条旧记录会被水位挡掉），所以服务重启或未运行的窗口内发生的 OOM 不会补报。
+- 同一次 OOM 内核会先后发 `oom-kill` 与 `Memory cgroup out of memory` 两条消息；去重键是
+  **触发层 + 受害者 PID + 程序名**，所以同一受害者 300 秒内只提醒一次
+  （`CACHYOS_OOM_DEDUPE_SECONDS` 可调）。反过来，**不同 PID 的同类 OOM 会各提醒一次**——
+  本机 09:28 那种连续杀掉三个 node 进程的情形会给出三条通知，这是有意的：三次是真的三次损失。
+- PSI 提前预警默认在 `full avg60 ≥ 10%` 时触发（`CACHYOS_OOM_PSI_FULL_AVG60` 可调；
+  `CACHYOS_OOM_PSI_ENABLED=0` 可只留真实 OOM、关掉预警）。
+- OOM 监听只在 **niri 用户会话**内运行（unit `WantedBy=niri.service`，每个用户各跑一份）：
+  系统级 OOM、其他用户的会话，以及没登录桌面时的内存事件都不在覆盖范围内。
 - 诊断会话被刻意设置为**不随服务重启被 SIGTERM**（`KillMode=process`：systemd 只杀主进程，
   同 cgroup 里的 kitty/agent 继续跑）。代价是重启 watcher 时会短暂留下一个空闲的 `journalctl`
   进程，它在下次有匹配输出时因 SIGPIPE 自行退出。

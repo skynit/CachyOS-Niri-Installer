@@ -555,6 +555,8 @@ install_desktop_assets() {
     # 逐个显式安装，否则 verify.sh 的 manifest 循环会因为文件不存在而 FAIL。
     run install -m 0644 "$SCRIPT_DIR/assets/systemd/user/cachyos-crash-watch.service" \
         "$HOME/.config/systemd/user/cachyos-crash-watch.service"
+    run install -m 0644 "$SCRIPT_DIR/assets/systemd/user/cachyos-oom-watch.service" \
+        "$HOME/.config/systemd/user/cachyos-oom-watch.service"
     # 主题变化时把明暗模式同步给 agent：用 path 单元盯着 DMS 生成的配色文件。
     run install -m 0644 "$SCRIPT_DIR/assets/systemd/user/cachyos-agent-theme.service" \
         "$HOME/.config/systemd/user/cachyos-agent-theme.service"
@@ -846,6 +848,8 @@ post_install() {
         print_command systemctl --user add-wants niri.service dms.service
         print_command systemctl --user enable cachyos-crash-watch.service
         print_command systemctl --user restart cachyos-crash-watch.service
+        print_command systemctl --user enable cachyos-oom-watch.service
+        print_command systemctl --user restart cachyos-oom-watch.service
         print_command systemctl --user restart dms.service
         print_command systemctl --user enable cachyos-agent-theme.path
         print_command systemctl --user start cachyos-agent-theme.path
@@ -877,6 +881,20 @@ post_install() {
         warn "  systemctl --user restart cachyos-crash-watch.service"
     else
         tui_ok "崩溃监听已启用并重启（亦可用 cachyos-agent-crash 诊断）"
+    fi
+
+    # OOM 监听同样与 niri 会话同生命周期（unit 里 WantedBy=niri.service）。这里也照旧分两步
+    # 并用 restart 而不是 `enable --now`：对**已在运行**的单元 `--now` 不会重启它，于是更新后
+    # 服务仍在执行被替换掉的旧脚本。
+    if ! systemctl --user enable cachyos-oom-watch.service; then
+        warn "could not enable cachyos-oom-watch.service; run this after logging in:"
+        warn "  systemctl --user enable --now cachyos-oom-watch.service"
+    fi
+    if ! systemctl --user restart cachyos-oom-watch.service; then
+        warn "could not start cachyos-oom-watch.service; run this after logging in:"
+        warn "  systemctl --user restart cachyos-oom-watch.service"
+    else
+        tui_ok "OOM 监听已启用并重启（亦可用 cachyos-agent-oom --latest 诊断）"
     fi
 
     # DMS 只在启动时读 settings.json：用量面板插件与状态栏接线要重启一次才生效。

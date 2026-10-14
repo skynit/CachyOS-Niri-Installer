@@ -1,0 +1,616 @@
+#!/usr/bin/env bash
+
+# 监听 OOM（内存耗尽），把每次事件记录到 last-oom 并提示用 AI 诊断。
+# 由 cachyos-oom-watch.service 常驻运行。
+#
+# 为什么不能并入 cachyos-crash-watch：OOM 是 SIGKILL，内核**不写核心转储**，
+# systemd-coredump 的 MESSAGE_ID 永远不会出现。崩溃监听就算一直在跑，也一次都
+# 收不到 OOM。两者监听的是互不相交的两类事件，必须各有一个 watcher。
+#
+# 三种触发来源（本机实测都存在）：
+#   1. 内核 memcg OOM   "Memory cgroup out of memory: Killed process <pid> (<comm>) ..."
+#      发生在受限 cgroup 里，机器整体可能还有富余内存。本机 09:28 连发三次。
+#   2. systemd-oomd     "Marked <cg> for killing due to memory used (...) / total (...)
+#      and swap used (...) / total (...) being more than 90.00%" —— 比内核早数分钟
+#      动手，是最好的预警点。本机 09:21 与 09:26 各杀了一个 kitty scope。
+#   3. PSI 内存压力     /proc/pressure/memory 的 full avg60 超过阈值即提醒，在进程被杀
+#      之前就介入，避免丢工作。
+#
+# 锚点都是**文本**匹配，不是 MESSAGE_ID：内核与 systemd-oomd 的这些消息都没有结构化
+# ID（实测 MESSAGE_ID 为空）。
+
+set -Eeuo pipefail
+
+# oomd 的最终动作消息前缀是 "<unit>: "，其中 unit 是相对 cgroup 路径，带 ": " 与尾部空白。
+# 用 extglob 的 +([[:space:]:]) 一次去掉；非交互 bash 默认不开 extglob，必须显式开。
+shopt -s extglob
+
+readonly SCRIPT_NAME="${0##*/}"
+
+# journalctl 的调用方式有个实测坑：`-f -n 0` 与**任何**过滤条件组合（-k / -t / -u /
+# MESSAGE_ID=...）在 systemd 262 上会静默返回 0 行 —— 过滤器看着配好了，其实什么都
+# 收不到。所以这里用 `-f -n 1`，并按启动时间戳丢弃带出来的那条旧记录。
+readonly KERNEL_FOLLOW=(-f -n 1 -o json -k)
+readonly OOMD_FOLLOW=(-f -n 1 -o json -u systemd-oomd)
+
+readonly STATE_DIR="$HOME/.local/state/cachyos-desktop"
+readonly AGENTS_DIR="$STATE_DIR/agents"
+readonly MUTE_FILE="$AGENTS_DIR/crash-muted.txt"
+readonly LAST_OOM_FILE="$AGENTS_DIR/last-oom"
+
+# 去重窗口参与算术运算，`set -u` 下非数字会让整个 watcher 立刻退出；叠加
+# Restart=always 就变成"每次 OOM 重启一次服务"，功能整体静默失效。所以先校验。
+positive_int_or() {
+    local value="$1"
+    local fallback="$2"
+    local name="$3"
+
+    if [[ $value =~ ^[0-9]+$ ]] && ((value > 0)); then
+        printf '%s' "$value"
+    else
+        printf '%s: %s 不是正整数（%s），回退到 %s\n' \
+            "$SCRIPT_NAME" "$name" "$value" "$fallback" >&2
+        printf '%s' "$fallback"
+    fi
+}
+
+dedupe_seconds="$(positive_int_or "${CACHYOS_OOM_DEDUPE_SECONDS:-300}" 300 CACHYOS_OOM_DEDUPE_SECONDS)"
+readonly DEDUPE_SECONDS="$dedupe_seconds"
+
+psi_interval="$(positive_int_or "${CACHYOS_OOM_PSI_INTERVAL_SECONDS:-15}" 15 CACHYOS_OOM_PSI_INTERVAL_SECONDS)"
+readonly PSI_INTERVAL_SECONDS="$psi_interval"
+
+# full avg60 的百分比阈值。默认 10 而不是 oomd 的 60：这个 watcher 的定位是**提前**
+# 提醒，等 PSI 到 60% 时 oomd 已经在挑受害者了。
+readonly PSI_FULL_AVG60_THRESHOLD="${CACHYOS_OOM_PSI_FULL_AVG60:-10}"
+# 置 0 关闭 PSI 预警（只保留事件驱动的两层）。
+readonly PSI_ENABLED="${CACHYOS_OOM_PSI_ENABLED:-1}"
+
+# 动作式通知（点击即诊断）默认为开，与崩溃监听一致：DMS 会回发 ActionInvoked。
+# 置 0 退回纯提示式；动作式发不出去时也会自动退回。
+readonly ACTION_NOTIFY="${CACHYOS_OOM_ACTION:-1}"
+
+readonly PSI_FILE="${CACHYOS_OOM_PSI_FILE:-/proc/pressure/memory}"
+
+readonly WATERMARK_FILE="$STATE_DIR/.oom-watermark"
+readonly LAST_PSI_PID_FILE="$STATE_DIR/.oom-watch-psi.pid"
+
+# 每个去重键最多保留一个"待用户处理"的通知：动作式通知会等到用户处理（-t 0 不过期），
+# OOM 风暴下每次都新起一个会让进程数无上界增长。值为等待进程 PID。
+declare -A last_notified=()
+declare -A notification_pids=()
+
+usage() {
+    cat <<EOF
+Usage: $SCRIPT_NAME
+
+常驻监听 OOM 事件，把每次事件记录到
+  $LAST_OOM_FILE
+并发送一条通知。同一受害者 ${DEDUPE_SECONDS} 秒内只提醒一次；已静音的程序跳过
+（复用 cachyos-crash-mute 的名单）。
+
+触发的四类事件（layer 字段）：
+  kernel-memcg  内核在一个受限 cgroup 里 OOM 并杀掉进程
+  kernel-global 内核全局内存耗尽并杀掉进程
+  oomd          systemd-oomd 因内存/交换超限杀掉某个 unit
+  psi           /proc/pressure/memory 的 full avg60 超过 ${PSI_FULL_AVG60_THRESHOLD}%（提前预警）
+
+环境变量：
+  CACHYOS_OOM_DEDUPE_SECONDS          去重窗口秒数（默认 300）
+  CACHYOS_OOM_PSI_ENABLED             置 0 关闭 PSI 预警（默认 1）
+  CACHYOS_OOM_PSI_FULL_AVG60          PSI full avg60 阈值百分比（默认 ${PSI_FULL_AVG60_THRESHOLD}）
+  CACHYOS_OOM_PSI_INTERVAL_SECONDS    PSI 采样间隔秒数（默认 15）
+  CACHYOS_OOM_PSI_FILE               PSI 文件路径（默认 /proc/pressure/memory，便于测试）
+  CACHYOS_OOM_ACTION                  置 0 退回纯提示式通知（默认为可点击的动作式）
+EOF
+}
+
+require_jq() {
+    # jq 来自 DAILY_APP_PACKAGES，安装器运行 preflight 时还没有它，因此在这里检查
+    # 而不是把它加进 preflight 的必需命令。
+    if ! command -v jq >/dev/null 2>&1; then
+        printf '%s: 需要 jq 来解析 journal 记录\n' "$SCRIPT_NAME" >&2
+        return 1
+    fi
+}
+
+oom_is_muted() {
+    [[ -s $MUTE_FILE ]] || return 1
+    grep -Fxq -- "$1" "$MUTE_FILE"
+}
+
+# 已有值优先：同一次 OOM 的内核两条消息分工不同——"oom-kill:..." 带 constraint 与
+# oom_memcg，"Memory cgroup out of memory: Killed process ..." 带 anon-rss。后者来补
+# rss 时如果整表覆写，会把前者的 constraint/memcg 擦成空值，诊断就丢了权威字段。
+merge_field() {
+    local new_value="$1"
+    local old_file="$2"
+    local key="$3"
+    local old_value=""
+
+    if [[ -n $new_value ]]; then
+        printf '%s' "$new_value"
+        return 0
+    fi
+
+    [[ -f $old_file ]] && old_value="$(sed -n "s/^$key=//p" "$old_file" 2>/dev/null | head -1)" || true
+    printf '%s' "$old_value"
+}
+
+# 字段解析统一走 jq：MESSAGE 可能是字符串也可能是字符串数组（journal 导出格式不同），
+# 在 bash 里对 JSON 做字符串截取迟早会碎。分隔符用**非空白**的 US（0x1f）——制表符属于
+# IFS 空白字符，read 会把连续分隔符折叠成一个，缺失字段会让后面的列整体错位。
+parse_journal_entry() {
+    local entry="$1"
+    local parsed
+
+    parsed="$(
+        jq -r '[
+            (.__REALTIME_TIMESTAMP // ""),
+            (if (.MESSAGE | type) == "array" then (.MESSAGE | join("")) else (.MESSAGE // "") end),
+            (._COMM // ""),
+            (._PID // ""),
+            (.UNIT // ""),
+            (._TRANSPORT // "")
+        ] | join("\u001f")' <<<"$entry" 2>/dev/null
+    )" || true
+
+    [[ -n $parsed ]] || return 1
+
+    # shellcheck disable=SC2034  # F_COMM/F_PID/F_UNIT/F_TRANSPORT 记录在案，便于排障时按需使用
+    IFS=$'\x1f' read -r F_TIMESTAMP F_MESSAGE F_COMM F_PID F_UNIT F_TRANSPORT <<<"$parsed"
+    [[ -n $F_TIMESTAMP ]] || return 1
+}
+
+# 去重键：只用非空字段拼，避免 "layer||" 这类键把不同事件误判成同一个。
+dedupe_key() {
+    local key="$1"
+    local part
+
+    shift
+    for part in "$@"; do
+        [[ -n $part ]] || continue
+        key+="|$part"
+    done
+
+    printf '%s' "$key"
+}
+
+# 从 "Marked /path/to.scope for killing due to ..." 取 cgroup 路径。
+marked_cg_from_message() {
+    local path="${1#Marked }"
+
+    path="${path%% for killing*}"
+    printf '%s' "$path"
+}
+
+# 摘出 systemd-oomd 决策里的数字，凑成一句人类可读的说明。
+oomd_reason_from_message() {
+    local message="$1"
+    local used="${message#*memory used (}"
+    local total_and_swap
+
+    if [[ $used == "$message" ]]; then
+        printf ''
+        return 0
+    fi
+    total_and_swap="${used#*) / total (}"
+    printf 'memory used %s / total %s' "${used%%)*}" "${total_and_swap%%)*}"
+}
+
+record_oom() {
+    local pid="$1"
+    local comm="$2"
+    local layer="$3"
+    local when="$4"
+    local rss_kb="$5"
+    local memcg="$6"
+    local unit="$7"
+    local constraint="$8"
+    local marked_cg="$9"
+    local psi_full="${10:-}"
+    local temporary
+
+    install -d -m 0700 "$AGENTS_DIR"
+    temporary="$(mktemp "$AGENTS_DIR/.last-oom.XXXXXX")"
+    {
+        printf 'time=%s\n' "$when"
+        printf 'layer=%s\n' "$layer"
+        printf 'victim_pid=%s\n' "$pid"
+        printf 'victim_comm=%s\n' "$comm"
+        printf 'victim_rss_kb=%s\n' "$rss_kb"
+        printf 'memcg=%s\n' "$(merge_field "$memcg" "$LAST_OOM_FILE" memcg)"
+        printf 'unit=%s\n' "$(merge_field "$unit" "$LAST_OOM_FILE" unit)"
+        printf 'constraint=%s\n' "$(merge_field "$constraint" "$LAST_OOM_FILE" constraint)"
+        printf 'marked_cg=%s\n' "$(merge_field "$marked_cg" "$LAST_OOM_FILE" marked_cg)"
+        printf 'psi_full_avg60=%s\n' "$(merge_field "$psi_full" "$LAST_OOM_FILE" psi_full_avg60)"
+    } > "$temporary"
+    mv -- "$temporary" "$LAST_OOM_FILE"
+}
+
+# DMS 持有 org.freedesktop.Notifications；DMS 自己 OOM 时通知服务可能一起没了，此时发出的
+# 通知会丢失——而最该送达的那条恰恰最可能是它。所以先等它回来。
+wait_for_notifier() {
+    command -v systemctl >/dev/null 2>&1 || return 0
+    for _ in 1 2 3 4 5; do
+        systemctl --user is-active --quiet dms.service 2>/dev/null && return 0
+        sleep 1
+    done
+    return 0
+}
+
+notification_is_pending() {
+    local key="$1"
+    local pid="${notification_pids[$key]:-}"
+
+    [[ -n $pid ]] || return 1
+    kill -0 "$pid" 2>/dev/null
+}
+
+send_notification() {
+    local key="$1"
+    local summary="$2"
+    local body="$3"
+
+    wait_for_notifier
+
+    if notification_is_pending "$key"; then
+        return 0
+    fi
+
+    # 整个通知过程放到后台：动作式通知 `-w` 会一直等到用户处理，若同步执行，用户还没点
+    # 的这段时间里发生的 OOM 都不会被记录——正是最需要记录的时候。子 shell 里不能再用
+    # local，因此下面的变量都是子 shell 自己的。
+    (
+        if [[ $ACTION_NOTIFY == 1 ]]; then
+            # -t 0 表示不自动过期：OOM 提示要留到用户处理，默认的 10 秒太容易错过。
+            if action="$(notify-send --urgency=critical -t 0 -A diagnose="用 AI 诊断" -w "$summary" "$body" 2>/dev/null)"; then
+                if [[ $action == "diagnose" ]]; then
+                    # 状态文件已在通知前落盘，这里不带参数即可读到完整事实。
+                    cachyos-agent-oom --latest >/dev/null 2>&1 || true
+                fi
+                exit 0
+            fi
+            # 动作式发不出去（例如没有通知服务）就退回提示式，别让这次 OOM 悄悄消失。
+        fi
+
+        notify-send --urgency=critical -t 0 "$summary" "$body" 2>/dev/null && exit 0
+        if command -v dms >/dev/null 2>&1; then
+            dms notify "$summary" "$body" 2>/dev/null && exit 0
+        fi
+    ) &
+    notification_pids["$key"]=$!
+
+    return 0
+}
+
+# 去重窗口内返回 1（调用方据此只补状态文件、不再打扰用户）。
+notify_once() {
+    local key="$1"
+    local now="$2"
+    local previous="${last_notified[$key]:-0}"
+
+    if ((now - previous < DEDUPE_SECONDS)); then
+        return 1
+    fi
+
+    last_notified["$key"]="$now"
+    return 0
+}
+
+handle_kernel_oom() {
+    local message="$1"
+    local comm=""
+    local constraint=""
+    local memcg=""
+    local pid=""
+    local rss_kb=""
+    local body=""
+    local key
+    local layer="kernel-memcg"
+    local now
+    local summary
+    local when
+
+    case "$message" in
+        "Memory cgroup out of memory: Killed process "*)
+            # 形如：Memory cgroup out of memory: Killed process 24189 (node-MainThread)
+            #       total-vm:4536680kB, anon-rss:3138232kB, file-rss:29492kB, ...
+            # 内核 comm 最多 15 字节，名字里的空格不会出现，所以括号内可直接取。
+            pid="$(sed -nE 's/^Memory cgroup out of memory: Killed process ([0-9]+) \(.*\) .*$/\1/p' <<<"$message")"
+            comm="$(sed -nE 's/^Memory cgroup out of memory: Killed process [0-9]+ \((.*)\) .*$/\1/p' <<<"$message")"
+            rss_kb="$(sed -nE 's/.*anon-rss:([0-9]+)kB.*/\1/p' <<<"$message")"
+            ;;
+        "oom-kill:constraint="*)
+            # 结构化的一行：constraint / oom_memcg / task / pid 都在里面。
+            pid="$(sed -nE 's/.*(^|,)pid=([0-9]+).*/\2/p' <<<"$message")"
+            comm="$(sed -nE 's/.*(^|,)task=([^,]+).*/\2/p' <<<"$message")"
+            constraint="$(sed -nE 's/^oom-kill:constraint=([^,]+).*/\1/p' <<<"$message")"
+            memcg="$(sed -nE 's/.*oom_memcg=([^,]+).*/\1/p' <<<"$message")"
+            ;;
+        *) return 0 ;;
+    esac
+
+    [[ -n $pid ]] || return 0
+    [[ -n $comm ]] || comm="unknown"
+    [[ $constraint == "CONSTRAINT_NONE" ]] && layer="kernel-global"
+
+    oom_is_muted "$comm" && return 0
+
+    now="$(date +%s)"
+    key="$(dedupe_key "$layer" "$pid" "$comm")"
+    when="$(date '+%Y-%m-%d %H:%M:%S')"
+
+    # 判断是否重复：同一次 OOM 内核会发 "oom-kill:..." 与 "Memory cgroup out of memory:
+    # Killed process ..." 两条，后者带 rss。所以重复时仍要把更完整的字段补进状态文件。
+    if ! notify_once "$key" "$now"; then
+        [[ -n $rss_kb ]] || return 0
+        record_oom "$pid" "$comm" "$layer" "$when" "$rss_kb" "$memcg" "" "$constraint" "" ""
+        return 0
+    fi
+
+    record_oom "$pid" "$comm" "$layer" "$when" "$rss_kb" "$memcg" "" "$constraint" "" ""
+
+    summary="内存耗尽：$comm 被内核杀掉"
+    body="layer=$layer pid=$pid"
+    [[ -n $rss_kb ]] && body+=" rss=$((rss_kb / 1024))MB"
+    [[ -n $memcg ]] && body+=" memcg=$memcg"
+    body+=$'\n'"点击诊断，或执行 cachyos-agent-oom --latest"
+
+    send_notification "$key" "$summary" "$body"
+    return 0
+}
+
+handle_oomd() {
+    local message="$1"
+    local cg=""
+    local key
+    local kind
+    local now
+    local reason=""
+    local summary
+    local body
+    local when
+    local layer="oomd"
+
+    if [[ $message == Marked\ *\ for\ killing\ due\ to\ * ]]; then
+        # 预警：还没有受害者，只是决定要杀谁。
+        kind="marked"
+        cg="$(marked_cg_from_message "$message")"
+        reason="$(oomd_reason_from_message "$message")"
+        summary="内存压力预警：systemd-oomd 已标记待杀"
+        body="cgroup=$cg"
+        [[ -n $reason ]] && body+=$'\n'"$reason"
+        body+=$'\n'"systemd-oomd 由交换/内存超限触发，通常比内核 OOM 早数分钟。"
+        body+=$'\n'"点击诊断，或执行 cachyos-agent-oom --latest"
+    elif [[ $message == *"systemd-oomd killed"* ]]; then
+        # 最终动作。消息形如 "kitty-5467-1.scope: systemd-oomd killed 11 process(es) in
+        # this unit."——前缀里带 ": "（也可能只有 ":"），末尾还会残留空白；只做 %: 是不够的，
+        # 会留下 "kitty-5467-1.scope: " 这种带尾空格的 unit 去查 cgroup。用 extglob 一次性
+        # 去掉尾部的冒号与空白（+([:space:]) 覆盖 ":" 后跟空格、纯 ":" 两种形态）。
+        kind="killed"
+        cg="${message%%systemd-oomd killed*}"
+        cg="${cg%%+([[:space:]:])}"
+        summary="systemd-oomd 杀掉了进程"
+        body="unit=$cg"$'\n'"点击诊断，或执行 cachyos-agent-oom --latest"
+    else
+        return 0
+    fi
+
+    if [[ -n $cg ]]; then
+        oom_is_muted "${cg##*/}" && return 0
+    fi
+
+    now="$(date +%s)"
+    key="$(dedupe_key "$layer" "$cg" "$kind")"
+
+    # 状态文件只在最终 kill 那一步落盘：只有 "Marked"（预警）时还没有受害者，
+    # 记下来的会是仍正常运行的 unit，反而误导诊断。
+    if [[ $kind == "killed" ]]; then
+        when="$(date '+%Y-%m-%d %H:%M:%S')"
+        record_oom "" "" "$layer" "$when" "" "" "$cg" "" "$cg" ""
+    fi
+
+    notify_once "$key" "$now" || return 0
+    send_notification "$key" "$summary" "$body"
+    return 0
+}
+
+read_psi_full_avg60() {
+    local file="$1"
+    local value
+
+    [[ -r $file ]] || return 1
+    value="$(awk '/^full /{for (i = 1; i <= NF; i++) { split($i, kv, "="); if (kv[1] == "avg60") { print kv[2]; exit } }}' "$file" 2>/dev/null)" || true
+    [[ -n $value ]] || return 1
+    printf '%s' "$value"
+}
+
+# 百分比比较用整数放大 100 倍，避免依赖 bc，也避免 shell 比较浮点数。
+psi_scaled() {
+    local value="$1"
+    local decimals
+    local whole
+
+    if [[ $value == *.* ]]; then
+        whole="${value%%.*}"
+        decimals="${value#*.}"
+        # 补齐/截断到两位小数，使 "5.5" → 550、"5.555" → 555。
+        decimals="${decimals}00"
+        decimals="${decimals:0:2}"
+        printf '%s' "$((whole * 100 + 10#$decimals))"
+    else
+        printf '%s' "$((value * 100))"
+    fi
+}
+
+psi_watch() {
+    local scaled_threshold
+    local full
+    local scaled_full
+    local key="psi"
+    local now
+    local when
+    local summary
+    local body
+
+    scaled_threshold="$(psi_scaled "$PSI_FULL_AVG60_THRESHOLD")"
+
+    while true; do
+        sleep "$PSI_INTERVAL_SECONDS"
+
+        if ! full="$(read_psi_full_avg60 "$PSI_FILE")"; then
+            continue
+        fi
+
+        scaled_full="$(psi_scaled "$full")"
+        ((scaled_full >= scaled_threshold)) || continue
+
+        now="$(date +%s)"
+        notify_once "$key" "$now" || continue
+
+        when="$(date '+%Y-%m-%d %H:%M:%S')"
+        record_oom "" "" "psi" "$when" "" "" "" "" "" "$full"
+        summary="内存压力偏高（PSI full avg60 = ${full}%）"
+        body="最近 60 秒内有 ${full}% 的时间所有任务都因等待内存而完全停滞，"
+        body+="已超过阈值 ${PSI_FULL_AVG60_THRESHOLD}%。"$'\n'
+        body+="还没到 OOM，但继续增长就会被 systemd-oomd 或内核杀进程。"
+        body+=$'\n'"点击诊断，或执行 cachyos-agent-oom --latest"
+        send_notification "$key" "$summary" "$body"
+    done
+}
+
+start_psi_watcher() {
+    [[ $PSI_ENABLED == 1 ]] || return 0
+
+    if [[ ! -r $PSI_FILE ]]; then
+        # 内核未开启 PSI（无 CONFIG_PSI）时属正常，不是错误。
+        printf '%s: %s 不可读，跳过 PSI 预警\n' "$SCRIPT_NAME" "$PSI_FILE" >&2
+        return 0
+    fi
+
+    psi_watch &
+    printf '%s\n' "$!" > "$LAST_PSI_PID_FILE"
+}
+
+read_watermark() {
+    local value=""
+
+    [[ -r $WATERMARK_FILE ]] && value="$(cat "$WATERMARK_FILE" 2>/dev/null)" || true
+    printf '%s' "$value"
+}
+
+write_watermark() {
+    local value="$1"
+    local temporary
+
+    install -d -m 0700 "$STATE_DIR"
+    temporary="$(mktemp "$STATE_DIR/.oom-watermark.XXXXXX")"
+    printf '%s' "$value" > "$temporary"
+    mv -- "$temporary" "$WATERMARK_FILE"
+}
+
+# 消费一个流的全部新行。水位单调推进：只有解析成功且时间戳更大的行才更新水位，
+# 这样重连后带出的旧日志会被水位挡掉，不会重复提醒。
+consume_stream() {
+    local file="$1"
+    local watermark="$2"
+    local line
+
+    [[ -s $file ]] || { printf '%s' "$watermark"; return 0; }
+
+    while IFS= read -r line; do
+        [[ -n $line ]] || continue
+        parse_journal_entry "$line" || continue
+        ((F_TIMESTAMP > watermark)) || continue
+
+        case "$F_MESSAGE" in
+            "Memory cgroup out of memory: Killed process "* | "oom-kill:constraint="*)
+                handle_kernel_oom "$F_MESSAGE"
+                ;;
+            Marked\ *\ for\ killing\ due\ to\ * | *"systemd-oomd killed"*)
+                handle_oomd "$F_MESSAGE"
+                ;;
+        esac
+
+        # 无论是否命中锚点都推进水位：否则流里任何一条无关日志都会把水位卡住，
+        # 让后续每条消息都被反复解析。
+        [[ $F_TIMESTAMP > $watermark ]] && watermark="$F_TIMESTAMP"
+    done < "$file"
+
+    : > "$file"
+    printf '%s' "$watermark"
+}
+
+# journalctl 因日志轮转退出后自动重连。写成独立进程，输出到文件；
+# 主循环轮询文件，因此 journalctl 死掉不会让 watcher 卡住。
+stream_loop() {
+    local label="$1"
+    local out_file="$2"
+    shift 2
+
+    while true; do
+        : > "$out_file"
+        journalctl "$@" > "$out_file" 2>/dev/null || true
+        printf '%s: %s 的 journalctl 已退出，2 秒后重连\n' "$SCRIPT_NAME" "$label" >&2
+        sleep 2
+    done
+}
+
+watch() {
+    local kernel_out="$STATE_DIR/.oom-kernel.jsonl"
+    local oomd_out="$STATE_DIR/.oomd.jsonl"
+    local kernel_pid
+    local oomd_pid
+    local watermark
+    local updated
+
+    require_jq || exit 1
+    install -d -m 0700 "$STATE_DIR" "$AGENTS_DIR"
+
+    # 水位取"现在"：`-f -n 1` 会立刻带出一条旧记录，用当前时间戳把它挡在外面，
+    # 不必依赖它是不是第一条。
+    watermark="$(date +%s%6N)"
+    write_watermark "$watermark"
+
+    start_psi_watcher
+
+    stream_loop "内核" "$kernel_out" "${KERNEL_FOLLOW[@]}" &
+    kernel_pid=$!
+    stream_loop "systemd-oomd" "$oomd_out" "${OOMD_FOLLOW[@]}" &
+    oomd_pid=$!
+
+    # 退出一条就整体退出，交给 Restart=always 拉起，避免"服务还 active 但监听已死"。
+    trap 'kill "$kernel_pid" "$oomd_pid" 2>/dev/null || true' EXIT
+
+    while true; do
+        updated="$(consume_stream "$kernel_out" "$watermark")"
+        if [[ $updated != "$watermark" ]]; then
+            watermark="$updated"
+            write_watermark "$watermark"
+        fi
+
+        updated="$(consume_stream "$oomd_out" "$watermark")"
+        if [[ $updated != "$watermark" ]]; then
+            watermark="$updated"
+            write_watermark "$watermark"
+        fi
+
+        sleep 1
+    done
+}
+
+case "${1:-}" in
+    -h|--help)
+        usage
+        exit 0
+        ;;
+    "")
+        watch
+        ;;
+    *)
+        printf '%s: 未知参数 %s\n' "$SCRIPT_NAME" "$1" >&2
+        usage >&2
+        exit 2
+        ;;
+esac

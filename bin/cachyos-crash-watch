@@ -34,6 +34,10 @@ readonly AGENTS_DIR="$STATE_DIR/agents"
 readonly MUTE_FILE="$AGENTS_DIR/crash-muted.txt"
 readonly LAST_CRASH_FILE="$AGENTS_DIR/last-crash"
 
+# 订阅建立时刻（微秒）。`-f -n 1` 会先把最后一条历史记录带出来，比它早的记录一律丢弃。
+# 在 watch 里赋值、在 handle_entry 里读，所以必须是全局变量。
+BOOT_TIMESTAMP=""
+
 declare -A last_notified=()
 
 # 每个程序最多保留一个"待用户处理"的通知。动作式通知会一直等到用户处理（-t 0 不自动
@@ -156,6 +160,7 @@ send_notification() {
 
 handle_entry() {
     local entry="$1"
+    local timestamp=""
     local pid=""
     local comm=""
     local exe=""
@@ -168,14 +173,22 @@ handle_entry() {
     # 字符，read 会把连续分隔符折叠成一个，缺失的 COREDUMP_EXE 会让 signal 顶到 exe
     # 列，崩溃事实整体错位。非空白分隔符才保留空字段。
     # jq 失败（残缺记录）就跳过，不能让常驻进程退出。
-    IFS=$'\x1f' read -r pid comm exe signal < <(
+    IFS=$'\x1f' read -r timestamp pid comm exe signal < <(
         jq -r '[
+            (.__REALTIME_TIMESTAMP // ""),
             (.COREDUMP_PID // ""),
             (.COREDUMP_COMM // ""),
             (.COREDUMP_EXE // ""),
             (.COREDUMP_SIGNAL // "")
         ] | join("\u001f")' <<<"$entry" 2>/dev/null
     ) || return 0
+
+    # 启动水位：`-f -n 1` 会在订阅建立时先把 journal 里**最后一条** coredump 记录带出来，
+    # 那条是历史崩溃（可能几小时前，当时还没人在听）。直接用会让每次重启服务都补发一条
+    # 过时通知，所以按时间戳把它连同更早的记录一起挡掉。
+    # 时间戳缺失或非数字（残缺记录）也一并跳过——宁可漏一条，也不能拿垃圾数据去发通知。
+    [[ $timestamp =~ ^[0-9]+$ ]] || return 0
+    ((timestamp > BOOT_TIMESTAMP)) || return 0
 
     [[ -n $comm ]] || return 0
 
@@ -203,6 +216,12 @@ watch() {
 
     require_jq || exit 1
 
+    # **不要用 `-f -n 0`**：实测 systemd 262 上，`-n 0` 只要和任何过滤条件组合
+    # （MESSAGE_ID= / -k / -t / -u）就会静默返回 0 行——服务看着 active、日志一句错误
+    # 都没有，实际永远收不到任何事件（本机 journal 里有 5 条真实 coredump，这条订阅却
+    # 一条都没读到）。改用 `-f -n 1`，用启动时刻作为水位丢掉带出来的那条旧记录。
+    BOOT_TIMESTAMP="$(date +%s%6N)"
+
     # 进程替换而非管道：管道会把 while 放进子 shell，去重表会随之丢失。
     # 外层循环让 journalctl 因日志轮转退出后能自动重连。
     #
@@ -211,7 +230,7 @@ watch() {
     while true; do
         while IFS= read -r entry; do
             handle_entry "$entry" || true
-        done < <(journalctl -f -n 0 -o json "MESSAGE_ID=$COREDUMP_MESSAGE_ID")
+        done < <(journalctl -f -n 1 -o json "MESSAGE_ID=$COREDUMP_MESSAGE_ID")
         printf '%s: journalctl 已退出，2 秒后重连\n' "$SCRIPT_NAME" >&2
         sleep 2
     done

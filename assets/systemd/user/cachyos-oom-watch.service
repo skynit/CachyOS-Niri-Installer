@@ -1,0 +1,28 @@
+[Unit]
+Description=Watch OOM events and offer an AI diagnosis
+# 被 cachyos-toggle-oom-capture 关闭时，标记文件存在 → 连启动都不启动，
+# 于是关闭能跨登录保持，而不是每次登录都要再关一遍。
+ConditionPathExists=!%h/.local/state/cachyos-desktop/toggles/oom-capture-off
+Documentation=man:journalctl(1) man:proc_pressure(5) man:systemd-oomd.service(8)
+After=dms.service
+# 默认限流是 10 秒内 5 次，而 RestartSec=5 时 10 秒最多重启 2 次，永远凑不满 →
+# 一个坏掉的 watcher（例如缺 jq）会每 5 秒静默重启一次、无限刷日志，却永远不进入
+# failed。收紧到 60 秒内 3 次，让它最终显式失败，便于 verify 与人工发现。
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/cachyos-oom-watch
+# 点击通知后启动的 cachyos-agent-oom → kitty → agent 都留在这个服务的 cgroup 里。
+# 默认的 KillMode=control-group 会在 watcher 重启/更新时把它们一起 SIGTERM 掉，
+# 用户正在进行的诊断会话就断了；只杀主进程，让那些子进程自己走完。
+KillMode=process
+# always 而不是 on-failure：这个 watcher 没有合法的正常退出路径（watch 是死循环，
+# 所有失败路径都以非 0 退出），因此任何一次 exit 0 都属意外；on-failure 会把服务
+# 静默留在 dead 状态，always 则保证它一定会回来（连续失败由上面的 StartLimit 兜住）。
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=niri.service
