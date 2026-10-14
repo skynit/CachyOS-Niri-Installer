@@ -75,7 +75,15 @@ fi
 STUB
 chmod +x "$stub_dir/wl-paste"
 
-ask() { PATH="$stub_dir:$PATH" "$PROJECT_DIR/bin/cachyos-ask" "$@"; }
+# 所有调用都隔离 HOME：默认动作配置在 $HOME/.config/cachyos-desktop/ask-actions.conf，
+# 不隔离的话，跑测试的机器上一旦自定义过提示词，断言就会随环境飘。
+# 所有调用都隔离 HOME：默认动作配置在 $HOME/.config/cachyos-desktop/ask-actions.conf，
+# 不隔离的话，跑测试的机器上一旦自定义过提示词（或环境里设了 CACHYOS_ASK_ACTIONS），
+# 断言就会随环境飘。ASK_TEST_HOME 是唯一开关，下面的自定义提示词用例会往里写配置。
+unset CACHYOS_ASK_ACTIONS CACHYOS_ASK_SESSION 2>/dev/null || true
+ask() {
+    HOME="${ASK_TEST_HOME:-$HOME}" PATH="$stub_dir:$PATH" "$PROJECT_DIR/bin/cachyos-ask" "$@"
+}
 ask_print() { STUB_PRIMARY="${STUB_PRIMARY:-}" STUB_CLIPBOARD="${STUB_CLIPBOARD:-}" ask --print "$@"; }
 
 # ---- 1. 动作模板与文本 ---------------------------------------------------------
@@ -132,7 +140,73 @@ bad_option_status=$?
 set -e
 assert_equal '2' "$bad_action_status" '未知动作：退出码 2'
 assert_equal '2' "$bad_option_status" '未知选项：退出码 2'
+
+# 从这里开始所有调用都落到一个可控的假 HOME 上（先建空的，确保基线仍是 7 条内置动作）。
+ask_home="$WORK_DIR/ask-home"
+mkdir -p "$ask_home"
+ASK_TEST_HOME="$ask_home"
+
 assert_equal '7' "$(ask --list-actions | wc -l)" '动作列表：7 个动作'
+
+# ---- 5b. 提示词可自定义（~/.config/cachyos-desktop/ask-actions.conf）------------
+#
+# 覆盖内置动作不能让它出现两次（这是实现里踩过的坑：用被配置填充过的表判断"是否内置"），
+# 自己的配置写坏了也不能让整个命令用不了。
+mkdir -p "$ask_home/.config/cachyos-desktop"
+ask_conf="$ask_home/.config/cachyos-desktop/ask-actions.conf"
+
+# 默认路径生效：不设 CACHYOS_ASK_ACTIONS，靠 HOME 指向的默认位置。
+cat > "$ask_conf" <<'CONF'
+# 覆盖内置动作的提示词
+explain	用三句话讲清这段内容，再列出三个最容易踩的坑。
+# 新增自定义动作
+security	审查下面的代码有没有安全漏洞，按可利用性排序。
+CONF
+
+out="$(ask --print --action explain "一段文本")"
+assert_contains "$out" "用三句话讲清" '自定义：内置动作的提示词被覆盖'
+if [[ $out == *"先给结论再展开"* ]]; then
+    fail '自定义：覆盖后不应再出现内置提示词'
+else
+    pass '自定义：覆盖后不再使用内置提示词'
+fi
+
+out="$(ask --print --action security "一段代码")"
+assert_contains "$out" "有没有安全漏洞" '自定义：新增的动作可用'
+
+assert_equal '8' "$(ask --list-actions | wc -l)" '自定义：列表 = 7 内置 + 1 新增'
+assert_equal '1' "$(ask --list-actions | cut -f1 | grep -cx explain)" \
+    '自定义：覆盖内置动作不会让它在列表里出现两次'
+# 用 sed -n '1p' 而不是 head -1：head 提前关管道会让 cachyos-ask 的 printf 收到 SIGPIPE，
+# 在 set -e 下把噪声变成失败。
+assert_equal 'explain' "$(ask --list-actions | sed -n '1p' | cut -f1)" \
+    '自定义：覆盖不改变内置动作的位置'
+
+# 未覆盖的动作仍走内置模板。
+out="$(ask --print --action fix "报错")"
+assert_contains "$out" "下面这段输出出错了" '自定义：未覆盖的动作仍用内置提示词'
+
+# 配置写坏：非法行要跳过并报行号，合法行照常生效（否则一处笔误就让整个命令不可用）。
+cat > "$ask_conf" <<'CONF'
+fix	改过的修复提示词。
+这行没有分隔符
+bad id!	非法 id
+CONF
+set +e
+conf_stderr="$(ask --list-actions 2>&1 >/dev/null)"
+conf_status=$?
+set -e
+assert_equal '0' "$conf_status" '配置损坏：命令仍正常退出'
+assert_contains "$conf_stderr" '第 2 3 行' '配置损坏：报出被跳过的行号'
+assert_contains "$(ask --print --action fix "报错")" "改过的修复提示词" \
+    '配置损坏：合法行仍然生效'
+
+# 配置文件不存在 = 没有自定义，绝不能因此失败。
+assert_equal '7' "$(ASK_TEST_HOME="$WORK_DIR/no-such-home" ask --list-actions | wc -l)" \
+    '配置缺失：回退到 7 个内置动作'
+
+# 收尾：清掉故意写坏的配置，否则后面的用例会一直读到它（污染断言与输出）。
+rm -f "$ask_conf"
 
 # ---- 6. commit/review 的 git 回退 --------------------------------------------
 repo="$WORK_DIR/repo"
@@ -202,7 +276,7 @@ JSONL
 touch "$session_file"
 
 show_ask() {
-    PATH="$stub_dir:$PATH" HOME="$ask_home" "$PROJECT_DIR/bin/cachyos-ask" --show "$@"
+    ask --show "$@"
 }
 today_cmd="$(show_ask --action explain "接着问一句")"
 if [[ $today_cmd == *"--resume sess-today"* ]]; then

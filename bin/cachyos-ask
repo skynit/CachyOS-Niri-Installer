@@ -15,6 +15,14 @@ readonly SCRIPT_NAME="${0##*/}"
 SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SELF_DIR
 readonly MAX_CHARS="${CACHYOS_ASK_MAX_CHARS:-12000}"
+# 用户可编辑的动作与提示词。CACHYOS_ASK_ACTIONS 优先，便于测试隔离与临时试改。
+readonly ACTIONS_FILE="${CACHYOS_ASK_ACTIONS:-${XDG_CONFIG_HOME:-$HOME/.config}/cachyos-desktop/ask-actions.conf}"
+
+# 用户覆盖：PROMPT_OVERRIDES[动作] = 提示词；ACTION_DESCS[动作] = 选择器里显示的一行说明；
+# CUSTOM_ACTION_LINES 存配置新增动作的整行 "id<TAB>说明"，追加到选择器末尾。
+declare -A PROMPT_OVERRIDES=()
+declare -A ACTION_DESCS=()
+CUSTOM_ACTION_LINES=()
 
 action=""
 agent=""
@@ -36,6 +44,7 @@ usage() {
   --show          只打印将要执行的启动命令，不启动
   --new           强制开新会话（默认：同一天内复用最近那个会话继续问）
   --inline        在当前终端运行 agent（默认另开 Kitty 窗口）
+  --list-actions  列出所有动作（含你自定义的），一行一个 id
   -h, --help      显示本帮助
 
 动作:
@@ -47,12 +56,24 @@ usage() {
   commit     写一条提交信息（无文本时用 git diff --cached）
   shell      把一句话变成 bash 命令
 
+上面这 7 个动作的提示词都可以改，也能新增自己的动作——写进
+  $ACTIONS_FILE
+格式是每行「动作名<TAB>提示词」，例如：
+
+  fix	下面这段输出出错了。先给结论，再用中文给出可直接执行的修复步骤。
+  explain	用三句话讲清这段代码在做什么，然后列出它的坑。
+
+改完立即生效（重开一次 cachyos-ask 即可）。覆盖内置动作时，它在选择器里的位置与顺序不变；
+配置里新增的动作追加在末尾。空行与 # 开头的行会被忽略；格式不对的行会跳过并提示行号，
+其余行照常生效——配置写坏了不会让命令用不了。
+
 文本来源（按优先级）: 命令行参数 → 主选区 → 剪贴板；
 commit/review 在没有文本、选区也为空时，自动改用当前仓库的暂存改动。
 
 环境变量:
   CACHYOS_ASK_MAX_CHARS   文本上限，默认 $MAX_CHARS 字符，超出会截断并注明
   CACHYOS_ASK_SESSION     day（默认，同一天复用会话）/ new（每次都开新会话）
+  CACHYOS_ASK_ACTIONS     自定义动作与提示词的文件路径（默认见上）
 
 为什么默认复用会话：问一问的场景基本都是同一上下文里的连续追问（同一个报错、同一段代码），
 每次都新开一个会话会让 agent 丢掉前文。所以默认找该 agent **当天最近的那个会话**继续问；
@@ -60,7 +81,9 @@ commit/review 在没有文本、选区也为空时，自动改用当前仓库的
 EOF
 }
 
-actions() {
+# 内置动作表：**唯一**的基线来源，永远 7 条、顺序固定（测试断言这个条数）。
+# 判断"某动作是不是内置"必须只查这里——用别处被配置填充过的表会导致内置项重复出现。
+builtin_actions() {
     cat <<'ACTIONS'
 explain	解释：这段在做什么、关键点与坑
 fix	排查：定位报错原因 + 可执行的修复步骤
@@ -70,6 +93,95 @@ translate	翻译：翻成自然的中文技术表达
 commit	提交信息：按暂存改动写一条规范的 commit message
 shell	转命令：把一句话变成可执行的 bash 命令
 ACTIONS
+}
+
+is_builtin_action() {
+    builtin_actions | cut -f1 | grep -qx -- "$1"
+}
+
+actions() {
+    local id desc
+    # 内置动作保持原位置与原顺序，只把说明换成用户覆盖后的提示词。
+    while IFS=$'\t' read -r id desc; do
+        [[ -n $id ]] || continue
+        printf '%s\t%s\n' "$id" "${ACTION_DESCS[$id]:-$desc}"
+    done < <(builtin_actions)
+
+    # 配置里新增的动作追加在末尾（关联数组顺序不定，所以用单独的数组保序）。
+    ((${#CUSTOM_ACTION_LINES[@]} == 0)) || printf '%s\n' "${CUSTOM_ACTION_LINES[@]}"
+}
+
+# 用户自定义动作与提示词。文件缺失、缺权限都只是"没有自定义"，绝不能因此让命令失败。
+#
+# 为什么用 tab 分隔而不是更花哨的 INI/TOML：这里只需要"id → 一段话"这一种数据，而
+# actions()/fzf 本来就用 tab 对齐；多一层解析器就多一处会坏的地方。
+load_actions_config() {
+    local file="$ACTIONS_FILE"
+    local line line_number=0
+    local id="" value=""
+    local -a invalid=()
+
+    if [[ ! -e $file ]]; then
+        return 0
+    fi
+    if [[ ! -r $file ]]; then
+        warn_config "$file 不可读，忽略自定义提示词"
+        return 0
+    fi
+
+    while IFS= read -r line || [[ -n $line ]]; do
+        line_number=$((line_number + 1))
+        line="${line%$'\r'}"
+        [[ -z $line ]] && continue
+        [[ $line == \#* ]] && continue
+
+        # tab 是唯一分隔符。用参数展开而不是 cut：cut 对空字段的处理取决于实现，
+        # 而这里"prompt 为空"恰恰是最需要报错的输入。
+        id="${line%%$'\t'*}"
+        if [[ $id == "$line" ]]; then
+            # 没有 tab：既不是"id<TAB>提示词"，也不是"id=提示词"。
+            id="${line%%=*}"
+            value="${line#*=}"
+            if [[ $id == "$line" ]]; then
+                invalid+=("$line_number")
+                continue
+            fi
+        else
+            value="${line#*$'\t'}"
+        fi
+
+        # 空提示词与非法 id 是唯一两种无效情况；其余一律按"覆盖提示词"处理。
+        if [[ ! $id =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]] || [[ -z ${value//[[:space:]]/} ]]; then
+            invalid+=("$line_number")
+            continue
+        fi
+
+        PROMPT_OVERRIDES["$id"]="$value"
+
+        if is_builtin_action "$id"; then
+            # 内置动作：只换提示词，位置与顺序都保持原样（列表里不能出现两条同 id）。
+            ACTION_DESCS["$id"]="$value"
+            continue
+        fi
+        ACTION_DESCS["$id"]="$value"
+        CUSTOM_ACTION_LINES+=("$(printf '%s\t%s' "$id" "$value")")
+    done < "$file"
+
+    ((${#invalid[@]} == 0)) || warn_config \
+        "$file 第 ${invalid[*]} 行不是 'id<TAB>提示词'，已跳过；其余已生效"
+}
+
+warn_config() {
+    printf '%s: %s\n' "$SCRIPT_NAME" "$1" >&2
+}
+
+# 取某个动作的提示词：用户覆盖优先，其次内置模板。
+action_prompt() {
+    if [[ -v PROMPT_OVERRIDES[$1] ]]; then
+        printf '%s' "${PROMPT_OVERRIDES[$1]}"
+        return 0
+    fi
+    template_for "$1"
 }
 
 template_for() {
@@ -157,6 +269,9 @@ pick_action() {
 }
 
 # ------------------------------------------------------------------ 参数
+# 先加载用户自定义动作/提示词，后面 --list-actions、valid_action、模板选择都要用它。
+load_actions_config
+
 text_args=()
 while (($# > 0)); do
     case "$1" in
@@ -251,7 +366,7 @@ if [[ -z ${text//[[:space:]]/} ]]; then
     exit 3
 fi
 
-prompt="$(template_for "$action")"
+prompt="$(action_prompt "$action")"
 [[ -n $source_label ]] && prompt+=$'\n\n'"（以下是$source_label）"
 prompt+=$'\n\n---\n'
 prompt+="$(truncate_text "$text")"

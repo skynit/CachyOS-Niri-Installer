@@ -657,6 +657,36 @@ cachyos-ask --agent codex --action commit         # 指定用哪个 agent
 | `commit` | 按暂存改动写一条规范的提交信息 |
 | `shell` | 把一句话转成可执行的 bash 命令 |
 
+#### 改提示词、加自己的动作
+
+这 7 个动作的提示词都在一个用户可编辑的文件里，安装时会给你一份带内置默认值的起始副本：
+
+```
+~/.config/cachyos-desktop/ask-actions.conf
+```
+
+格式是每行「动作名<TAB>提示词」：
+
+```conf
+# 覆盖内置动作：位置和顺序不变，只换它发出去的提示词
+fix	下面这段输出出错了。先给结论，再用中文给出可直接执行的修复步骤。
+
+# 新增动作：id 自己起，会追加到选择器末尾
+security	审查下面的代码有没有安全漏洞，按可利用性排序。
+```
+
+改完重开一次 `cachyos-ask` 即生效。
+
+| 情况 | 行为 |
+| --- | --- |
+| 动作名是那 7 个之一 | 覆盖它的提示词；选择器里的位置、顺序不变 |
+| 动作名是新的 | 追加成新动作，可用 `--action <新名字>`，也出现在选择器末尾 |
+| 文件不存在 | 完全用内置默认（删掉这个文件就是"恢复默认"） |
+| 文件里某行格式不对 | 跳过那一行并提示行号，**其余行照常生效**——写坏一处不会让命令用不了 |
+| 重跑安装器 | 不会覆盖这个文件（它是你的配置，不是受管文件） |
+
+`cachyos-ask --list-actions` 会列出当前生效的全部动作（含你新增的），一行一个 id，便于脚本化核对。
+
 **同一天复用同一个会话**（默认行为）。问一问基本都是同一上下文里的连续追问——同一个报错、同一段代码，
 每次新开会话会让 agent 丢掉前文。所以它会找该 agent **当天最近的那个会话**，带着新问题继续问：
 
@@ -1081,7 +1111,7 @@ https://api.anthropic.com/api/oauth/usage
 | --- | --- |
 | `cachyos-agent [<agent>]` | 启动默认或指定 agent；`--inline` 当前终端、`--pick` 重选、`--list` 列出、`--validate <id>` 校验 |
 | `cachyos-agent-prompt [--inline] <prompt...>` | 带一段 prompt 启动默认 agent |
-| `cachyos-ask [--action <名>] [--agent <id>] [--print] [<文本...>]` | 把选区/剪贴板/暂存改动交给 agent |
+| `cachyos-ask [--action <名>] [--agent <id>] [--print] [--list-actions] [<文本...>]` | 把选区/剪贴板/暂存改动交给 agent（提示词见 `~/.config/cachyos-desktop/ask-actions.conf`，可改可加） |
 | `cachyos-agent-console <agent> <命令...>` | 跑 agent 并在结束后通知（由启动器自动调用） |
 | `cachyos-agent-resume [--agent <id>] [--limit <n>] [--list] [--show <agent> <id>]` | 跨工具列出最近的会话并续接 |
 | `cachyos-default-agent [<agent>]` | 查看或设置默认 agent |
