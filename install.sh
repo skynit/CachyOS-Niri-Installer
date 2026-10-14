@@ -568,6 +568,14 @@ install_desktop_assets() {
     run install -m 0644 "$SCRIPT_DIR/assets/systemd/user/cachyos-agent-usage.timer" \
         "$HOME/.config/systemd/user/cachyos-agent-usage.timer"
 
+    # cachyos-ask 的动作与提示词：给一份带内置默认值的起始文件，让用户知道这个文件存在、
+    # 照着改就行。**只在不存在时落地**：这是用户自己的配置，重跑安装器绝不能覆盖他改过的
+    # 提示词。也刻意不进 config-manifest.tsv——那不是受管文件。
+    if [[ ! -e "$HOME/.config/cachyos-desktop/ask-actions.conf" ]]; then
+        run install -D -m 0644 "$SCRIPT_DIR/assets/cachyos-desktop/ask-actions.conf" \
+            "$HOME/.config/cachyos-desktop/ask-actions.conf"
+    fi
+
     if [[ ! -e "$HOME/.config/kitty/kitty.conf" ]]; then
         if [[ "$DRY_RUN" == true ]]; then
             print_command sh -c "printf '%s\\n' 'include cachyos-font.conf' > '$HOME/.config/kitty/kitty.conf'"

@@ -452,6 +452,24 @@ check_ai_agent_stack() {
         fail "oom watch does not read the oom-capture-off flag"
     fi
 
+    # cachyos-ask 的提示词起始配置：包内模板必须与代码里的内置动作一一对应。
+    # 只比对动作名是刻意的——它抓的是"模板里漏了/写错了动作名"这种最会静默漂的错；
+    # 提示词原文的改动不需要同步模板（模板只是起始副本，用户改的才是生效值）。
+    local ask_actions_file="$SCRIPT_DIR/assets/cachyos-desktop/ask-actions.conf"
+    local ask_action action_missing=""
+    if [[ ! -r $ask_actions_file ]]; then
+        fail "cachyos-ask prompt template is missing: assets/cachyos-desktop/ask-actions.conf"
+    else
+        for ask_action in explain fix review summarize translate commit shell; do
+            grep -qE "^${ask_action}	" "$ask_actions_file" || action_missing+=" $ask_action"
+        done
+        if [[ -z $action_missing ]]; then
+            pass "cachyos-ask prompt template covers all built-in actions"
+        else
+            fail "cachyos-ask prompt template is missing built-in actions:$action_missing"
+        fi
+    fi
+
     # 用量记录靠定时器周期性重算；定时器没起来，面板就会一直显示安装那一刻的数字。
     if systemctl --user is-enabled --quiet cachyos-agent-usage.timer 2>/dev/null; then
         pass "agent usage refresh timer is enabled"

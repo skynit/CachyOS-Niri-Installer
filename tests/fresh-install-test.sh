@@ -260,6 +260,15 @@ for unit in cachyos-crash-watch.service cachyos-agent-theme.service cachyos-agen
     assert_file "$SANDBOX_HOME/.config/systemd/user/$unit" "装出单元 $unit"
 done
 
+# 3b) cachyos-ask 的提示词起始配置：只在新装时给一份，且不能覆盖用户改过的内容
+ask_conf="$SANDBOX_HOME/.config/cachyos-desktop/ask-actions.conf"
+assert_file "$ask_conf" '装出 cachyos-ask 提示词起始配置'
+if grep -qE "^explain	" "$ask_conf" 2>/dev/null; then
+    pass '起始配置带内置 explain 提示词（用户照着改即可）'
+else
+    fail '起始配置里没有内置 prompt'
+fi
+
 # 4) 面板插件与启用状态
 plugin="$SANDBOX_HOME/.config/DankMaterialShell/plugins/CachyosAgents"
 assert_file "$plugin/plugin.json" '面板插件已安装'
