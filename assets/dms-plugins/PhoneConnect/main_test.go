@@ -1005,6 +1005,31 @@ func TestActiveSerialRequiresSinglePhone(t *testing.T) {
 	}
 }
 
+func TestActiveSerialReconnectsRememberedPhone(t *testing.T) {
+	setup(t)
+	if err := save(device{Host: "192.168.1.5", Port: "41234"}); err != nil {
+		t.Fatal(err)
+	}
+	connects := 0
+	execute = func(_ time.Duration, _ string, args ...string) result {
+		if len(args) >= 2 && args[0] == "adb" && args[1] == "connect" {
+			connects++
+			return result{Text: "connected to 192.168.1.5:41234"}
+		}
+		if connects == 0 {
+			return result{Text: "List of devices attached\n"}
+		}
+		return result{Text: "192.168.1.5:41234\tdevice\n"}
+	}
+	serial, err := activeSerial()
+	if err != nil || serial != "192.168.1.5:41234" {
+		t.Fatalf("reconnected phone = %q, %v", serial, err)
+	}
+	if connects != 1 {
+		t.Fatalf("adb connect calls = %d", connects)
+	}
+}
+
 func TestPopupAcceptsDroppedFilesAndSendsPaths(t *testing.T) {
 	popout, err := os.ReadFile("PhonePopout.qml")
 	if err != nil {
@@ -1024,6 +1049,83 @@ func TestPopupAcceptsDroppedFilesAndSendsPaths(t *testing.T) {
 	}
 	if !strings.Contains(string(source), "JSON.stringify({paths: list})") {
 		t.Fatal("source no longer forwards the selected path list")
+	}
+}
+
+func TestListDirParsesAndSortsStatOutput(t *testing.T) {
+	setup(t)
+	if err := save(device{Host: "192.168.1.5", Port: "41234"}); err != nil {
+		t.Fatal(err)
+	}
+	execute = func(_ time.Duration, _ string, args ...string) result {
+		if len(args) >= 2 && args[0] == "adb" && args[1] == "devices" {
+			return result{Text: "192.168.1.5:41234\tdevice\n"}
+		}
+		command := args[len(args)-1]
+		if !strings.Contains(command, "cd '/sdcard/Download'") || !strings.Contains(command, "stat -c") {
+			t.Fatalf("list command = %q", command)
+		}
+		return result{Text: "81b0|42|1700000000|b.txt\n41ed|4096|1700000001|adir\n81f8|1024|1700000002|a file.zip\n"}
+	}
+	dir, entries, err := listDir("/sdcard/Download")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dir != "/sdcard/Download" || len(entries) != 3 {
+		t.Fatalf("dir = %q entries = %#v", dir, entries)
+	}
+	if !entries[0].Dir || entries[0].Name != "adir" || entries[0].Path != "/sdcard/Download/adir" {
+		t.Fatalf("first entry = %#v", entries[0])
+	}
+	if entries[1].Name != "a file.zip" || entries[2].Name != "b.txt" || entries[2].Size != 42 {
+		t.Fatalf("file entries = %#v", entries[1:])
+	}
+	if entries[2].Path != "/sdcard/Download/b.txt" {
+		t.Fatalf("path = %q", entries[2].Path)
+	}
+}
+
+func TestPullDestinationKeepsExistingFiles(t *testing.T) {
+	dir := t.TempDir()
+	first := filepath.Join(dir, "a.txt")
+	if err := os.WriteFile(first, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if target := uniqueLocal(dir, "a.txt"); target != filepath.Join(dir, "a (1).txt") {
+		t.Fatalf("unique target = %q", target)
+	}
+	if target := uniqueLocal(dir, "b.txt"); target != filepath.Join(dir, "b.txt") {
+		t.Fatalf("new target = %q", target)
+	}
+}
+
+func TestSourceFinishesOnDoneEvent(t *testing.T) {
+	source, err := os.ReadFile("PhoneSource.qml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count := strings.Count(string(source), `event.event === "done"`); count < 2 {
+		t.Fatalf("PhoneSource.qml handles %d done events, want push and pull", count)
+	}
+}
+
+func TestPopupConfirmsDownloadAndBarShowsPullProgress(t *testing.T) {
+	popup, err := os.ReadFile("PhonePopout.qml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(popup)
+	if !strings.Contains(text, "onDoubleClicked") || !strings.Contains(text, "root.requestDownload(modelData)") ||
+		!strings.Contains(text, "root.startDownload()") || !strings.Contains(text, "下载到电脑？") {
+		t.Fatal("popup no longer asks before downloading on double click")
+	}
+	widget, err := os.ReadFile("PhoneConnect.qml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bar := string(widget)
+	if !strings.Contains(bar, "phone.pulling") || !strings.Contains(bar, "↓") || !strings.Contains(bar, "root.transferring") {
+		t.Fatal("bar pill no longer shows pull progress")
 	}
 }
 

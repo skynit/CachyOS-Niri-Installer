@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -51,8 +52,19 @@ type request struct {
 	Code    string   `json:"code"`
 	Path    string   `json:"path"`
 	Paths   []string `json:"paths"`
+	Dest    string   `json:"dest"`
 	Options options  `json:"options"`
 }
+
+type entry struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+	Dir  bool   `json:"dir"`
+	Size int64  `json:"size,omitempty"`
+	Time int64  `json:"time,omitempty"`
+}
+
+const listLimit = 400
 
 type upload struct {
 	Path string
@@ -596,10 +608,32 @@ func refreshMediaStore(serial string, uploads []upload) {
 	execute(15*time.Second, "", "adb", "-s", serial, "shell", command)
 }
 
+// reconnectSavedDevice retries the remembered phone's TCP address once. Wireless
+// debugging drops its session regularly, and adb connect is much faster than
+// making the user open developer options again. Status polling does not use this
+// so a really-offline phone cannot block the 10 second status refresh.
+func reconnectSavedDevice() bool {
+	value := read("device")
+	if value == nil || value.Host == "" || value.Port == "" {
+		return false
+	}
+	if response := execute(10*time.Second, "", "adb", "connect", net.JoinHostPort(value.Host, value.Port)); response.Code != 0 {
+		return false
+	}
+	time.Sleep(400 * time.Millisecond)
+	serials, err := devices()
+	return err == nil && len(serials) > 0
+}
+
 func activeSerial() (string, error) {
 	value, err := activeDevice()
 	if err != nil {
 		return "", err
+	}
+	if value == nil && reconnectSavedDevice() {
+		if value, err = activeDevice(); err != nil {
+			return "", err
+		}
 	}
 	if value == nil {
 		return "", errors.New("没有已连接的手机，请先连接")
@@ -821,7 +855,7 @@ func push(r request, send func(map[string]any)) error {
 	if trimmed := strings.TrimSpace(summary); trimmed != "" && utf8.RuneCountInString(trimmed) <= 160 {
 		message += "（" + trimmed + "）"
 	}
-	send(map[string]any{"ok": true, "event": "done", "names": names, "count": len(uploads),
+	send(map[string]any{"ok": true, "final": true, "event": "done", "names": names, "count": len(uploads),
 		"target": downloadDir, "message": message})
 	return nil
 }
@@ -847,6 +881,295 @@ func pushMain() int {
 		return 1
 	}
 	return 0
+}
+
+func pullMain() int {
+	send := func(value map[string]any) {
+		data, err := json.Marshal(value)
+		if err != nil {
+			return
+		}
+		fmt.Println(string(data))
+	}
+	r := request{}
+	if err := json.NewDecoder(io.LimitReader(os.Stdin, 1<<20)).Decode(&r); err != nil {
+		send(map[string]any{"ok": false, "final": true, "message": "查询请求格式无效。"})
+		return 1
+	}
+	remote, err := phoneFile(r.Path)
+	if err != nil {
+		send(map[string]any{"ok": false, "final": true, "message": err.Error()})
+		return 1
+	}
+	serial, err := activeSerial()
+	if err != nil {
+		send(map[string]any{"ok": false, "final": true, "message": err.Error()})
+		return 1
+	}
+	dest, err := pullDestination(r.Dest)
+	if err != nil {
+		send(map[string]any{"ok": false, "final": true, "message": err.Error()})
+		return 1
+	}
+	message, err := pullOne(serial, remote, dest, send)
+	if err != nil {
+		send(map[string]any{"ok": false, "final": true, "message": err.Error()})
+		return 1
+	}
+	send(map[string]any{"ok": true, "final": true, "event": "done", "message": message, "path": remote})
+	return 0
+}
+
+func listMain() int {
+	r := request{}
+	if err := json.NewDecoder(io.LimitReader(os.Stdin, 1<<20)).Decode(&r); err != nil {
+		json.NewEncoder(os.Stdout).Encode(map[string]any{"ok": false, "message": "查询请求格式无效。"})
+		return 1
+	}
+	dir, entries, err := listDir(r.Path)
+	if err != nil {
+		json.NewEncoder(os.Stdout).Encode(map[string]any{"ok": false, "message": err.Error()})
+		return 1
+	}
+	json.NewEncoder(os.Stdout).Encode(map[string]any{"ok": true, "path": dir, "entries": entries, "limited": len(entries) >= listLimit})
+	return 0
+}
+
+func remoteJoin(dir, name string) string {
+	trimmed := strings.TrimRight(dir, "/")
+	if trimmed == "" {
+		return "/" + name
+	}
+	return trimmed + "/" + name
+}
+
+func remoteBase(value string) string {
+	trimmed := strings.TrimRight(value, "/")
+	if trimmed == "" {
+		return ""
+	}
+	if index := strings.LastIndex(trimmed, "/"); index >= 0 {
+		return trimmed[index+1:]
+	}
+	return trimmed
+}
+
+func phoneDir(value string) (string, error) {
+	dir := strings.TrimSpace(value)
+	if dir == "" {
+		dir = "/sdcard"
+	}
+	if !strings.HasPrefix(dir, "/") || strings.ContainsAny(dir, "\x00\n") {
+		return "", errors.New("请输入有效的手机目录")
+	}
+	if len(dir) > 1024 {
+		return "", errors.New("手机目录过长")
+	}
+	return dir, nil
+}
+
+func phoneFile(value string) (string, error) {
+	file := strings.TrimSpace(value)
+	if !strings.HasPrefix(file, "/") || strings.HasSuffix(file, "/") || strings.ContainsAny(file, "\x00\n") {
+		return "", errors.New("请选择要下载的手机文件")
+	}
+	if len(file) > 1024 {
+		return "", errors.New("手机文件路径过长")
+	}
+	return file, nil
+}
+
+func sortEntries(entries []entry) {
+	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].Dir != entries[j].Dir {
+			return entries[i].Dir
+		}
+		return strings.ToLower(entries[i].Name) < strings.ToLower(entries[j].Name)
+	})
+}
+
+func listDir(value string) (string, []entry, error) {
+	dir, err := phoneDir(value)
+	if err != nil {
+		return "", nil, err
+	}
+	serial, err := activeSerial()
+	if err != nil {
+		return "", nil, err
+	}
+	command := "cd " + shellArgument(dir) + ` 2>/dev/null || exit 3; for f in * .[!.]*; do [ -e "$f" ] || continue; stat -c '%f|%s|%Y|%n' -- "$f" 2>/dev/null; done`
+	response := execute(12*time.Second, "", "adb", "-s", serial, "shell", command)
+	if response.Code != 0 && strings.TrimSpace(response.Text) == "" {
+		return "", nil, errors.New("无法读取手机目录 " + dir)
+	}
+	entries := make([]entry, 0, 64)
+	for _, line := range strings.Split(response.Text, "\n") {
+		parts := strings.SplitN(strings.TrimRight(line, "\r"), "|", 4)
+		if len(parts) != 4 {
+			continue
+		}
+		name := parts[3]
+		if name == "" || name == "." || name == ".." {
+			continue
+		}
+		mode, err := strconv.ParseUint(strings.TrimSpace(parts[0]), 16, 32)
+		if err != nil {
+			continue
+		}
+		size, _ := strconv.ParseInt(parts[1], 10, 64)
+		modified, _ := strconv.ParseInt(parts[2], 10, 64)
+		entries = append(entries, entry{
+			Name: name,
+			Path: remoteJoin(dir, name),
+			Dir:  uint32(mode)&0xF000 == 0x4000,
+			Size: size,
+			Time: modified,
+		})
+	}
+	sortEntries(entries)
+	if len(entries) > listLimit {
+		entries = entries[:listLimit]
+	}
+	return dir, entries, nil
+}
+
+func pullDestination(value string) (string, error) {
+	dest := strings.TrimSpace(value)
+	if dest == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", errors.New("找不到本机主目录")
+		}
+		dest = filepath.Join(home, "Downloads")
+	}
+	if !filepath.IsAbs(dest) {
+		return "", errors.New("下载目录必须是绝对路径")
+	}
+	if info, err := os.Stat(dest); err == nil {
+		if !info.IsDir() {
+			return "", errors.New("下载目标不是目录：" + dest)
+		}
+	} else if err := os.MkdirAll(dest, 0o755); err != nil {
+		return "", errors.New("无法创建下载目录：" + dest)
+	}
+	return dest, nil
+}
+
+func uniqueLocal(destDir, name string) string {
+	target := filepath.Join(destDir, name)
+	if _, err := os.Stat(target); errors.Is(err, os.ErrNotExist) {
+		return target
+	}
+	ext := filepath.Ext(name)
+	base := strings.TrimSuffix(name, ext)
+	for index := 1; index < 1000; index++ {
+		candidate := filepath.Join(destDir, fmt.Sprintf("%s (%d)%s", base, index, ext))
+		if _, err := os.Stat(candidate); errors.Is(err, os.ErrNotExist) {
+			return candidate
+		}
+	}
+	return target
+}
+
+func remoteInfo(serial, remotePath string) (bool, int64, error) {
+	response := execute(10*time.Second, "", "adb", "-s", serial, "shell", "stat -c '%f|%s' -- "+shellArgument(remotePath)+" 2>/dev/null")
+	fields := strings.SplitN(strings.TrimSpace(response.Text), "|", 2)
+	if len(fields) != 2 {
+		return false, 0, errors.New("无法读取手机文件：" + remotePath)
+	}
+	mode, err := strconv.ParseUint(strings.TrimSpace(fields[0]), 16, 32)
+	if err != nil {
+		return false, 0, errors.New("无法读取手机文件：" + remotePath)
+	}
+	size, _ := strconv.ParseInt(strings.TrimSpace(fields[1]), 10, 64)
+	return uint32(mode)&0xF000 == 0x4000, size, nil
+}
+
+func pullOne(serial, remotePath, destDir string, send func(map[string]any)) (string, error) {
+	name := remoteBase(remotePath)
+	if name == "" {
+		return "", errors.New("请选择要下载的文件")
+	}
+	isDir, size, err := remoteInfo(serial, remotePath)
+	if err != nil {
+		return "", err
+	}
+	if isDir {
+		return "", errors.New("只能下载文件，不能下载目录")
+	}
+	local := uniqueLocal(destDir, name)
+	send(map[string]any{"ok": true, "event": "start", "names": []string{name}, "count": 1, "target": local, "size": size})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "adb", "-s", serial, "pull", remotePath, local)
+	var stderr strings.Builder
+	cmd.Stdout = io.Discard
+	cmd.Stderr = &stderr
+	waited := make(chan error, 1)
+	go func() { waited <- cmd.Run() }()
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(stop)
+	var canceled atomic.Bool
+	finished := make(chan struct{})
+	go func() {
+		select {
+		case <-stop:
+			canceled.Store(true)
+			cancel()
+		case <-finished:
+		}
+	}()
+
+	last := -1
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	var waitErr error
+	for running := true; running; {
+		select {
+		case waitErr = <-waited:
+			running = false
+		case <-ticker.C:
+			if size <= 0 {
+				continue
+			}
+			info, statErr := os.Stat(local)
+			if statErr != nil {
+				continue
+			}
+			percent := int(info.Size() * 100 / size)
+			if percent > 99 {
+				percent = 99
+			}
+			if percent != last {
+				last = percent
+				send(map[string]any{"ok": true, "event": "progress", "percent": percent, "filePercent": percent,
+					"name": name, "index": 1, "count": 1})
+			}
+		}
+	}
+	close(finished)
+	if canceled.Load() {
+		_ = os.Remove(local)
+		return "", errors.New("下载已取消")
+	}
+	if waitErr != nil {
+		_ = os.Remove(local)
+		return "", errors.New(first(stderr.String(), "adb pull 失败"))
+	}
+	info, statErr := os.Stat(local)
+	if statErr != nil {
+		return "", errors.New("下载后找不到本机文件：" + local)
+	}
+	if size > 0 && info.Size() != size {
+		_ = os.Remove(local)
+		return "", fmt.Errorf("下载的文件不完整：%s（手机 %d 字节，本机 %d 字节）", name, size, info.Size())
+	}
+	send(map[string]any{"ok": true, "event": "progress", "percent": 100, "filePercent": 100,
+		"name": name, "index": 1, "count": 1})
+	return "已下载 " + name + " 到 " + local, nil
 }
 
 func connect(r request) (map[string]any, error) {
@@ -1120,6 +1443,12 @@ func main() {
 	}
 	if action == "push" {
 		os.Exit(pushMain())
+	}
+	if action == "pull" {
+		os.Exit(pullMain())
+	}
+	if action == "list" {
+		os.Exit(listMain())
 	}
 	r := request{}
 	var err error

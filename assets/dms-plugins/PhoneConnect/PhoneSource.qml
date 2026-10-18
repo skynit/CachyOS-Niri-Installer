@@ -21,8 +21,19 @@ Item {
     property var pushNames: []
     property bool pushFailed: false
     property bool pushFinal: false
+    property string phonePath: ""
+    property var phoneEntries: []
+    property bool phoneLimited: false
+    property bool listing: false
+    property string listError: ""
+    property bool pulling: false
+    property int pullPercent: -1
+    property string pullName: ""
+    property bool pullFailed: false
+    property bool pullFinal: false
     signal result(string action, var data)
     signal pushFinished(bool ok, string message)
+    signal pullFinished(bool ok, string message)
 
     function request(action, data) {
         if (busy)
@@ -93,6 +104,10 @@ Item {
             finishPush(event.ok === true, event.message || (event.ok === true ? "推送完成" : "推送失败"));
             return;
         }
+        if (event.event === "done") {
+            finishPush(true, event.message || "推送完成");
+            return;
+        }
         if (event.event === "start") {
             pushNames = event.names || pushNames;
             pushCount = event.count || pushNames.length;
@@ -110,6 +125,81 @@ Item {
                 pushIndex = event.index;
             if (typeof event.count === "number")
                 pushCount = event.count;
+        }
+    }
+
+    function browse(path) {
+        if (listing || pulling)
+            return;
+        listing = true;
+        listError = "";
+        message = "正在读取手机目录…";
+        listProcess.stdinEnabled = true;
+        listProcess.input = JSON.stringify({path: path});
+        listProcess.running = true;
+    }
+
+    function pull(path) {
+        if (pulling || pushing || busy)
+            return;
+        const target = (path || "").trim();
+        if (target.length === 0) {
+            failed = true;
+            message = "请选择要下载的文件";
+            return;
+        }
+        pulling = true;
+        pullFailed = false;
+        pullFinal = false;
+        pullPercent = -1;
+        pullName = target.split("/").pop();
+        message = "正在下载 " + pullName + "…";
+        pullProcess.stdinEnabled = true;
+        pullProcess.input = JSON.stringify({path: target});
+        pullProcess.running = true;
+    }
+
+    function cancelPull() {
+        if (pulling && pullProcess.running)
+            pullProcess.signal(15);
+    }
+
+    function finishPull(ok, text) {
+        pullFinal = true;
+        pulling = false;
+        pullFailed = !ok;
+        if (ok)
+            pullPercent = 100;
+        message = text;
+        console.log("phoneConnect: pull finished ok=" + ok + " " + text);
+        pullFinished(ok, text);
+    }
+
+    function handlePullLine(line) {
+        let event;
+        try {
+            event = JSON.parse(line);
+        } catch (error) {
+            return;
+        }
+        if (event.final === true) {
+            finishPull(event.ok === true, event.message || (event.ok === true ? "下载完成" : "下载失败"));
+            return;
+        }
+        if (event.event === "done") {
+            finishPull(true, event.message || "下载完成");
+            return;
+        }
+        if (event.event === "start") {
+            if (event.names && event.names.length > 0)
+                pullName = event.names[0];
+            message = "正在下载 " + pullName + "…";
+            return;
+        }
+        if (event.event === "progress" && typeof event.percent === "number") {
+            pullPercent = Math.max(0, Math.min(100, event.percent));
+            if (event.name)
+                pullName = event.name;
         }
     }
 
@@ -157,6 +247,59 @@ Item {
             if (!root.pushFinal) {
                 root.pushPercent = -1;
                 root.finishPush(false, code === 0 ? "推送结束，但没有收到结果" : "推送失败（连接程序退出码 " + code + "）");
+            }
+            Qt.callLater(() => root.refreshStatus());
+        }
+    }
+
+    Process {
+        id: listProcess
+        property string input: ""
+        command: [root.helperPath, "list"]
+        stdinEnabled: true
+        onStarted: {
+            write(input);
+            stdinEnabled = false;
+        }
+        stdout: StdioCollector { id: listOutput }
+        stderr: StdioCollector { id: listErrors }
+        onExited: (code, status) => {
+            root.listing = false;
+            try {
+                const response = JSON.parse(listOutput.text);
+                if (code === 0 && response.ok === true) {
+                    root.phonePath = response.path || root.phonePath;
+                    root.phoneEntries = response.entries || [];
+                    root.phoneLimited = response.limited === true;
+                    root.listError = "";
+                    root.message = root.phonePath + "（" + root.phoneEntries.length + " 项）";
+                } else {
+                    root.listError = response.message || "读取手机目录失败";
+                    root.message = root.listError;
+                }
+            } catch (error) {
+                root.listError = listErrors.text.trim() || "读取手机目录失败";
+                root.message = root.listError;
+            }
+        }
+    }
+
+    Process {
+        id: pullProcess
+        property string input: ""
+        command: [root.helperPath, "pull"]
+        stdinEnabled: true
+        onStarted: {
+            write(input);
+            stdinEnabled = false;
+        }
+        stdout: SplitParser {
+            onRead: line => root.handlePullLine(line)
+        }
+        onExited: (code, status) => {
+            if (!root.pullFinal) {
+                root.pullPercent = -1;
+                root.finishPull(false, code === 0 ? "下载结束，但没有收到结果" : "下载失败（连接程序退出码 " + code + "）");
             }
             Qt.callLater(() => root.refreshStatus());
         }

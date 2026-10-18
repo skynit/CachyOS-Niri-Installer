@@ -34,12 +34,21 @@ PluginComponent {
         drop.acceptProposedAction();
         phone.push(paths);
     }
-    readonly property string pushLabel: phone.pushPercent >= 0 ? phone.pushPercent + "%" : "…"
+    readonly property bool transferring: phone.pushing || phone.pulling
+    readonly property string pushLabel: {
+        if (phone.pushing)
+            return phone.pushPercent >= 0 ? phone.pushPercent + "%" : "…";
+        if (phone.pulling)
+            return phone.pullPercent >= 0 ? "↓" + phone.pullPercent + "%" : "↓…";
+        return "";
+    }
     readonly property string connectionLabel: {
         if (phone.pushing) {
             let label = phone.pushCount > 1 ? ("正在推送 " + phone.pushCount + " 个文件，第 " + phone.pushIndex + " 个 " + phone.pushName) : ("正在推送" + (phone.pushName ? " " + phone.pushName : ""));
             return label + (phone.pushPercent >= 0 ? "，进度 " + phone.pushPercent + "%" : "，进度未知");
         }
+        if (phone.pulling)
+            return "正在下载" + (phone.pullName ? " " + phone.pullName : "") + (phone.pullPercent >= 0 ? "，进度 " + phone.pullPercent + "%" : "，进度未知");
         if (!phone.statusKnown)
             return "手机连接状态未知";
         return phone.connected ? "手机已连接" : "手机未连接";
@@ -49,7 +58,7 @@ PluginComponent {
     horizontalBarPill: Component {
         Item {
             id: pill
-            implicitWidth: phone.pushing ? Math.max(root.iconSize, pushText.implicitWidth + 8) : root.iconSize
+            implicitWidth: root.transferring ? Math.max(root.iconSize, pushText.implicitWidth + 8) : root.iconSize
             implicitHeight: root.widgetThickness
             activeFocusOnTab: true
             Accessible.role: Accessible.Button
@@ -59,7 +68,7 @@ PluginComponent {
             Keys.onSpacePressed: root.triggerPopout()
 
             DankIcon {
-                visible: !phone.pushing
+                visible: !root.transferring
                 name: "smartphone"
                 size: root.iconSize
                 color: root.connectionColor
@@ -67,7 +76,7 @@ PluginComponent {
             }
             StyledText {
                 id: pushText
-                visible: phone.pushing
+                visible: root.transferring
                 anchors.centerIn: parent
                 text: root.pushLabel
                 font.pixelSize: 11
@@ -102,14 +111,14 @@ PluginComponent {
             Keys.onSpacePressed: root.triggerPopout()
 
             DankIcon {
-                visible: !phone.pushing
+                visible: !root.transferring
                 name: "smartphone"
                 size: root.iconSize
                 color: root.connectionColor
                 anchors.centerIn: parent
             }
             StyledText {
-                visible: phone.pushing
+                visible: root.transferring
                 anchors.centerIn: parent
                 text: root.pushLabel
                 font.pixelSize: 10

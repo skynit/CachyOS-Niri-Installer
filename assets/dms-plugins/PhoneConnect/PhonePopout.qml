@@ -20,6 +20,10 @@ Item {
     property string pairPort: ""
     property var pendingPaths: []
     property bool dragActive: false
+    property string selectedPath: ""
+    property string confirmPath: ""
+    property string confirmName: ""
+    property int confirmSize: -1
     implicitHeight: Math.max(270, Math.min(570, availableHeight))
     function launchOptions() {
         return {
@@ -84,6 +88,50 @@ Item {
         options = updated;
         optionsError = "";
     }
+    function formatSize(value) {
+        if (value === undefined || value === null || value < 0)
+            return "";
+        if (value < 1024)
+            return value + " B";
+        if (value < 1024 * 1024)
+            return (value / 1024).toFixed(1) + " KB";
+        if (value < 1024 * 1024 * 1024)
+            return (value / 1024 / 1024).toFixed(1) + " MB";
+        return (value / 1024 / 1024 / 1024).toFixed(2) + " GB";
+    }
+    function canGoUp() {
+        const path = root.source.phonePath || "/sdcard";
+        return !root.source.listing && path !== "/" && path !== "/sdcard";
+    }
+    function goUp() {
+        const path = root.source.phonePath || "/sdcard";
+        if (path === "/" || path === "/sdcard")
+            return;
+        const index = path.lastIndexOf("/");
+        root.source.browse(index <= 0 ? "/" : path.slice(0, index));
+    }
+    function openFiles() {
+        root.mode = "files";
+        if (!root.source.phonePath && !root.source.listing)
+            root.source.browse("/sdcard");
+    }
+    function requestDownload(entry) {
+        root.selectedPath = entry.path;
+        root.confirmPath = entry.path;
+        root.confirmName = entry.name;
+        root.confirmSize = typeof entry.size === "number" ? entry.size : -1;
+    }
+    function cancelDownload() {
+        root.confirmPath = "";
+        root.confirmName = "";
+        root.confirmSize = -1;
+    }
+    function startDownload() {
+        const target = root.confirmPath;
+        root.cancelDownload();
+        if (target.length > 0)
+            root.source.pull(target);
+    }
     Component.onCompleted: {
         options = Object.assign({}, settings);
         source.request("state", {});
@@ -129,7 +177,22 @@ Item {
         RowLayout {
             Layout.fillWidth: true
             DankIcon { name: "smartphone"; size: 22; color: Theme.primary }
-            StyledText { text: root.mode === "settings" ? "投屏选项" : "手机连接"; font.pixelSize: 16; font.weight: Font.DemiBold; Layout.fillWidth: true }
+            StyledText {
+                text: root.mode === "files" ? "手机文件" : (root.mode === "settings" ? "投屏选项" : "手机连接")
+                font.pixelSize: 16
+                font.weight: Font.DemiBold
+                Layout.fillWidth: true
+            }
+            DankActionButton {
+                iconName: root.mode === "files" ? "arrow_back" : "folder_open"
+                tooltipText: root.mode === "files" ? "返回手机连接" : "浏览手机文件"
+                onClicked: {
+                    if (root.mode === "files")
+                        root.mode = "connect";
+                    else
+                        root.openFiles();
+                }
+            }
             DankActionButton {
                 iconName: root.mode === "settings" ? "arrow_back" : "tune"
                 tooltipText: root.mode === "settings" ? "返回手机连接" : "投屏选项"
@@ -458,6 +521,262 @@ Item {
                 options: root.options
                 error: root.optionsError
                 saveOption: (key, value) => root.updateOption(key, value)
+            }
+        }
+
+        DankFlickable {
+            visible: root.mode === "files"
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            contentWidth: width
+            contentHeight: filesColumn.implicitHeight + 8
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+
+            Column {
+                id: filesColumn
+                width: parent.width - 8
+                spacing: 10
+
+                RowLayout {
+                    width: parent.width
+                    spacing: 8
+                    DankButton {
+                        text: "上级"
+                        iconName: "arrow_upward"
+                        buttonHeight: 32
+                        horizontalPadding: 8
+                        enabled: root.canGoUp()
+                        onClicked: root.goUp()
+                    }
+                    StyledText {
+                        Layout.fillWidth: true
+                        text: root.source.phonePath || "/sdcard"
+                        textFormat: Text.PlainText
+                        font.pixelSize: 12
+                        color: Theme.surfaceVariantText
+                        elide: Text.ElideMiddle
+                    }
+                    DankActionButton {
+                        iconName: "refresh"
+                        tooltipText: "刷新目录"
+                        enabled: !root.source.listing && !root.source.pulling
+                        onClicked: root.source.browse(root.source.phonePath || "/sdcard")
+                    }
+                }
+
+                Rectangle {
+                    id: pullTrack
+                    width: parent.width
+                    height: 6
+                    radius: 3
+                    visible: root.source.pulling || root.source.pullPercent >= 0
+                    color: Theme.surfaceContainerHigh
+                    clip: true
+                    Rectangle {
+                        visible: root.source.pullPercent >= 0
+                        height: parent.height
+                        radius: 3
+                        color: Theme.primary
+                        width: parent.width * Math.max(0, Math.min(100, root.source.pullPercent)) / 100
+                    }
+                    Rectangle {
+                        visible: root.source.pulling && root.source.pullPercent < 0
+                        width: pullTrack.width * 0.35
+                        height: parent.height
+                        radius: 3
+                        color: Theme.primary
+                        NumberAnimation on x {
+                            running: parent.visible
+                            loops: Animation.Infinite
+                            duration: 1100
+                            from: -pullTrack.width
+                            to: pullTrack.width
+                        }
+                    }
+                }
+                RowLayout {
+                    width: parent.width
+                    spacing: 8
+                    StyledText {
+                        Layout.fillWidth: true
+                        text: {
+                            if (root.source.pulling)
+                                return "正在下载 " + root.source.pullName + (root.source.pullPercent < 0 ? "…" : "，" + root.source.pullPercent + "%");
+                            if (root.source.pullFailed)
+                                return "下载未完成：" + (root.source.message || "");
+                            return root.source.pullPercent === 100 ? (root.source.message || "下载完成") : "单击选中，双击下载到电脑（~/Downloads）";
+                        }
+                        textFormat: Text.PlainText
+                        color: root.source.pullFailed ? Theme.warning : Theme.surfaceVariantText
+                        font.pixelSize: 12
+                        wrapMode: Text.WordWrap
+                    }
+                    DankButton {
+                        visible: root.source.pulling
+                        text: "取消"
+                        iconName: "close"
+                        buttonHeight: 30
+                        horizontalPadding: 8
+                        onClicked: root.source.cancelPull()
+                    }
+                }
+
+                StyledText {
+                    width: parent.width
+                    visible: root.source.listing
+                    text: "正在读取 " + (root.source.phonePath || "/sdcard") + "…"
+                    font.pixelSize: 12
+                    color: Theme.surfaceVariantText
+                }
+                StyledText {
+                    width: parent.width
+                    visible: !!root.source.listError
+                    text: root.source.listError
+                    font.pixelSize: 12
+                    color: Theme.warning
+                    wrapMode: Text.WordWrap
+                }
+
+                Repeater {
+                    model: root.source.phoneEntries
+                    delegate: Rectangle {
+                        required property var modelData
+                        property bool selected: !modelData.dir && root.selectedPath === modelData.path
+                        width: filesColumn.width
+                        height: 42
+                        radius: 6
+                        color: (entryMouse.containsMouse || selected) ? Theme.surfaceContainerHigh : "transparent"
+                        border.width: selected ? 1 : 0
+                        border.color: Theme.primary
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 6
+                            anchors.rightMargin: 6
+                            spacing: 8
+                            DankIcon {
+                                name: modelData.dir ? "folder" : "description"
+                                size: 18
+                                color: modelData.dir ? Theme.primary : Theme.surfaceVariantText
+                            }
+                            StyledText {
+                                Layout.fillWidth: true
+                                text: modelData.name
+                                textFormat: Text.PlainText
+                                font.pixelSize: 13
+                                elide: Text.ElideMiddle
+                            }
+                            StyledText {
+                                visible: !modelData.dir
+                                text: root.formatSize(modelData.size)
+                                font.pixelSize: 11
+                                color: Theme.surfaceVariantText
+                            }
+                        }
+                        MouseArea {
+                            id: entryMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            enabled: !root.source.listing && !root.source.pulling
+                            onClicked: {
+                                if (modelData.dir) {
+                                    root.selectedPath = "";
+                                    root.source.browse(modelData.path);
+                                } else {
+                                    root.selectedPath = modelData.path;
+                                }
+                            }
+                            onDoubleClicked: {
+                                if (!modelData.dir)
+                                    root.requestDownload(modelData);
+                            }
+                        }
+                    }
+                }
+
+                StyledText {
+                    width: parent.width
+                    visible: !root.source.listing && root.source.phoneEntries.length === 0 && !root.source.listError
+                    text: "这个目录是空的"
+                    font.pixelSize: 12
+                    color: Theme.surfaceVariantText
+                }
+                StyledText {
+                    width: parent.width
+                    visible: root.source.phoneLimited
+                    text: "目录项过多，只显示前 400 项，请进入子目录查看"
+                    font.pixelSize: 11
+                    color: Theme.surfaceVariantText
+                }
+            }
+        }
+    }
+
+    Rectangle {
+        id: confirmScrim
+        anchors.fill: parent
+        visible: root.confirmPath !== ""
+        color: Qt.rgba(0, 0, 0, 0.45)
+        z: 50
+        MouseArea {
+            anchors.fill: parent
+            onClicked: root.cancelDownload()
+        }
+        Rectangle {
+            id: confirmCard
+            width: Math.min(parent.width - 48, 380)
+            height: confirmColumn.implicitHeight + 32
+            anchors.centerIn: parent
+            radius: 12
+            color: Theme.surfaceContainerHigh
+            border.width: 1
+            border.color: Theme.outlineMedium
+            MouseArea { anchors.fill: parent }
+            Column {
+                id: confirmColumn
+                anchors.fill: parent
+                anchors.margins: 16
+                spacing: 10
+                StyledText {
+                    width: parent.width
+                    text: "下载到电脑？"
+                    font.pixelSize: 15
+                    font.weight: Font.DemiBold
+                    color: Theme.surfaceText
+                }
+                StyledText {
+                    width: parent.width
+                    text: root.confirmName + (root.confirmSize > 0 ? "（" + root.formatSize(root.confirmSize) + "）" : "")
+                    textFormat: Text.PlainText
+                    font.pixelSize: 13
+                    color: Theme.surfaceText
+                    wrapMode: Text.WordWrap
+                }
+                StyledText {
+                    width: parent.width
+                    text: "保存到 ~/Downloads；同名文件会自动编号，不会覆盖已有文件。"
+                    font.pixelSize: 12
+                    color: Theme.surfaceVariantText
+                    wrapMode: Text.WordWrap
+                }
+                RowLayout {
+                    width: parent.width
+                    spacing: 8
+                    Item { Layout.fillWidth: true }
+                    DankButton {
+                        text: "取消"
+                        buttonHeight: 32
+                        horizontalPadding: 12
+                        onClicked: root.cancelDownload()
+                    }
+                    DankButton {
+                        text: "下载"
+                        iconName: "download"
+                        buttonHeight: 32
+                        horizontalPadding: 12
+                        onClicked: root.startDownload()
+                    }
+                }
             }
         }
     }
