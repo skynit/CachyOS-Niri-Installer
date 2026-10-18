@@ -1,8 +1,8 @@
 {
   "id": "cachyosAgents",
-  "name": "CachyOS Agents 用量",
-  "description": "Claude Code / Codex / OpenCode / DSH 的 token 与费用统计，数据由本机采集",
-  "version": "1.1.0",
+  "name": "AI 集成",
+  "description": "系统 AI 设置、提问提示词、崩溃与 OOM 诊断、Agent 用量统计",
+  "version": "2.0.0",
   "author": "skynit",
   "type": "widget",
   "capabilities": [
@@ -13,7 +13,6 @@
   "icon": "smart_toy",
   "requires_dms": ">=1.5.3",
   "dependencies": [
-    "jq",
     "python3"
   ],
   "permissions": [

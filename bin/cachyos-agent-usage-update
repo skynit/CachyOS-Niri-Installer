@@ -96,7 +96,7 @@ collect() {
         printf '%s: %s 采集器失败（保留上一份记录）\n' "$SCRIPT_NAME" "$agent" >&2
         return 1
     fi
-    if ! jq -e . >/dev/null 2>&1 <<<"$record"; then
+    if ! cachyos-usage-json check >/dev/null 2>&1 <<<"$record"; then
         printf '%s: %s 采集器输出的不是合法 JSON\n' "$SCRIPT_NAME" "$agent" >&2
         return 1
     fi
@@ -106,12 +106,7 @@ collect() {
         # --limits-only 的采集器只能给出限额，本地统计是空的。直接落盘会用好数据换坏数据
         # （整条记录变成 hasLocalStats=false、今天用量归零），所以这里只把限额字段并进去，
         # 保留磁盘上原有的 stats/ready/hasLocalStats。
-        if ! jq -s '.[0] * {
-                limits: .[1].limits,
-                usageStatusText: .[1].usageStatusText,
-                tierLabel: .[1].tierLabel,
-                updatedAt: .[1].updatedAt
-            }' "$USAGE_DIR/$agent.json" <<<"$record" > "$temporary"; then
+        if ! cachyos-usage-json merge "$USAGE_DIR/$agent.json" <<<"$record" > "$temporary"; then
             rm -f -- "$temporary"
             printf '%s: %s 的限额合并失败（保留上一份记录）\n' "$SCRIPT_NAME" "$agent" >&2
             return 1

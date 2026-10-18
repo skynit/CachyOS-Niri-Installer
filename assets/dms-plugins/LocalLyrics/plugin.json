@@ -1,0 +1,15 @@
+{
+  "id": "localLyrics",
+  "name": "LocalLyrics 本地歌词",
+  "description": "跟随播放器进度显示音频内嵌歌词，完全离线",
+  "version": "1.1.0",
+  "author": "skynit",
+  "type": "widget",
+  "capabilities": ["dankbar-widget"],
+  "component": "./LocalLyrics.qml",
+  "settings": "./LyricsSettings.qml",
+  "icon": "lyrics",
+  "requires_dms": ">=1.6.1",
+  "dependencies": ["ffprobe"],
+  "permissions": ["settings_read", "settings_write", "process"]
+}

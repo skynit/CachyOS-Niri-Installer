@@ -1,0 +1,15 @@
+{
+  "id": "localStatus",
+  "name": "LocalStatus 本机状态",
+  "description": "本机 IP、网络链路、CPU、负载、内存、Swap、磁盘和时间",
+  "version": "1.0.0",
+  "author": "skynit",
+  "type": "widget",
+  "capabilities": ["dankbar-widget"],
+  "component": "./LocalStatus.qml",
+  "settings": "./LocalStatusSettings.qml",
+  "icon": "monitoring",
+  "requires_dms": ">=1.5.3",
+  "dependencies": ["dgop", "ip"],
+  "permissions": ["settings_read", "settings_write", "process"]
+}

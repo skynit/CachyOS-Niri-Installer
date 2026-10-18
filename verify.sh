@@ -2,7 +2,8 @@
 
 set -uo pipefail
 
-readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
 
 # shellcheck source=packages.sh
 source "$SCRIPT_DIR/packages.sh"
@@ -470,17 +471,7 @@ check_ai_agent_stack() {
         fi
     fi
 
-    # 用量记录靠定时器周期性重算；定时器没起来，面板就会一直显示安装那一刻的数字。
-    if systemctl --user is-enabled --quiet cachyos-agent-usage.timer 2>/dev/null; then
-        pass "agent usage refresh timer is enabled"
-    else
-        fail "cachyos-agent-usage.timer is not enabled (rerun the installer)"
-    fi
-    if systemctl --user is-active --quiet cachyos-agent-usage.timer 2>/dev/null; then
-        pass "agent usage refresh timer is active"
-    else
-        fail "cachyos-agent-usage.timer is not active"
-    fi
+    check_ai_background_unit cachyos-agent-usage.timer
 
     if systemctl --user is-enabled --quiet cachyos-crash-watch.service 2>/dev/null; then
         pass "cachyos-crash-watch.service is enabled"
@@ -495,50 +486,100 @@ check_ai_agent_stack() {
     fi
 }
 
+# 随包 DMS 插件里真正会被装进 ~/.config 的文本运行文件（相对插件目录）。
+# 目录名是 DMS 的安装目录名，和插件 ID 是两套名字（localTranslate/localLyrics 小写开头）。
+dms_plugin_runtime_files() {
+    local source_dir="$SCRIPT_DIR/assets/dms-plugins/$1"
+
+    find "$source_dir" -maxdepth 3 -type f \
+        \( -name '*.qml' -o -name '*.js' -o -name 'plugin.json' -o -name 'README.md' \
+           -o -path '*/tests/*' -o -path '*/data/*' \) \
+        -printf '%P\n' | sort
+}
+
 check_dms_plugin_stack() {
     local collector agent
     local share_dir="${CACHYOS_DESKTOP_SHARE_DIR:-/usr/local/share/cachyos-desktop}"
-    local plugin_dir="$HOME/.config/DankMaterialShell/plugins/CachyosAgents"
+    local plugin_root="$HOME/.config/DankMaterialShell/plugins"
     local settings_file="$HOME/.config/DankMaterialShell/settings.json"
     local plugin_settings="$HOME/.config/DankMaterialShell/plugin_settings.json"
-    local asset
+    local asset index source_name target_name plugin_id plugin_enabled dms_version
+    local bar_configured=false
+    local -a plugin_sources=(CachyosAgents LocalStatus LocalTranslate LocalLyrics PhoneConnect Focus Top)
+    local -a plugin_targets=(CachyosAgents LocalStatus localTranslate localLyrics PhoneConnect Focus Top)
+    local -a plugin_ids=(cachyosAgents localStatus localTranslate localLyrics phoneConnect focus top)
+    local -a plugin_types=(widget widget widget widget widget widget daemon)
 
-    # 随包副本：用户目录里的插件被改坏时，重跑安装器就能修回来。
-    for asset in plugin.json Usage.js UsageSource.qml CachyosAgents.qml UsageDetails.qml CachyosAgentsSettings.qml; do
-        check_file "$share_dir/assets/dms-plugins/CachyosAgents/$asset"
+    check_command cachyos-ai-settings
+    check_file "$share_dir/assets/lib/ai-settings.sh"
+
+    # 随包副本 + 运行副本一起查：用户目录里的插件被改坏时，重跑安装器就能修回来；
+    # 文件在包里但漏装（或漏登记）时，DMS 加载插件只会静默缺功能。
+    for index in "${!plugin_sources[@]}"; do
+        source_name="${plugin_sources[$index]}"
+        target_name="${plugin_targets[$index]}"
+        if [[ -d "$SCRIPT_DIR/assets/dms-plugins/$source_name" ]]; then
+            while IFS= read -r asset; do
+                [[ -n $asset ]] || continue
+                check_file "$share_dir/assets/dms-plugins/$source_name/$asset"
+                check_file "$plugin_root/$target_name/$asset"
+            done < <(dms_plugin_runtime_files "$source_name")
+        else
+            fail "shipped DMS plugin directory is missing: assets/dms-plugins/$source_name"
+        fi
     done
-    check_file "$share_dir/assets/dms/add-agents-bar-widget.jq"
+    check_file "$share_dir/assets/dms/add-dms-bar-widgets.jq"
     check_file "$share_dir/assets/dms/enable-dms-plugin.jq"
 
-    # 运行副本。
-    for asset in plugin.json Usage.js UsageSource.qml CachyosAgents.qml UsageDetails.qml CachyosAgentsSettings.qml; do
-        check_file "$plugin_dir/$asset"
+    # Go helper 二进制钉在插件目录里（QML 用 Qt.resolvedUrl 找它），缺了插件点开就报错。
+    for asset in localTranslate/translate-lookup localLyrics/lyrics-helper \
+                 PhoneConnect/phone-connect Focus/focus-helper Top/top-helper; do
+        if [[ -x "$plugin_root/$asset" ]]; then
+            pass "DMS plugin helper is executable: $asset"
+        else
+            fail "DMS plugin helper is missing or not executable: $asset"
+        fi
     done
 
-    # 下面两处决定"装了但看不见"：插件没启用、或没接到状态栏上。
-    if [[ -f "$plugin_settings" ]] && jq -e '.cachyosAgents.enabled == true' "$plugin_settings" >/dev/null 2>&1; then
-        pass "DMS usage plugin is enabled"
-    else
-        warn "DMS usage plugin is not enabled (Settings > Plugins, or rerun the installer)"
+    # 全新安装时 settings.json 没有 barConfigs（DMS 的默认栏只在键不存在时生效），
+    # 安装器不会凭空造栏，所以"没有栏可接"与"有栏但漏了控件"必须区分：
+    #   无 barConfigs        → WARN（让用户在 DMS 设置里加，安装器已提示过）
+    #   有栏但没有这个控件   → FAIL（接线逻辑失效，用户看不到插件）
+    if [[ -f "$settings_file" ]] &&
+        jq -e '((.barConfigs // []) | length) > 0' "$settings_file" >/dev/null 2>&1; then
+        bar_configured=true
     fi
 
-    # 插件已启用、却没有任何一条 barConfigs 含它 ⇒ 用户看不到任何东西，这是功能不成立，
-    # 不是"提醒"。反过来若插件没启用，就不要强求接线（用户可能故意不开）。
-    local plugin_enabled=false
-    if [[ -f "$plugin_settings" ]] && jq -e '.cachyosAgents.enabled == true' "$plugin_settings" >/dev/null 2>&1; then
-        plugin_enabled=true
-    fi
+    # 下面两处决定"装了但看不见"：插件没启用、或没接到状态栏上。按插件逐个判断：
+    # 已启用、有自定义栏却没有任何一条含它 ⇒ 用户看不到任何东西，这是功能不成立，不是提醒；
+    # 反过来若插件没启用，就不要强求接线（用户可能故意不开），只 warn。
+    for index in "${!plugin_ids[@]}"; do
+        plugin_id="${plugin_ids[$index]}"
+        plugin_type="${plugin_types[$index]}"
+        plugin_enabled=false
+        if [[ -f "$plugin_settings" ]] &&
+            jq -e --arg id "$plugin_id" '.[$id].enabled == true' "$plugin_settings" >/dev/null 2>&1; then
+            plugin_enabled=true
+            pass "DMS plugin is enabled: $plugin_id"
+        else
+            warn "DMS plugin is not enabled: $plugin_id (Settings > Plugins, or rerun the installer)"
+        fi
 
-    if [[ -f "$settings_file" ]] && jq -e '
-            [.barConfigs[]? | (.leftWidgets? // [])[], (.centerWidgets? // [])[], (.rightWidgets? // [])[]
-             | if type == "object" then .id else . end] | index("cachyosAgents") != null' \
-            "$settings_file" >/dev/null 2>&1; then
-        pass "DMS usage widget is placed on the DankBar"
-    elif [[ $plugin_enabled == true ]]; then
-        fail "DMS usage plugin is enabled but the widget is on no bar (Settings > Bar, or rerun the installer)"
-    else
-        warn "DMS usage widget is not placed on the DankBar (plugin disabled, so that is allowed)"
-    fi
+        if [[ $plugin_type == widget ]]; then
+            if [[ -f "$settings_file" ]] && jq -e --arg id "$plugin_id" '
+                    [.barConfigs[]? | (.leftWidgets? // [])[], (.centerWidgets? // [])[], (.rightWidgets? // [])[]
+                     | if type == "object" then .id else . end] | index($id) != null' \
+                    "$settings_file" >/dev/null 2>&1; then
+                pass "DMS plugin widget is placed on the DankBar: $plugin_id"
+            elif [[ $plugin_enabled == true && $bar_configured == true ]]; then
+                fail "DMS plugin is enabled but its widget is on no bar: $plugin_id (Settings > Bar, or rerun the installer)"
+            elif [[ $plugin_enabled == true ]]; then
+                warn "DMS plugin widget is not placed on the DankBar yet: $plugin_id (no custom bar configured; add it from DMS Settings > Bar)"
+            else
+                warn "DMS plugin widget is not placed on the DankBar: $plugin_id (plugin disabled, so that is allowed)"
+            fi
+        fi
+    done
 
     # 面板没有记录可读时会显示占位符，所以这里也确认采集器至少跑成功过一次。
     # 每个采集器都必须在面板的 agents 表里登记：加了采集器却忘了登记，面板永远不会显示它
@@ -558,6 +599,35 @@ check_dms_plugin_stack() {
         pass "agent usage records exist"
     else
         warn "no agent usage records yet (run cachyos-agent-usage-update)"
+    fi
+
+    # 随包插件依赖 DMS 1.6.2 的 DankBar/插件接口；旧版可能装上去也加载不出来。
+    dms_version=""
+    if dms_version="$(dms version 2>/dev/null)"; then
+        dms_version="$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+' <<< "$dms_version" | head -n 1 || true)"
+    else
+        dms_version=""
+    fi
+    if [[ -z $dms_version ]]; then
+        warn "could not determine the DMS version (dms version); expected at least 1.6.2"
+    elif [[ "$(printf '%s\n%s\n' "1.6.2" "$dms_version" | sort -V | head -n 1)" == "1.6.2" ]]; then
+        pass "DMS version is at least 1.6.2 (found $dms_version)"
+    else
+        warn "DMS version is older than 1.6.2 (found $dms_version); bundled plugins may not load"
+    fi
+
+    # 运行依赖缺失时插件只会静默降级（没有通知/发现不到手机），所以这里是 WARN 不是 FAIL。
+    for asset in adb scrcpy avahi-browse dgop; do
+        if command -v "$asset" >/dev/null 2>&1; then
+            pass "DMS plugin runtime dependency available: $asset"
+        else
+            warn "DMS plugin runtime dependency missing: $asset"
+        fi
+    done
+    if systemctl is-active --quiet avahi-daemon.service 2>/dev/null; then
+        pass "avahi-daemon is running"
+    else
+        warn "avahi-daemon is not running (PhoneConnect cannot discover phones over mDNS)"
     fi
 }
 
@@ -590,6 +660,17 @@ check_voxtype_stack() {
     done
 }
 
+check_ai_background_unit() {
+    local unit="$1" enabled active
+    enabled="$(systemctl --user is-enabled "$unit" 2>/dev/null || true)"
+    active="$(systemctl --user is-active "$unit" 2>/dev/null || true)"
+    case "$enabled:$active" in
+        enabled:active | enabled-runtime:active) pass "$unit is enabled and active" ;;
+        disabled:inactive) pass "$unit is disabled by user" ;;
+        *) fail "$unit has unexpected state: $enabled / $active" ;;
+    esac
+}
+
 check_agent_theme_sync() {
     local share_dir="${CACHYOS_DESKTOP_SHARE_DIR:-/usr/local/share/cachyos-desktop}"
     local unit_dir="$HOME/.config/systemd/user"
@@ -618,17 +699,7 @@ check_agent_theme_sync() {
         return 0
     fi
 
-    if systemctl --user is-enabled --quiet cachyos-agent-theme.path 2>/dev/null; then
-        pass "theme sync path unit is enabled"
-    else
-        fail "cachyos-agent-theme.path is not enabled (rerun the installer)"
-    fi
-
-    if systemctl --user is-active --quiet cachyos-agent-theme.path 2>/dev/null; then
-        pass "theme sync path unit is active"
-    else
-        fail "cachyos-agent-theme.path is not active"
-    fi
+    check_ai_background_unit cachyos-agent-theme.path
 
     # 真正读一次配色文件并按模式算出目标值；失败说明配色文件缺失或不可读。
     if cachyos-agent-theme-sync --status --quiet >/dev/null 2>&1; then

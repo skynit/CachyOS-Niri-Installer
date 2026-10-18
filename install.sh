@@ -10,8 +10,10 @@ TARGET_USER="${USER:-}"
 [[ -n $TARGET_USER ]] || TARGET_USER="$(id -un)"
 readonly TARGET_USER
 readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-readonly PINNED_DMS_VERSION="v1.5.3"
-readonly PINNED_DMS_SHA256_AMD64="c84da05e4afd84a737faaac4fa3bc65fa78fcd783c5ec930aec24f31f4e84716"
+# DMS 1.6.2 是随包插件的下限：Focus 要求 >=1.6.2，LocalTranslate/LocalLyrics 要求
+# >=1.6.1。钉住版本时同时钉住官方安装器压缩包的 SHA256（来自该 release 的 .sha256 文件）。
+readonly PINNED_DMS_VERSION="v1.6.2"
+readonly PINNED_DMS_SHA256_AMD64="933d3d87ac462432f6e0265e47dc68171c7174592e2a8caba7b9b9710bda5e56"
 readonly PINNED_NIRI_SIDEBAR_VERSION="v0.4.0"
 readonly PINNED_NIRI_SIDEBAR_SHA256_AMD64="8264fa0a82657a21b781588877adec67e29c51d4b4ca1cb35a2415c8520be5d1"
 
@@ -48,6 +50,13 @@ readonly -a DMS_FEATURE_PACKAGES=(
     qt6-multimedia
     wtype
     cups-pk-helper
+    # 随包 DMS 插件的运行依赖：
+    #   dgop         LocalStatus 的 CPU/内存/负载采样（DMS 的 DgopService 也用它）
+    #   android-tools/adb、scrcpy、avahi  PhoneConnect 的配对、投屏与局域网发现
+    dgop
+    android-tools
+    scrcpy
+    avahi
 )
 
 # 下面三个仍然保留 [INFO]/[WARN]/[ERROR] 前缀：日志、verify.sh 与 tests/ 都在认这些标记，
@@ -170,6 +179,10 @@ preflight() {
 
     for command_name in sudo pacman curl sha256sum gzip mktemp systemctl findmnt getent modprobe; do
         require_command "$command_name"
+    done
+    for helper in cachyos-ai-settings cachyos-usage-json \
+                  translate-lookup lyrics-helper phone-connect focus-helper top-helper; do
+        [[ -x "$SCRIPT_DIR/assets/go-bin/$helper" ]] || die "missing Go helper $helper; run tools/build-go-helpers.sh before installing"
     done
 
     # A dry run may point at a fixture so the non-mutating path can be tested
@@ -369,6 +382,12 @@ install_hardware_stack() {
 install_dms_features() {
     info "installing optional DMS integrations from signed system repositories"
     install_available_packages dms-feature false "${DMS_FEATURE_PACKAGES[@]}"
+
+    # avahi 是上面这一批里的包，所以只能在装完后判断。PhoneConnect 用它的 mDNS 发现
+    # 手机当前的配对/连接端口；服务没跑时插件只能手填地址。
+    if pacman -Q avahi >/dev/null 2>&1; then
+        run sudo systemctl enable --now avahi-daemon.service
+    fi
 }
 
 install_applications() {
@@ -502,8 +521,10 @@ install_desktop_assets() {
 
     for helper in "$SCRIPT_DIR"/bin/*; do
         [[ -f "$helper" ]] || continue
+        [[ "${helper##*/}" == cachyos-ai-settings ]] && continue
         run sudo install -m 0755 "$helper" "/usr/local/bin/${helper##*/}"
     done
+    run bash "$SCRIPT_DIR/tools/install-go-helpers.sh"
 
     run install -d -m 0755 \
         "$HOME/.config/environment.d" \
@@ -672,78 +693,194 @@ configure_dms_settings() {
     dms auth resolve-lock --quiet
 }
 
-# 安装 DMS 用量面板插件（agents 的 token 与费用统计）。
-#
-# 插件源码的真源是 skynit/dms-plugins 仓库；这里放的是随包副本，因为本仓库的用途是
+# 随包的 DMS 插件：真源是 skynit/dms-plugins 仓库，这里放随包副本，因为本仓库的用途是
 # "新电脑复刻"，安装过程要能离线、自包含。上游改动后需要把文件同步进 assets/dms-plugins/。
-install_dms_plugins() {
-    local settings_dir="$HOME/.config/DankMaterialShell"
-    local plugin_dir="$settings_dir/plugins/CachyosAgents"
-    local source_dir="$SCRIPT_DIR/assets/dms-plugins/CachyosAgents"
-    local settings_file="$settings_dir/settings.json"
-    local plugin_settings="$settings_dir/plugin_settings.json"
+#
+# 目录名是 DMS 的安装目录名，必须与上游大小写一致（localTranslate/localLyrics 小写开头）；
+# 插件 ID 则来自各插件 plugin.json，用于启用与状态栏接线。
+readonly -a DMS_PLUGIN_IDS=(
+    cachyosAgents
+    localStatus
+    localTranslate
+    localLyrics
+    phoneConnect
+    focus
+    top
+)
+
+# Go helper 的二进制由 assets/go-bin/ 提供（tools/build-go-helpers.sh 构建）。它们刻意
+# 不进 config-manifest.tsv：cachyos-config update 固定用 0644 安装，会丢掉可执行位。
+install_dms_plugin_assets() {
+    local source_name="$1"
+    local target_name="$2"
+    local source_dir="$SCRIPT_DIR/assets/dms-plugins/$source_name"
+    local target_dir="$HOME/.config/DankMaterialShell/plugins/$target_name"
     local asset
-    local temporary_file
 
-    run install -d -m 0755 "$plugin_dir" "$plugin_dir/tests"
-
+    run install -d -m 0755 "$target_dir"
     for asset in "$source_dir"/*.qml "$source_dir"/*.js "$source_dir"/plugin.json "$source_dir"/README.md; do
         [[ -f "$asset" ]] || continue
-        run install -m 0644 "$asset" "$plugin_dir/${asset##*/}"
+        run install -m 0644 "$asset" "$target_dir/${asset##*/}"
     done
-    run install -m 0644 "$source_dir/tests/usage.test.cjs" "$plugin_dir/tests/usage.test.cjs"
+}
+
+install_dms_plugin_tests() {
+    local source_name="$1"
+    local target_name="$2"
+    local source_dir="$SCRIPT_DIR/assets/dms-plugins/$source_name/tests"
+    local target_dir="$HOME/.config/DankMaterialShell/plugins/$target_name/tests"
+    local test_file
+
+    [[ -d "$source_dir" ]] || return 0
+    for test_file in "$source_dir"/*.cjs; do
+        [[ -f "$test_file" ]] || continue
+        run install -D -m 0644 "$test_file" "$target_dir/${test_file##*/}"
+    done
+}
+
+# 复制插件内的子目录（目前只有 LocalTranslate 的 data/：内置 CC-CEDICT 词典）。
+# install -D 负责建父目录，这样新增数据文件时不用改安装器。
+install_dms_plugin_subtree() {
+    local source_name="$1"
+    local target_name="$2"
+    local subtree="$3"
+    local source_dir="$SCRIPT_DIR/assets/dms-plugins/$source_name/$subtree"
+    local target_dir="$HOME/.config/DankMaterialShell/plugins/$target_name"
+    local file relative
+
+    while IFS= read -r file; do
+        relative="${file#"$source_dir/"}"
+        run install -D -m 0644 "$file" "$target_dir/$subtree/$relative"
+    done < <(find "$source_dir" -type f -print | sort)
+}
+
+# 启用一个插件，但只在用户还没有表达过意愿时写入：他之后在设置界面关掉了，
+# 重装不该又给打开。
+enable_dms_plugin() {
+    local plugin="$1"
+    local settings_file="$HOME/.config/DankMaterialShell/plugin_settings.json"
+    local temporary_file
 
     if [[ "$DRY_RUN" == true ]]; then
         # 打印真实发生的两步（写临时文件 + install -m 0600），而不是简化成"就地 jq"。
-        print_command jq --arg plugin cachyosAgents -f "$SCRIPT_DIR/assets/dms/enable-dms-plugin.jq" \
-            "$plugin_settings" '>' merged-plugin-settings.json
-        print_command install -m 0600 merged-plugin-settings.json "$plugin_settings"
-        print_command jq -f "$SCRIPT_DIR/assets/dms/add-agents-bar-widget.jq" \
+        if [[ -s "$settings_file" ]]; then
+            print_command jq --arg plugin "$plugin" -f "$SCRIPT_DIR/assets/dms/enable-dms-plugin.jq" \
+                "$settings_file" '>' merged-plugin-settings.json
+        else
+            print_command jq --null-input --arg plugin "$plugin" \
+                -f "$SCRIPT_DIR/assets/dms/enable-dms-plugin.jq" '{}' '>' merged-plugin-settings.json
+        fi
+        print_command install -m 0600 merged-plugin-settings.json "$settings_file"
+        return 0
+    fi
+
+    temporary_file="$(mktemp)"
+    if [[ -s "$settings_file" ]]; then
+        if jq --arg plugin "$plugin" -f "$SCRIPT_DIR/assets/dms/enable-dms-plugin.jq" \
+            "$settings_file" > "$temporary_file"; then
+            install -m 0600 "$temporary_file" "$settings_file"
+        else
+            warn "could not enable the DMS plugin in plugin_settings.json: $plugin"
+        fi
+    else
+        if printf '%s\n' '{}' | jq --arg plugin "$plugin" \
+            -f "$SCRIPT_DIR/assets/dms/enable-dms-plugin.jq" > "$temporary_file"; then
+            install -m 0600 "$temporary_file" "$settings_file"
+        else
+            warn "could not create plugin_settings.json for the DMS plugin: $plugin"
+        fi
+    fi
+    rm -f -- "$temporary_file"
+}
+
+# 把插件控件接到状态栏。这个 jq 程序只增不覆盖且幂等——绝不能走 desktop-settings.json
+# 的浅合并，那会把整个 barConfigs 数组替换掉，用户的布局就没了。
+#
+# 注意：**没有现成的 barConfigs 时它什么都不做**。DMS 读设置是整体赋值，凭空造一个只含
+# 插件控件的栏会把用户的默认顶栏（启动器/时钟/系统托盘…）整个换掉。那种情况下控件不显示，
+# 由用户在 设置 → 状态栏 里自己加，比毁掉布局好。
+# 只有这些插件有状态栏控件；Top 是纯悬浮面板（daemon-only），不参与栏接线。
+readonly -a DMS_BAR_WIDGET_IDS=(cachyosAgents localStatus localTranslate localLyrics phoneConnect focus)
+
+DMS_BAR_WIDGETS='{"left":["localTranslate","phoneConnect","focus","localLyrics"],"right":["cachyosAgents","localStatus"]}'
+
+wire_dms_plugin_bar() {
+    local settings_file="$HOME/.config/DankMaterialShell/settings.json"
+    local jq_program="$SCRIPT_DIR/assets/dms/add-dms-bar-widgets.jq"
+    local temporary_file
+    local plugin_id
+    local -a missing=()
+
+    [[ -s "$settings_file" ]] || return 0
+
+    if [[ "$DRY_RUN" == true ]]; then
+        print_command jq --argjson widgets "$DMS_BAR_WIDGETS" -f "$jq_program" \
             "$settings_file" '>' merged-desktop-settings.json
         print_command install -m 0600 merged-desktop-settings.json "$settings_file"
         return 0
     fi
 
-    # 启用插件。只在用户还没有表达过意愿时写入：他之后在设置界面关掉了，重装不该又给打开。
     temporary_file="$(mktemp)"
-    if [[ -s "$plugin_settings" ]]; then
-        if jq --arg plugin cachyosAgents -f "$SCRIPT_DIR/assets/dms/enable-dms-plugin.jq" \
-            "$plugin_settings" > "$temporary_file"; then
-            install -m 0600 "$temporary_file" "$plugin_settings"
-        else
-            warn "could not enable the usage plugin in plugin_settings.json"
+    if jq --argjson widgets "$DMS_BAR_WIDGETS" -f "$jq_program" "$settings_file" > "$temporary_file"; then
+        install -m 0600 "$temporary_file" "$settings_file"
+        for plugin_id in "${DMS_BAR_WIDGET_IDS[@]}"; do
+            if ! jq -e --arg id "$plugin_id" \
+                '[.barConfigs[]? | (.leftWidgets? // [])[], (.centerWidgets? // [])[], (.rightWidgets? // [])[]
+                 | if type == "object" then .id else . end] | index($id) != null' \
+                "$settings_file" >/dev/null 2>&1; then
+                missing+=("$plugin_id")
+            fi
+        done
+        if ((${#missing[@]} > 0)); then
+            warn "DMS plugin widgets not added to the DankBar (no custom bar configured yet): ${missing[*]}"
+            warn "add them from DMS Settings > Bar, or rerun the installer after customising the bar"
         fi
     else
-        if printf '%s\n' '{}' | jq --arg plugin cachyosAgents \
-            -f "$SCRIPT_DIR/assets/dms/enable-dms-plugin.jq" > "$temporary_file"; then
-            install -m 0600 "$temporary_file" "$plugin_settings"
-        else
-            warn "could not create plugin_settings.json for the usage plugin"
-        fi
+        warn "could not add the DMS plugin widgets to the DankBar configuration"
     fi
     rm -f -- "$temporary_file"
+}
 
-    # 接线到状态栏。这个 jq 程序只增不覆盖且幂等——绝不能走 desktop-settings.json 的浅合并，
-    # 那会把整个 barConfigs 数组替换掉，用户的布局就没了。
-    #
-    # 注意：**没有现成的 barConfigs 时它什么都不做**。DMS 读设置是整体赋值，凭空造一个只含
-    # 本控件的栏会把用户的默认顶栏（启动器/时钟/系统托盘…）整个换掉。那种情况下控件不显示，
-    # 由用户在 设置 → 状态栏 里自己加，比毁掉布局好。
-    if [[ -s "$settings_file" ]]; then
-        temporary_file="$(mktemp)"
-        if jq -f "$SCRIPT_DIR/assets/dms/add-agents-bar-widget.jq" "$settings_file" > "$temporary_file"; then
-            install -m 0600 "$temporary_file" "$settings_file"
-            if ! jq -e '[.barConfigs[]? | (.leftWidgets? // [])[], (.centerWidgets? // [])[], (.rightWidgets? // [])[]
-                    | if type == "object" then .id else . end] | index("cachyosAgents") != null' \
-                "$settings_file" >/dev/null 2>&1; then
-                warn "usage widget not added to the DankBar (no custom bar configured yet);"
-                warn "add it from DMS Settings > Bar, or rerun the installer after customising the bar"
-            fi
-        else
-            warn "could not add the usage widget to the DankBar configuration"
-        fi
-        rm -f -- "$temporary_file"
+install_dms_plugins() {
+    local plugin_root="$HOME/.config/DankMaterialShell/plugins"
+    local helper
+    local plugin_id
+
+    # 运行副本：DMS 从 ~/.config 加载插件，缺一个文件插件就不会出现。
+    install_dms_plugin_assets CachyosAgents CachyosAgents
+    install_dms_plugin_tests CachyosAgents CachyosAgents
+
+    install_dms_plugin_assets LocalStatus LocalStatus
+    install_dms_plugin_tests LocalStatus LocalStatus
+
+    install_dms_plugin_assets LocalTranslate localTranslate
+    install_dms_plugin_subtree LocalTranslate localTranslate data
+
+    install_dms_plugin_assets LocalLyrics localLyrics
+
+    install_dms_plugin_assets PhoneConnect PhoneConnect
+
+    install_dms_plugin_assets Focus Focus
+
+    # Top 是 daemon-only 悬浮面板：只有后台组件，没有状态栏控件；components/ 是自绘界面。
+    install_dms_plugin_assets Top Top
+    install_dms_plugin_subtree Top Top components
+
+    # helper 二进制由 install_desktop_assets → tools/install-go-helpers.sh 安装；这里只
+    # 确认在位，避免"插件装了但一点就报错"。
+    if [[ "$DRY_RUN" == false ]]; then
+        for helper in CachyosAgents/ai-settings CachyosAgents/usage-json \
+                      localTranslate/translate-lookup localLyrics/lyrics-helper \
+                      PhoneConnect/phone-connect Focus/focus-helper Top/top-helper; do
+            [[ -x "$plugin_root/$helper" ]] || warn "DMS plugin helper is missing: $plugin_root/$helper"
+        done
     fi
+
+    for plugin_id in "${DMS_PLUGIN_IDS[@]}"; do
+        enable_dms_plugin "$plugin_id"
+    done
+
+    wire_dms_plugin_bar
 }
 
 service_enabled_or_active() {

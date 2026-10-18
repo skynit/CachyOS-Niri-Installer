@@ -37,8 +37,8 @@ CASE_WATCH_PID=""
 
 stop_case_watcher() {
     if [[ -n ${CASE_WATCH_PID:-} ]]; then
-        # 负号 = 整个进程组。只杀主进程的话，watcher spawn 的 journalctl stub 与其
-        # `sleep 600`、PSI 后台进程都会变成孤儿继续挂着。
+        # Keep process-group cleanup as a fallback for failing lifecycle tests
+        # and synthetic helpers, even when the main watcher has already exited.
         kill -TERM -"$CASE_WATCH_PID" 2>/dev/null \
             || kill -TERM "$CASE_WATCH_PID" 2>/dev/null \
             || true
@@ -108,7 +108,7 @@ if [[ " \$* " == *" -u systemd-oomd "* ]]; then
 elif [[ " \$* " == *" -k "* ]]; then
     cat "$CASE_DIR/kernel.jsonl"
 fi
-sleep 600
+exec sleep 600
 STUB
 
     # notify-send：只计数，绝不真的发通知。故意不回显 action —— watcher 的
@@ -153,7 +153,8 @@ add_oomd_entry() {
 # 额外环境变量以 NAME=VALUE 形式传入。PSI 默认是开的；非 PSI 用例必须显式
 # CACHYOS_OOM_PSI_ENABLED=0，否则真机的内存压力可能顺带写出一条 psi 记录，污染断言。
 start_case_watcher() {
-    env HOME="$CASE_DIR/home" PATH="$CASE_DIR/bin:$PATH" "$@" \
+    env HOME="$CASE_DIR/home" XDG_CONFIG_HOME="$CASE_DIR/home/.config" \
+        CACHYOS_DESKTOP_SHARE_DIR="$PROJECT_DIR" PATH="$CASE_DIR/bin:$PATH" "$@" \
         bash "$WATCHER" > "$CASE_DIR/watch.log" 2>&1 &
     CASE_WATCH_PID=$!
     sleep 3
@@ -175,6 +176,105 @@ last_oom_exists() {
 notify_count() {
     wc -l < "$CASE_DIR/notify-calls" | tr -d '[:space:]'
 }
+
+# /proc also distinguishes exited, unreaped children from live helpers.
+process_is_running() {
+    local pid="$1"
+    local stat
+
+    [[ -r /proc/$pid/stat ]] || return 1
+    read -r stat 2>/dev/null < "/proc/$pid/stat" || return 1
+    [[ ${stat##*) } != Z\ * ]]
+}
+
+descendant_pids() {
+    local pid="$1"
+    local children="" child
+
+    [[ -r /proc/$pid/task/$pid/children ]] || return 0
+    read -r children 2>/dev/null < "/proc/$pid/task/$pid/children" || true
+    for child in $children; do
+        printf '%s\n' "$child"
+        descendant_pids "$child"
+    done
+}
+
+assert_processes_stopped() {
+    local description="$1"
+    shift
+    local attempt pid
+    local live=()
+
+    for ((attempt = 0; attempt < 50; attempt++)); do
+        live=()
+        for pid in "$@"; do
+            process_is_running "$pid" && live+=("$pid")
+        done
+        if ((${#live[@]} == 0)); then
+            pass "$description"
+            return 0
+        fi
+        sleep 0.1
+    done
+    fail "$description" "still running PIDs: ${live[*]}"
+}
+
+# KillMode=process sends TERM only to the main PID, not the test's process group.
+# Keep group cleanup as a fallback, including when this regression fails.
+new_case main-term
+printf 'full avg10=0.00 avg60=0.00 avg300=0.00 total=0\n' > "$CASE_DIR/pressure-memory"
+start_case_watcher \
+    CACHYOS_OOM_PSI_ENABLED=1 \
+    CACHYOS_OOM_PSI_FILE="$CASE_DIR/pressure-memory" \
+    CACHYOS_OOM_PSI_INTERVAL_SECONDS=1 \
+    CACHYOS_OOM_DEDUPE_SECONDS=1
+psi_pid_file="$CASE_DIR/home/.local/state/cachyos-desktop/.oom-watch-psi.pid"
+[[ -s $psi_pid_file ]] || fail 'main TERM: PSI sampler started'
+psi_pid="$(<"$psi_pid_file")"
+mapfile -t helper_pids < <(descendant_pids "$CASE_WATCH_PID")
+((${#helper_pids[@]} >= 6)) || fail 'main TERM: sampler, stream wrappers and children started'
+assert_equal '2' "$(wc -l < "$CASE_DIR/journalctl-calls" | tr -d '[:space:]')" \
+    'main TERM: both journal streams started'
+kill -TERM "$CASE_WATCH_PID"
+assert_processes_stopped 'main TERM: main process exits promptly' "$CASE_WATCH_PID"
+wait "$CASE_WATCH_PID" 2>/dev/null || true
+assert_processes_stopped 'main TERM: PSI sampler and all stream/sleep helpers exit' \
+    "$psi_pid" "${helper_pids[@]}"
+# Do not group-kill here: the disabled restart must expose any escaped sampler.
+CASE_WATCH_PID=""
+
+# Reuse HOME and pressure file, as a settings-triggered service restart does.
+printf 'full avg10=42.50 avg60=42.50 avg300=42.50 total=1\n' > "$CASE_DIR/pressure-memory"
+start_case_watcher \
+    CACHYOS_OOM_PSI_ENABLED=0 \
+    CACHYOS_OOM_PSI_FILE="$CASE_DIR/pressure-memory" \
+    CACHYOS_OOM_PSI_INTERVAL_SECONDS=1 \
+    CACHYOS_OOM_DEDUPE_SECONDS=1
+assert_equal '0' "$(notify_count)" 'disabled restart: no notifications from an old PSI sampler'
+if last_oom_exists; then
+    fail 'disabled restart: no PSI record should be written'
+fi
+pass 'disabled restart: no PSI record'
+mapfile -t helper_pids < <(descendant_pids "$CASE_WATCH_PID")
+kill -TERM "$CASE_WATCH_PID"
+assert_processes_stopped 'disabled restart: main and stream helpers exit' \
+    "$CASE_WATCH_PID" "${helper_pids[@]}"
+stop_case_watcher
+
+# Both reconnect delays and a long PSI interval must be interruptible, too.
+new_case reconnect-term
+printf '#!/usr/bin/env bash\nexit 0\n' > "$CASE_DIR/bin/journalctl"
+printf 'full avg10=0.00 avg60=0.00 avg300=0.00 total=0\n' > "$CASE_DIR/pressure-memory"
+start_case_watcher \
+    CACHYOS_OOM_PSI_ENABLED=1 \
+    CACHYOS_OOM_PSI_FILE="$CASE_DIR/pressure-memory" \
+    CACHYOS_OOM_PSI_INTERVAL_SECONDS=600
+mapfile -t helper_pids < <(descendant_pids "$CASE_WATCH_PID")
+((${#helper_pids[@]} >= 6)) || fail 'reconnect TERM: wrapper and sampler sleepers started'
+kill -TERM "$CASE_WATCH_PID"
+assert_processes_stopped 'main TERM: long PSI sleep and journal reconnect sleeps exit' \
+    "$CASE_WATCH_PID" "${helper_pids[@]}"
+stop_case_watcher
 
 # ---- 1. 内核 memcg OOM：字段要落全 -------------------------------------------
 # 这是本机真实日志（09:28 连发三次同款）。anon-rss 是判定「谁吃光了内存」的关键字段，

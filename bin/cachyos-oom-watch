@@ -25,6 +25,11 @@ set -Eeuo pipefail
 # 用 extglob 的 +([[:space:]:]) 一次去掉；非交互 bash 默认不开 extglob，必须显式开。
 shopt -s extglob
 
+ai_settings_lib="${CACHYOS_DESKTOP_SHARE_DIR:-/usr/local/share/cachyos-desktop}/assets/lib/ai-settings.sh"
+[[ -r $ai_settings_lib ]] || ai_settings_lib="$(dirname -- "${BASH_SOURCE[0]}")/../assets/lib/ai-settings.sh"
+# shellcheck source=assets/lib/ai-settings.sh
+source "$ai_settings_lib"
+
 readonly SCRIPT_NAME="${0##*/}"
 
 # journalctl 的调用方式有个实测坑：`-f -n 0` 与**任何**过滤条件组合（-k / -t / -u /
@@ -444,7 +449,39 @@ psi_scaled() {
     fi
 }
 
+# Only explicitly owned helpers are stopped: KillMode=process deliberately keeps
+# independently launched AI sessions alive across watcher restarts.
+stop_children() {
+    local pid
+
+    for pid in "$@"; do
+        [[ -n $pid ]] || continue
+        kill -TERM "$pid" 2>/dev/null || true
+    done
+    for pid in "$@"; do
+        [[ -n $pid ]] || continue
+        wait "$pid" 2>/dev/null || true
+    done
+}
+
+# The caller owns a local helper_pid and an EXIT trap. Bash handles signals
+# promptly during wait, unlike a foreground journalctl or long sleep.
+run_helper() {
+    local status=0
+
+    "$@" &
+    helper_pid=$!
+    wait "$helper_pid" || status=$?
+    helper_pid=""
+    return "$status"
+}
+
 psi_watch() {
+    local helper_pid=""
+    trap 'stop_children "$helper_pid"' EXIT
+    trap 'exit 143' TERM
+    trap 'exit 130' INT
+
     local scaled_threshold
     local full
     local scaled_full
@@ -457,7 +494,7 @@ psi_watch() {
     scaled_threshold="$(psi_scaled "$PSI_FULL_AVG60_THRESHOLD")"
 
     while true; do
-        sleep "$PSI_INTERVAL_SECONDS"
+        run_helper sleep "$PSI_INTERVAL_SECONDS"
 
         if ! full="$(read_psi_full_avg60 "$PSI_FILE")"; then
             continue
@@ -490,7 +527,8 @@ start_psi_watcher() {
     fi
 
     psi_watch &
-    printf '%s\n' "$!" > "$LAST_PSI_PID_FILE"
+    psi_pid=$!
+    printf '%s\n' "$psi_pid" > "$LAST_PSI_PID_FILE"
 }
 
 read_watermark() {
@@ -547,23 +585,34 @@ consume_stream() {
 stream_loop() {
     local label="$1"
     local out_file="$2"
+    local helper_pid=""
     shift 2
+
+    trap 'stop_children "$helper_pid"' EXIT
+    trap 'exit 143' TERM
+    trap 'exit 130' INT
 
     while true; do
         : > "$out_file"
-        journalctl "$@" > "$out_file" 2>/dev/null || true
+        run_helper journalctl "$@" > "$out_file" 2>/dev/null || true
         printf '%s: %s 的 journalctl 已退出，2 秒后重连\n' "$SCRIPT_NAME" "$label" >&2
-        sleep 2
+        run_helper sleep 2
     done
 }
 
 watch() {
     local kernel_out="$STATE_DIR/.oom-kernel.jsonl"
     local oomd_out="$STATE_DIR/.oomd.jsonl"
-    local kernel_pid
-    local oomd_pid
+    local kernel_pid=""
+    local oomd_pid=""
+    local psi_pid=""
+    local helper_pid=""
     local watermark
     local updated
+
+    trap 'stop_children "$kernel_pid" "$oomd_pid" "$psi_pid" "$helper_pid"' EXIT
+    trap 'exit 143' TERM
+    trap 'exit 130' INT
 
     require_jq || exit 1
     install -d -m 0700 "$STATE_DIR" "$AGENTS_DIR"
@@ -580,9 +629,6 @@ watch() {
     stream_loop "systemd-oomd" "$oomd_out" "${OOMD_FOLLOW[@]}" &
     oomd_pid=$!
 
-    # 退出一条就整体退出，交给 Restart=always 拉起，避免"服务还 active 但监听已死"。
-    trap 'kill "$kernel_pid" "$oomd_pid" 2>/dev/null || true' EXIT
-
     while true; do
         updated="$(consume_stream "$kernel_out" "$watermark")"
         if [[ $updated != "$watermark" ]]; then
@@ -596,7 +642,7 @@ watch() {
             write_watermark "$watermark"
         fi
 
-        sleep 1
+        run_helper sleep 1
     done
 }
 

@@ -37,6 +37,7 @@ Item {
     }
 
     readonly property string usageDir: (Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state")) + "/cachyos-desktop/agents/usage"
+    readonly property string jsonTool: decodeURIComponent(Qt.resolvedUrl("usage-json").toString().replace(/^file:\/\//, ""))
     readonly property int refreshSeconds: {
         const value = Number(settings.refreshSeconds);
         return isFinite(value) && value >= 60 ? Math.min(value, 3600) : 900;
@@ -71,8 +72,7 @@ Item {
 
     Process {
         id: readProcess
-        // 用 jq 把目录下的记录合成一个数组：加 agent 不需要改这里。
-        command: ["sh", "-c", "jq -s . \"$1\"/*.json 2>/dev/null || echo '[]'", "sh", root.usageDir]
+        command: [root.jsonTool, "read", root.usageDir]
         stdout: StdioCollector {
             onStreamFinished: {
                 try {

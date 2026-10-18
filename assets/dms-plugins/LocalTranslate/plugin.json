@@ -1,0 +1,15 @@
+{
+  "id": "localTranslate",
+  "name": "LocalTranslate 离线翻译",
+  "description": "内置 CC-CEDICT，中英文词条与短语双向离线查询",
+  "version": "1.0.0",
+  "author": "skynit",
+  "type": "widget",
+  "capabilities": ["dankbar-widget"],
+  "component": "./LocalTranslate.qml",
+  "settings": "./TranslateSettings.qml",
+  "icon": "translate",
+  "requires_dms": ">=1.6.1",
+  "dependencies": [],
+  "permissions": ["settings_read", "settings_write", "process", "clipboard"]
+}

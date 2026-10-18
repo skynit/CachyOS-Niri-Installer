@@ -99,6 +99,7 @@ run_collector() {
     local name="$1"
     shift
     HOME="$HOME_DIR" \
+        CODEX_HOME="$HOME_DIR/.codex" \
         XDG_CACHE_HOME="$HOME_DIR/.cache" \
         CC_SWITCH_DB="$PRICING_DB" \
         CACHYOS_DESKTOP_SHARE_DIR="$WORK_DIR/no-share" \
@@ -190,7 +191,8 @@ else
 fi
 
 # ---- 编排器 ----------------------------------------------------------------
-if HOME="$HOME_DIR" XDG_CACHE_HOME="$HOME_DIR/.cache" PATH="$PROJECT_DIR/bin:$PATH" \
+if HOME="$HOME_DIR" CODEX_HOME="$HOME_DIR/.codex" XDG_CACHE_HOME="$HOME_DIR/.cache" \
+    PATH="$PROJECT_DIR/bin:$PROJECT_DIR/assets/go-bin:$PATH" \
     "$PROJECT_DIR/bin/cachyos-agent-usage-update" >/dev/null 2>&1; then
     pass '编排器：两个采集器都成功'
 else

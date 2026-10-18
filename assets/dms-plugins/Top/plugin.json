@@ -1,0 +1,14 @@
+{
+  "id": "top",
+  "name": "Top 系统面板",
+  "description": "仿 ftop 的悬浮系统监视面板：每核占用与频率、内存压力、网络、GPU、功耗、温度和按应用聚合的进程列表",
+  "version": "1.0.0",
+  "author": "skynit",
+  "type": "daemon",
+  "capabilities": ["daemon"],
+  "component": "./TopDaemon.qml",
+  "settings": "./TopSettings.qml",
+  "icon": "monitoring",
+  "requires_dms": ">=1.6.1",
+  "permissions": ["settings_read", "settings_write", "process"]
+}

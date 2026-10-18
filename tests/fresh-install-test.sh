@@ -112,7 +112,7 @@ case "\${rewritten[0]:-}" in
             mkdir -p "\$(dirname -- "\$last")"
         fi
         exec "\${rewritten[@]}" ;;
-    mkdir|chmod|chown) exec "${rewritten[@]}" ;;
+    mkdir|chmod|chown) exec "\${rewritten[@]}" ;;
 esac
 exit 0
 EOF
@@ -121,7 +121,7 @@ EOF
 for name in claude codex opencode \
             pacman paru yay usermod groupadd modprobe udevadm snapper systemctl niri dms \
             notify-send kitty ghostty alacritty ly hyprctl mkinitcpio grub-mkconfig dbus-send \
-            gsettings xdg-settings npm mise systemd-analyze fc-cache; do
+            gsettings xdg-settings npm mise systemd-analyze fc-cache wineboot winetricks; do
     cat > "$STUB_BIN/$name" <<EOF
 #!/usr/bin/env bash
 printf '%s %s\n' "$name" "\$*" >> "${CACHYOS_TEST_LOG:?}"
@@ -240,19 +240,39 @@ for command_name in cachyos-agent cachyos-agent-prompt cachyos-agent-skills cach
                     cachyos-agent-usage-claude cachyos-agent-usage-codex cachyos-agent-usage-dsh \
                     cachyos-agent-usage-update cachyos-agent-theme-sync cachyos-crash-watch \
                     cachyos-crash-mute cachyos-toggle-crash-capture cachyos-voxtype-install \
-                    cachyos-oom-watch cachyos-agent-oom cachyos-toggle-oom-capture; do
+                    cachyos-oom-watch cachyos-agent-oom cachyos-toggle-oom-capture cachyos-ai-settings; do
     assert_file "$FAKE_ROOT/usr/local/bin/$command_name" "装出命令 $command_name"
 done
 
 # 2) 随包资产（技能、库、插件、模板）
-for asset in assets/lib/agent.sh assets/lib/agent_usage.py assets/lib/agent_theme.py \
+for asset in assets/lib/agent.sh assets/lib/ai-settings.sh assets/lib/agent_usage.py assets/lib/agent_theme.py \
              assets/agent-skills/cachyos/SKILL.md assets/agent-skills/diagnose-crash/SKILL.md \
              assets/agent-skills/diagnose-oom/SKILL.md \
+             assets/dms/add-dms-bar-widgets.jq assets/dms/enable-dms-plugin.jq \
              assets/dms-plugins/CachyosAgents/plugin.json assets/dms-plugins/CachyosAgents/Usage.js \
-             assets/dms/add-agents-bar-widget.jq assets/dms/enable-dms-plugin.jq \
+             assets/dms-plugins/CachyosAgents/IntegrationSource.qml \
+             assets/dms-plugins/CachyosAgents/IntegrationDetails.qml \
+             assets/dms-plugins/CachyosAgents/IntegrationSettings.qml \
+             assets/dms-plugins/LocalStatus/plugin.json assets/dms-plugins/LocalStatus/LocalStatus.qml \
+             assets/dms-plugins/LocalStatus/StatusSource.qml assets/dms-plugins/LocalStatus/Status.js \
+             assets/dms-plugins/LocalTranslate/plugin.json assets/dms-plugins/LocalTranslate/LocalTranslate.qml \
+             assets/dms-plugins/LocalTranslate/data/dictionary.sqlite3 \
+             assets/dms-plugins/LocalLyrics/plugin.json assets/dms-plugins/LocalLyrics/LocalLyrics.qml \
+             assets/dms-plugins/LocalLyrics/Timeline.js \
+             assets/dms-plugins/PhoneConnect/plugin.json assets/dms-plugins/PhoneConnect/PhoneConnect.qml \
+             assets/dms-plugins/Focus/plugin.json assets/dms-plugins/Focus/Focus.qml \
+             assets/go-bin/translate-lookup assets/go-bin/lyrics-helper \
+             assets/go-bin/phone-connect assets/go-bin/focus-helper \
              assets/voxtype/config.toml assets/niri/cachyos-voxtype.kdl; do
     assert_file "$FAKE_ROOT/usr/local/share/cachyos-desktop/$asset" "装出资产 $asset"
 done
+
+# 旧 jq 已删除：包里若还残留，重装仍可能误用旧语义。
+if [[ ! -e "$FAKE_ROOT/usr/local/share/cachyos-desktop/assets/dms/add-agents-bar-widget.jq" ]]; then
+    pass '旧 jq 不再出现在共享资产里'
+else
+    fail '旧 jq 仍被安装进共享资产'
+fi
 
 # 3) systemd 用户单元（含用量定时器与 OOM 监听）
 for unit in cachyos-crash-watch.service cachyos-agent-theme.service cachyos-agent-theme.path \
@@ -269,12 +289,58 @@ else
     fail '起始配置里没有内置 prompt'
 fi
 
-# 4) 面板插件与启用状态
-plugin="$SANDBOX_HOME/.config/DankMaterialShell/plugins/CachyosAgents"
-assert_file "$plugin/plugin.json" '面板插件已安装'
-assert_file "$plugin/Usage.js" '面板插件带 Usage.js'
-assert_equal 'true' "$(jq -r '.cachyosAgents.enabled // false' "$SANDBOX_HOME/.config/DankMaterialShell/plugin_settings.json" 2>/dev/null || echo false)" \
-    '面板插件被启用'
+# 4) 面板插件与启用状态：7 个插件都要装进运行目录并被启用
+# 目录名是 DMS 的安装目录名，插件 ID 来自各自 plugin.json。
+plugin_root="$SANDBOX_HOME/.config/DankMaterialShell/plugins"
+plugin_settings="$SANDBOX_HOME/.config/DankMaterialShell/plugin_settings.json"
+plugin_dirs=(CachyosAgents LocalStatus localTranslate localLyrics PhoneConnect Focus Top)
+plugin_ids=(cachyosAgents localStatus localTranslate localLyrics phoneConnect focus top)
+
+for index in "${!plugin_dirs[@]}"; do
+    plugin_dir="$plugin_root/${plugin_dirs[$index]}"
+    plugin_id="${plugin_ids[$index]}"
+    assert_file "$plugin_dir/plugin.json" "面板插件 ${plugin_dirs[$index]} 已安装"
+    assert_equal "$plugin_id" "$(jq -r '.id' "$plugin_dir/plugin.json" 2>/dev/null || true)" \
+        "面板插件 ${plugin_dirs[$index]} 的 id 是 $plugin_id"
+
+    # plugin.json 声明的主 QML 必须真的装进运行目录，否则 DMS 加载插件时是空壳。
+    main_qml="$(jq -r '.component | ltrimstr("./")' "$plugin_dir/plugin.json" 2>/dev/null || true)"
+    if [[ -n $main_qml ]]; then
+        assert_file "$plugin_dir/$main_qml" "面板插件 ${plugin_dirs[$index]} 的主 QML 已安装"
+    else
+        fail "面板插件 ${plugin_dirs[$index]} 的 plugin.json 没有声明 component"
+    fi
+
+    assert_equal 'true' "$(jq -r --arg id "$plugin_id" '.[$id].enabled // false' "$plugin_settings" 2>/dev/null || echo false)" \
+        "面板插件 $plugin_id 被启用"
+done
+
+# LocalTranslate 的词典是运行时数据：装了插件但漏了 data/，翻译面板点开就是空的。
+assert_file "$plugin_root/localTranslate/data/dictionary.sqlite3" 'LocalTranslate 装了词典数据'
+
+# plugin_settings.json 里 7 个插件都必须是 enabled:true（安装器逐个启用，漏一个就静默少功能）。
+assert_equal '7' \
+    "$(jq '[to_entries[] | select(.value.enabled == true) | .key
+           | select(. as $id | ["cachyosAgents","localStatus","localTranslate","localLyrics","phoneConnect","focus","top"] | index($id))] | length' \
+        "$plugin_settings" 2>/dev/null || echo 0)" \
+    'plugin_settings.json 里 7 个插件都被启用'
+
+# 全新 HOME 的 settings.json 没有 barConfigs：安装器绝不能凭空造栏。
+# （DMS 的默认状态栏只在"键不存在"时生效；造一个只含插件控件的栏会毁掉默认顶栏。）
+dms_settings="$SANDBOX_HOME/.config/DankMaterialShell/settings.json"
+assert_file "$dms_settings" '装出 DMS settings.json'
+assert_equal 'false' "$(jq 'has("barConfigs")' "$dms_settings" 2>/dev/null || echo true)" \
+    '全新 HOME：settings.json 没有 barConfigs（安装器不凭空造栏）'
+
+# helper 二进制由 tools/install-go-helpers.sh 装进插件目录（QML 用 Qt.resolvedUrl 找它）。
+for helper in localTranslate/translate-lookup localLyrics/lyrics-helper \
+              PhoneConnect/phone-connect Focus/focus-helper Top/top-helper; do
+    if [[ -x "$plugin_root/$helper" ]]; then
+        pass "插件 helper 可执行：$helper"
+    else
+        fail "插件 helper 缺失或不可执行：$helper"
+    fi
+done
 
 # 5) 桌面接线：waybar 的听写模块 + niri 的可选 include
 if grep -q 'custom/voxtype' "$SANDBOX_HOME/.config/waybar/top.jsonc" 2>/dev/null; then

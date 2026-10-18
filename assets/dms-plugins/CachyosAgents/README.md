@@ -1,12 +1,22 @@
-# CachyOS Agents 用量
+# AI 集成
 
-在 DMS 状态栏显示本机 AI 编程 agent 的 token 与费用统计。数据全部在本机采集，不联网。
+系统 AI 设置与本机 Agent 用量的统一入口。保留状态栏数字和用量卡片；弹窗默认显示用量，
+顶部调节图标切到设置，返回箭头回到用量，不再使用「用量 / 设置」双标签；
+插件 ID 保持 `cachyosAgents`，原有栏位与显示偏好不变。
+
+设置包括默认 Agent、DSH 启动界面、完成通知、问一问的会话/文本上限与提示词编辑、
+崩溃/OOM 捕获及去重、PSI 预警、主题同步、后台用量采集、系统技能链接和 CC Switch 的 Codex 配置应用。
+设置通过 `cachyos-ai-settings` 校验并原子写入；监听参数保存后只重启运行中的对应服务。
+提示词支持逐项修改、新增自定义动作、恢复内置默认和删除自定义动作。未保存的编辑不会因刷新丢失。
+显式环境变量仍优先于持久配置。通知诊断操作需要用户点击，不会自动发送日志。
+
+数据全部在本机采集，不联网；Agent 本身的账号、模型与 API 凭据仍由各工具自己的设置管理。
 
 | 项目 | 说明 |
 | --- | --- |
 | 插件 ID | `cachyosAgents` |
 | 安装目录 | `~/.config/DankMaterialShell/plugins/CachyosAgents` |
-| 依赖 | `jq`、`python3`，以及安装器的 `cachyos-agent-usage-update`（来自 CachyOS-Niri-Installer） |
+| 依赖 | 纯 Go `usage-json` 和 `ai-settings` 辅助程序；用量采集器目前仍需 `python3`，由安装器提供 `cachyos-agent-usage-update` 编排 |
 | 数据目录 | `~/.local/state/cachyos-desktop/agents/usage/*.json` |
 
 ## 它显示什么
@@ -24,7 +34,7 @@
 ```text
 cachyos-agent-usage-update          # 并行跑各 agent 的采集器并原子落盘
   └── ~/.local/state/cachyos-desktop/agents/usage/<agent>.json
-        └── 面板读取（jq -s 合成数组）
+        └── 面板读取（纯 Go usage-json 合成数组）
 ```
 
 这样加一个 agent 需要两处：加一个采集器，并在 `Usage.js` 顶部的 `agents` 表里登记。token 语义按各家对齐：Claude 与 DSH 的
@@ -39,7 +49,7 @@ cp -r CachyosAgents/. ~/.config/DankMaterialShell/plugins/CachyosAgents/
 dms ipc call plugin-scan scan
 ```
 
-随后在 DMS 设置 → 状态栏 → 添加控件里选择 **CachyOS Agents 用量**，并自行决定左右位置。
+随后在 DMS 设置 → 状态栏 → 添加控件里选择 **AI 集成**，并自行决定左右位置。
 用 `dms ipc call plugin-scan list` 可以确认它已被发现。
 
 ## 设置
@@ -58,7 +68,11 @@ dms ipc call plugin-scan scan
 
 ```bash
 node --test tests/usage.test.cjs
+bash tests/ai-settings-test.sh
+bash tests/integration-qml-test.sh
 ```
+
+后两条在安装器仓库根目录运行；QML 测试使用隔离配置与真实 DMS 控件，不向当前桌面发送输入。
 
 QML 部分的静态检查需要 DMS 运行时的导入路径：
 

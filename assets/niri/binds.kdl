@@ -30,6 +30,8 @@ binds {
     Mod+Alt+C hotkey-overlay-title="AI助手 claude cli" { spawn "cachyos-agent" "claude"; }
     //默认 AI agent：已设置就直接启动，还没有默认值时弹出选择器
     Mod+grave hotkey-overlay-title="AI agent" { spawn "cachyos-agent"; }
+    //系统监视面板 Top（悬浮、热键开关）
+    Mod+BackSpace hotkey-overlay-title="Top 系统面板" { spawn "dms" "ipc" "call" "top" "toggle"; }
     //打开obsidian笔记
     Mod+Alt+B hotkey-overlay-title="Obsidian 笔记" { spawn "obsidian"; }
 

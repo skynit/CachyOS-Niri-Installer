@@ -7,6 +7,23 @@ PluginSettings {
     id: root
     pluginId: "cachyosAgents"
 
+    IntegrationSource { id: integration }
+    IntegrationSettings {
+        width: parent.width
+        source: integration
+    }
+    StyledText {
+        width: parent.width
+        visible: integration.error.length > 0 || integration.message.length > 0
+        text: integration.error || integration.message
+        color: integration.error.length > 0 ? Theme.warning : Theme.surfaceVariantText
+        wrapMode: Text.WordWrap
+    }
+    StyledText {
+        text: "用量显示"
+        font.pixelSize: 16
+        font.weight: Font.DemiBold
+    }
     StyledText {
         text: "显示的 agent"
         font.pixelSize: 16

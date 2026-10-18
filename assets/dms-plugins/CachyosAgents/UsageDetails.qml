@@ -12,7 +12,8 @@ Column {
     property var closePopout: null
     property var parentPopout: null
     property real maximumHeight: 560
-    padding: 16
+    property bool embedded: false
+    padding: embedded ? 0 : 16
     spacing: 12
 
     readonly property var rows: Usage.summarise(root.source.records, root.source.settings)
@@ -37,6 +38,8 @@ Column {
 
     RowLayout {
         id: header
+        visible: !root.embedded
+        height: visible ? implicitHeight : 0
         width: root.width - root.leftPadding - root.rightPadding
         spacing: 8
 
@@ -76,6 +79,7 @@ Column {
     }
 
     StyledText {
+        id: errorLabel
         width: root.width - root.leftPadding - root.rightPadding
         visible: root.source.lastError.length > 0
         text: root.source.lastError
@@ -85,6 +89,7 @@ Column {
     }
 
     StyledText {
+        id: staleLabel
         width: root.width - root.leftPadding - root.rightPadding
         visible: root.source.lastError.length === 0 && root.fresh.stale
         text: "数据可能已过期（更新于 " + root.fresh.text + "）"
@@ -95,7 +100,10 @@ Column {
     DankFlickable {
         id: scroller
         width: root.width - root.leftPadding - root.rightPadding
-        height: Math.min(contentHeight, Math.max(0, root.maximumHeight - header.height - root.spacing * 2 - root.topPadding - root.bottomPadding))
+        height: Math.min(contentHeight, Math.max(0, root.maximumHeight - header.height
+            - statusFooter.height - defaultFooter.height
+            - (errorLabel.visible ? errorLabel.height : 0) - (staleLabel.visible ? staleLabel.height : 0)
+            - root.spacing * 4 - root.topPadding - root.bottomPadding))
         contentHeight: body.implicitHeight
         contentWidth: width
         clip: true
@@ -120,7 +128,7 @@ Column {
 
                     width: body.width
                     height: layout.implicitHeight + 24
-                    radius: 10
+                    radius: 8
                     color: Theme.surfaceContainerHigh
 
                     Column {
@@ -365,6 +373,7 @@ Column {
     }
 
     StyledText {
+        id: statusFooter
         width: root.width - root.leftPadding - root.rightPadding
         text: root.listedRows.length === 0
             ? (root.rows.length === 0
@@ -378,6 +387,7 @@ Column {
     }
 
     StyledText {
+        id: defaultFooter
         width: root.width - root.leftPadding - root.rightPadding
         text: root.defaultAgent.length > 0
             ? "默认 agent：" + root.defaultAgent + "（Super+` 直接启动它）"

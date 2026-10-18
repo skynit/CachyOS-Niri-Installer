@@ -11,6 +11,11 @@
 
 set -Eeuo pipefail
 
+ai_settings_lib="${CACHYOS_DESKTOP_SHARE_DIR:-/usr/local/share/cachyos-desktop}/assets/lib/ai-settings.sh"
+[[ -r $ai_settings_lib ]] || ai_settings_lib="$(dirname -- "${BASH_SOURCE[0]}")/../assets/lib/ai-settings.sh"
+# shellcheck source=assets/lib/ai-settings.sh
+source "$ai_settings_lib"
+
 readonly SCRIPT_NAME="${0##*/}"
 readonly STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/cachyos-desktop"
 readonly CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/cachyos-desktop"

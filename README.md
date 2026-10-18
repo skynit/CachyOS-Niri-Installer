@@ -7,7 +7,7 @@
 这是一个面向已安装 CachyOS 的 x86_64 设备的完整桌面配置安装器，默认部署：
 
 ```text
-CachyOS + 官方 Niri + DMS v1.5.3 + Quickshell + Kitty
+CachyOS + 官方 Niri + DMS v1.6.2 + Quickshell + Kitty
 ```
 
 应用、桌面增强和维护工具全部默认安装，不提供按功能拆分的可选开关。默认终端是
@@ -68,7 +68,7 @@ DSH 峰值 471.9M）：
 │ CachyOS + Niri + DMS 安装计划                                                                   │
 │ 运行用户          skynit                                                                        │
 │ 终端              kitty                                                                         │
-│ DMS 版本          v1.5.3                                                                        │
+│ DMS 版本          v1.6.2                                                                        │
 │ 系统升级          否（--skip-update）                                                           │
 │ 检测到的硬件      已跳过（--skip-hardware）                                                     │
 │ 硬件驱动栈        已跳过                                                                        │
@@ -129,7 +129,7 @@ AI 编程助手层（与桌面解耦，可单独使用）
 | `/usr/local/share/cachyos-desktop/assets/**` | 随包资源：技能、DMS 插件、配置模板、脚本库 |
 | `~/.config/niri/` | 主配置、`cachyos-extras.kdl` 扩展、`dms/` 下生成的配色与快捷键 |
 | `~/.config/waybar/` | 顶栏、底栏与样式 |
-| `~/.config/DankMaterialShell/` | DMS 设置，以及 `plugins/CachyosAgents/` 用量面板插件 |
+| `~/.config/DankMaterialShell/` | DMS 设置，以及 `plugins/` 下随包的 7 个插件（AI 集成、本机状态、离线翻译、本地歌词、手机连接、专注、Top 系统面板） |
 | `~/.config/cachyos-desktop/` | 本项目自身状态（默认 agent 等） |
 | `~/.local/state/cachyos-desktop/` | 用量记录、崩溃与 OOM 记录、首次登录日志、配置备份 |
 | `~/.config/systemd/user/cachyos-*` | 6 个用户单元：崩溃监听、OOM 监听、主题 path 与 service、用量 service 与 timer |
@@ -288,6 +288,10 @@ Windows 更新可能改变 EFI 启动顺序。条件允许时，让 Windows 与 
 
 ## 安装
 
+AI 集成的设置/用量 JSON 辅助程序，以及 5 个 DMS 插件 helper，都由 `assets/go-bin/` 中随仓库分发的 Linux x86-64 纯 Go 可执行文件提供，安装机不需要 Go 工具链。修改对应 Go 源码后，在构建机运行 `bash tools/build-go-helpers.sh` 更新产物；构建固定为 `GOOS=linux GOARCH=amd64 GOAMD64=v1`、`CGO_ENABLED=0`，不会随构建机的指令集级别变化。现有 Claude、Codex、DSH 用量采集器仍使用 Python 3，其他系统维护命令仍可能依赖 `jq`；本次迁移只去掉 AI 用量读写链对 `jq` 的调用。
+
+只在已安装本桌面的机器上更新辅助程序，可运行 `bash tools/install-go-helpers.sh`：AI 设置/用量命令装进 `/usr/local/bin/`，插件 helper 装进对应插件目录（0755）；脚本先备份旧的系统命令到 `~/.local/state/cachyos-desktop/backups/`，不运行整套桌面安装器。插件文本资产（QML/JS/`plugin.json`/README 与 LocalTranslate 的 `data/`）在 `assets/config-manifest.tsv` 里，可用 `cachyos-config status` / `cachyos-config update` 管理；helper 二进制**刻意不进清单**——`update` 固定用 0644 安装，会丢掉可执行位。
+
 先查看完整执行计划，不修改系统：
 
 ```bash
@@ -320,8 +324,9 @@ Windows 更新可能改变 EFI 启动顺序。条件允许时，让 Windows 与 
 - 完整执行一次 `pacman -Syu`，除非使用 `--skip-update`。
 - 根据 CPU/GPU 自动安装微码、Mesa/Vulkan 或 NVIDIA 驱动，以及 PipeWire、蓝牙和电源管理组件。
 - 安装官方 Niri、DMS、Quickshell、Xwayland Satellite 和 Kitty。
-- 下载并校验固定版本的 DMS 官方 `dankinstall` v1.5.3。
+- 下载并校验固定版本的 DMS 官方 `dankinstall` v1.6.2（随包插件的最低要求：Focus 需要 ≥1.6.2，LocalTranslate/LocalLyrics 需要 ≥1.6.1）。
 - 安装 DankSearch、DankCalendar，以及 DMS 官方 Niri/Kitty 配置。
+- 部署随包的 7 个 DMS 插件并安装其 Go helper；Top 是 daemon-only 面板，装好后用 `Mod+BackSpace` 呼出，不向状态栏添加控件；补装 `dgop`、`android-tools`、`scrcpy`、`avahi`，`avahi` 已安装时启用 `avahi-daemon.service`。
 - 安装全部日常应用、桌面增强和系统维护工具。
 - 安装并启用 Ly，将其他已启用的显示管理器停用。
 - 将 Fish 设置为登录 Shell，并配置 Starship、eza、zoxide 和 Fastfetch。
@@ -572,7 +577,7 @@ Super+Alt+2                聚焦或启动 Kitty
 | 技能分发 | `cachyos-agent-skills` | 是 | agent 自身的技能目录 |
 | 崩溃诊断 | `cachyos-crash-watch` + `cachyos-agent-crash` | 是 | `systemd-coredump` |
 | OOM 诊断 | `cachyos-oom-watch` + `cachyos-agent-oom` | 是 | 内核 oom-kill、systemd-oomd、PSI 内存压力 |
-| 用量统计与面板 | `cachyos-agent-usage-*` + DMS 插件 | 是 | 本机 agent 会话记录 |
+| 用量统计与面板 | `cachyos-agent-usage-*` + DMS 插件 `cachyosAgents` | 是 | 本机 agent 会话记录 |
 | 主题同步 | `cachyos-agent-theme-sync` | 是 | DMS 生成的配色文件 |
 | 配置镜像 | `cachyos-ai-config-sync` | 是（有 CC Switch 时生效） | CC Switch 数据库 |
 | 本地听写 | `cachyos-voxtype-*` | 否（可选组件） | Voxtype 与语音模型 |
@@ -737,6 +742,37 @@ cachyos-agent-resume --show claude <会话 id>    # 只打印将要执行的命�
 > `cachyos-ask` 的同天复用正是走这条路（`dsh headless --session-id <id> "<问题>"`）。
 > 也就是说"dsh 没有命令行续接"只对 web profile 成立，之前那句话写窄了。
 
+### AI 集成面板
+
+DMS 原来的「AI agent 用量」插件现在叫 **AI 集成**，插件 ID 仍为 `cachyosAgents`，无需重新添加栏位。
+点击状态栏的 token 数字，切换「用量 / 设置」；DMS 设置 → 插件 → AI 集成也提供完整设置。
+
+- 默认 Agent（包括尚无用量记录的已安装工具）、DSH 启动界面。
+- 任务结束通知模式与长任务阈值。
+- 「问一问」的会话复用、文本上限、内置提示词编辑、自定义动作新增与删除。
+- 崩溃/OOM 捕获开关及运行状态、重复通知间隔、通知中的诊断操作、程序忽略正则。
+- PSI 内存压力提前预警开关、阈值和采样间隔。
+- Agent 主题自动同步、后台用量采集开关，以及手动同步主题/链接系统技能。
+- 应用 CC Switch 当前的 Codex 服务商配置（复用现有同步命令，写入前自动备份）。
+- 原有 token、费用、模型明细与趋势图保持不变；状态栏显示选项仍在插件设置中。
+
+设置写入 `${XDG_CONFIG_HOME:-$HOME/.config}/cachyos-desktop/ai-settings.conf`；通知模式仍用
+`agent-notify`，提示词仍用 `ask-actions.conf`。这些用户配置不受安装器托管，重装不覆盖。
+显式环境变量优先于面板保存值；启动/提问设置在下次执行时生效，监听设置保存后只重启对应的
+运行中 watcher，不会启动已关闭的监听。开启诊断操作表示提供可点击的通知，**不会自动向 AI 发送日志**。
+服务操作失败会直接显示错误，不会假装成功。
+
+命令行接口（同一份数据）：
+
+```bash
+cachyos-ai-settings state
+cachyos-ai-settings set CACHYOS_ASK_SESSION new
+cachyos-ai-settings set notify-mode auto
+cachyos-ai-settings service oom on
+cachyos-ai-settings prompt-set explain '用三句话解释下面的内容。'
+cachyos-ai-settings prompt-reset explain
+```
+
 ### 跑完提醒：cachyos-agent-console
 
 agent 都在自己的 Kitty 窗口里跑，长任务时人早就切走了。`cachyos-agent` 的新窗口模式现在套一层
@@ -845,7 +881,7 @@ journalctl -k | grep oom-kill       # 手动核对内核的 OOM 记录
 
 ### 用量统计
 
-安装器会装上 DMS 面板插件 **CachyOS Agents 用量**：**状态栏默认只显示 token 数字**——没有图标、
+安装器会装上 DMS 插件 **AI 集成（`cachyosAgents`）** 的用量面板：**状态栏默认只显示 token 数字**——没有图标、
 没有金额、也不带"今天/近 7 天"这类前缀（想要日期前缀就在插件设置里改「状态栏显示」；也可把统计
 范围钉到某一个 agent）。点开是每个 agent 的明细（今天/累计的 token 与费用、会话与提示数、按费用
 排序的模型、最近 7 天的**折线图**）。默认登记 Claude Code、Codex、OpenCode 与
@@ -887,10 +923,34 @@ cachyos-agent-usage-dsh
 - 缺数据显示「未采集 / 无数据」，绝不把没采到渲染成 0；今天没有用量时回落到最近有数据的
   一天并标出日期（例如 `10-01 12.0M`）——金额只在弹窗里看。
 
-插件的源码真源在 <https://github.com/skynit/dms-plugins>，安装器里放的是随包副本
-（`assets/dms-plugins/CachyosAgents/`），这样全新机器离线也能复刻。面板纯逻辑由
-`node --test` 覆盖；接线用的两个 jq 程序（只增不覆盖、幂等、尊重用户已关掉的开关）由
-`tests/dms-plugin-test.sh` 覆盖。
+### 随包 DMS 插件
+
+DMS 插件放在 `~/.config/DankMaterialShell/plugins/<目录>/`，契约是各自目录里的 `plugin.json`。安装器随包 7 个插件（真源 <https://github.com/skynit/dms-plugins>，副本在 `assets/dms-plugins/`，全新机器离线也能复刻）：
+
+| 插件 | 功能 | 安装目录 | helper（装在插件目录内） | 运行依赖 |
+| --- | --- | --- | --- | --- |
+| **AI 集成** `cachyosAgents` | 状态栏 AI 设置与用量面板（见上一节） | `plugins/CachyosAgents` | `ai-settings`、`usage-json` | `jq` / `python3` 与本机用量采集命令 |
+| **本机状态** `localStatus` | IP、网络链路、CPU、负载、内存、Swap、磁盘与时间 | `plugins/LocalStatus` | 无 | `dgop`、`ip` |
+| **离线翻译** `localTranslate` | 内置 CC-CEDICT，中英词条与短语双向离线查询 | `plugins/localTranslate` | `translate-lookup` | 内置 `data/dictionary.sqlite3` |
+| **本地歌词** `localLyrics` | 跟随播放器进度显示音频内嵌歌词，完全离线 | `plugins/localLyrics` | `lyrics-helper` | `ffprobe`（ffmpeg） |
+| **手机连接** `phoneConnect` | 安卓无线调试配对、scrcpy 投屏与带进度的文件推送 | `plugins/PhoneConnect` | `phone-connect` | `adb`（android-tools）、`scrcpy`、`avahi-browse` + `avahi-daemon` |
+| **专注** `focus` | 保持当前 niri 窗口，隔离其他应用新窗口并暂停 DMS 通知弹窗 | `plugins/Focus` | `focus-helper` | `niri` 26.04、DMS 1.6.2 |
+| **Top 系统面板** `top` | 仿 ftop 的悬浮系统监视：每核占用/频率、内存、GPU、温度、进程列表；`Mod+BackSpace` 呼出，点击外部关闭，不占状态栏 | `plugins/Top` | `top-helper` | 无额外命令；DMS ≥1.6.1 |
+
+这些插件的 `requires_dms` 最高到 `>=1.6.2`（Focus；LocalTranslate、LocalLyrics 为 `>=1.6.1`），所以安装器把 DMS 钉在 **v1.6.2**；宿主版本低于插件要求时它不会加载。
+
+**部署与启用**：安装器逐个复制插件文本资产（`*.qml`、`*.js`、`plugin.json`、`README.md`，`LocalStatus/tests/status.test.cjs` 与 `CachyosAgents/tests/usage.test.cjs` 也随包），LocalTranslate 额外复制 `data/`（词典与许可文件）；Top 额外复制 `components/` 自绘组件；helper 由 `tools/install-go-helpers.sh` 装进对应插件目录（0755），QML 用 `Qt.resolvedUrl` 在插件目录里找同名可执行文件。启用状态写进 `plugin_settings.json`，但**只在该插件 ID 还没有 `enabled` 字段时**写 `enabled=true`——用户以后在 DMS 设置里手动关掉，重装不会又给打开。
+
+**状态栏接线**：`assets/dms/add-dms-bar-widgets.jq` 只操作第一个栏（`barConfigs[0]`），把 `localTranslate`、`phoneConnect`、`focus`、`localLyrics` 追加到左侧，把 `cachyosAgents`、`localStatus` 追加到右侧；已有控件保持原位，只增不覆盖、幂等。**没有现成的 `barConfigs` 时它什么都不做**——DMS 的默认栏只在键不存在时生效，凭空造一个只含插件控件的栏会把启动器、时钟、系统托盘等默认控件整个换掉。因此全新安装不会自动出现这些控件（此时安装器会打出 `[WARN]`）：请到 **DMS 设置 → 状态栏** 里自行添加，或先自定义状态栏后再重跑安装器。
+
+**单独更新**：
+
+- helper 二进制：`bash tools/install-go-helpers.sh`（备份旧系统命令到 `~/.local/state/cachyos-desktop/backups/`，不跑整套安装器）。
+- 插件文本资产：已登记在 `assets/config-manifest.tsv`，用 `cachyos-config status` / `cachyos-config update` 管理（与其他受管配置一样可 `protect`）；上游 dms-plugins 更新后，先把对应目录同步进 `assets/dms-plugins/`，再重跑安装器或 `cachyos-config update`。
+- helper **刻意不进 manifest**：`cachyos-config update` 固定以 0644 安装，会丢掉可执行位。
+- 构建：`bash tools/build-go-helpers.sh` 一次构建 6 个 helper（AI 集成的 2 个 + 插件的 4 个），固定 `GOOS=linux GOARCH=amd64 GOAMD64=v1 CGO_ENABLED=0`；插件的 Go 源码随 `assets/dms-plugins/<插件目录>/` 分发，不另存一份。
+
+**许可**：LocalTranslate 内置的词典来自 CC-CEDICT，按 **CC BY-SA 4.0** 分发；许可全文与 NOTICE 在插件目录的 `data/` 下（`CC-BY-SA-4.0.txt`、`NOTICE.md`）。
 
 ### 本地听写（可选）
 
@@ -1224,7 +1284,9 @@ cachyos-agent --list        # 确认三个 agent 的安装状态
 - `tests/oom-test.sh` —— OOM 事件解析与去重（内核两条消息只提醒一次），与崩溃测试对称。
 - `tests/usage-test.sh` —— 用量采集：同日多条用量必须累加、缓存与全量结果一致、
   缓存版本失配要作废、两种 input 语义下的计费。
-- `tests/dms-plugin-test.sh` —— 状态栏接线：只增不覆盖、幂等、尊重用户关掉的插件开关。
+- `tests/dms-plugin-test.sh` —— DMS 插件：jq 接线的参数化/只增不覆盖/幂等/**无 barConfigs 时不造栏**，
+  7 个插件的 `plugin.json` 契约、随包资产与 `config-manifest.tsv` 覆盖，以及 `plugin_settings.json`
+  里"用户关掉后重装不重新打开"的启用规则。
 - `tests/tui-test.sh` —— 终端界面：非终端必须退化成纯文本（无 ANSI/无 `\r`，但保留 `[INFO]`/`[WARN]` 标记）、
   真终端要上色、`NO_COLOR`/`TERM=dumb`/`CACHYOS_TUI=plain` 要生效、中文按两列算、框线等宽、截断不超宽，
   以及 `install.sh` 的集成（横幅、阶段、`[DRY-RUN]` 标记仍在）。
@@ -1232,8 +1294,9 @@ cachyos-agent --list        # 确认三个 agent 的安装状态
   reasoning 不重复计）、只认 `source.kind == "user"` 的提示，以及**命中缓存与全量重扫一致**
   （包含"只有会话元数据、没有任何用量"的文件——这里曾经丢过会话数）。
 - `tests/fresh-install-test.sh` —— **全新安装彩排**：把 `install.sh` 真跑一遍（临时 HOME + 假系统根），
-  然后逐项断言 AI 系统是否完整（命令、资产、单元、插件、状态栏、niri 接线、技能链接）。这才是
-  "任何人跑一遍就能用"的证据，`--dry-run` 给不了。
+  然后逐项断言 AI 系统是否完整（命令、资产、单元、7 个 DMS 插件与 helper、`plugin_settings.json`
+  启用、状态栏 left/right 落位、niri 接线、技能链接）。这才是"任何人跑一遍就能用"的证据，
+  `--dry-run` 给不了。
 - `tests/agent-theme-test.sh` —— 主题同步生成 Claude 自定义主题与 Hermes skin，并校验格式与幂等。
 - `tests/voxtype-test.sh` —— 听写状态机、未安装时的提示、快捷键文件的写入与卸载、配置备份。
 - `tests/hardware-test.sh` —— CPU/GPU 检测与包选择。
@@ -1242,7 +1305,15 @@ cachyos-agent --list        # 确认三个 agent 的安装状态
 
 ```bash
 node --test assets/dms-plugins/CachyosAgents/tests/usage.test.cjs
+node --test assets/dms-plugins/LocalStatus/tests/status.test.cjs
+(cd assets/dms-plugins/LocalTranslate && CGO_ENABLED=0 go test . -count=1)
+(cd assets/dms-plugins/LocalLyrics && CGO_ENABLED=0 go test . -count=1)   # 需要 ffprobe（ffmpeg）
+(cd assets/dms-plugins/PhoneConnect && CGO_ENABLED=0 go test . -count=1)
+(cd assets/dms-plugins/Focus && CGO_ENABLED=0 go test . -count=1)
 ```
+
+`./verify.sh` 除命令与配置外，还会检查 7 个插件目录与 helper 是否在位、是否启用、是否接进状态栏、
+DMS 版本是否满足下限，并把 `adb`、`scrcpy`、`avahi-browse`、`dgop` 等运行依赖缺失记为 `WARN`。
 
 硬件进一步检查：
 
@@ -1343,7 +1414,8 @@ DMS Overlay 不会为官方 Niri 增加 fork 的私有网格实现。鼠标晃�
 
 ## DMS 版本更新
 
-默认版本固定是为了让下载内容可复核。升级 DMS 安装器时，必须同时更新
+默认版本固定是为了让下载内容可复核。当前 `PINNED_DMS_VERSION` 是 **v1.6.2**——随包插件的下限
+（Focus 需要 ≥1.6.2，LocalTranslate/LocalLyrics 需要 ≥1.6.1）。升级 DMS 安装器时，必须同时更新
 `install.sh` 中的：
 
 ```text

@@ -30,7 +30,7 @@ dms ipc call <target> <method> [参数...]
 | `plugins` | `list`、`enable`、`disable`、`reload` | 插件开关 |
 | `plugin-scan` | `scan`、`rescan <id>`、`reload <id>`、`status <id>` | 重新扫描插件目录（`rescan`/`reload` 必须带插件 id） |
 | `notifications` | `toggleDoNotDisturb`、`clearAll` | 通知 |
-| `settings` | `dump`、`get`、`set`、`tabs`（`dumpSession` 需要 DMS ≥ 1.6；本项目默认钉 1.5.3） | 设置界面 |
+| `settings` | `dump`、`get`、`set`、`tabs`（`dumpSession` 需要 DMS ≥ 1.6；本项目默认钉 1.6.2） | 设置界面 |
 | `widget` | `list`、`status`、`toggle`、`reveal` | 栏位小组件（没有 `dump`） |
 
 `dms ipc call plugins list` 可以离线列出已加载插件及其状态。
@@ -52,6 +52,12 @@ cachyos-dms-setting maxWidth 318
 ## 插件
 
 插件是 `~/.config/DankMaterialShell/plugins/<目录>/`，契约在 `plugin.json`：
+
+本项目安装器随包 7 个插件（真源 <https://github.com/skynit/dms-plugins>，副本在安装器的
+`assets/dms-plugins/`）：`CachyosAgents`（AI 集成）、`LocalStatus`、`localTranslate`、
+`localLyrics`、`phoneConnect`、`focus`、`top`（Top 悬浮系统面板，daemon-only，不占状态栏）。它们的 `requires_dms` 最高到 `>=1.6.2`（Focus），
+所以安装器把 DMS 钉在 1.6.2；手动装插件时先按它的 `plugin.json` 核对宿主版本。
+安装器只负责部署、启用和给已有状态栏追加控件——没有自定义 `barConfigs` 时它不会造栏。
 
 ```json
 {

@@ -1,0 +1,9 @@
+{
+  "name": "CC-CEDICT",
+  "entries": "125061",
+  "source_date": "2026-09-14T05:30:59Z",
+  "source_sha256": "5b8618e6db82567ba1bb07e4fa1e6edf060ef32262510700df910c50833d1aff",
+  "license": "CC-BY-SA-4.0",
+  "index_version": "1",
+  "database_sha256": "f780b81b24fadf7fb568a70569b65bf29d938183c50ccedd67ba20448c6cc272"
+}

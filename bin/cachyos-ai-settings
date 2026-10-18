@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+"""Persistent desktop AI settings and a JSON interface for the DMS plugin."""
+
+import fcntl
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+CONFIG = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "cachyos-desktop"
+SETTINGS = CONFIG / "ai-settings.conf"
+ACTIONS = Path(os.environ.get("CACHYOS_ASK_ACTIONS") or CONFIG / "ask-actions.conf")
+SHARE = Path(os.environ.get("CACHYOS_DESKTOP_SHARE_DIR") or "/usr/local/share/cachyos-desktop")
+if not (SHARE / "assets/cachyos-desktop/ask-actions.conf").is_file():
+    SHARE = Path(__file__).resolve().parent.parent
+TEMPLATE = SHARE / "assets/cachyos-desktop/ask-actions.conf"
+TOGGLES = Path.home() / ".local/state/cachyos-desktop/toggles"
+
+# Keys are also allowlisted by ai-settings.sh; values are data, never shell code.
+GROUPS = [
+    ("启动与通知", [
+        ("CACHYOS_DSH_PROFILE", "DSH 启动界面", "choice", "web", ["web", "tui"]),
+        ("CACHYOS_AGENT_NOTIFY_MIN_SECONDS", "长任务通知阈值（秒）", "number", "15", [0, 86400]),
+    ]),
+    ("问一问", [
+        ("CACHYOS_ASK_SESSION", "提问会话", "choice", "day", ["day", "new"]),
+        ("CACHYOS_ASK_MAX_CHARS", "文本上限（字符）", "number", "12000", [1, 1000000]),
+    ]),
+    ("崩溃监听", [
+        ("CACHYOS_CRASH_ACTION", "通知中提供 AI 诊断操作", "toggle", "1", []),
+        ("CACHYOS_CRASH_DEDUPE_SECONDS", "重复通知间隔（秒）", "number", "60", [0, 86400]),
+        ("CACHYOS_CRASH_IGNORE", "忽略的程序（正则）", "text", "", []),
+    ]),
+    ("OOM 与内存压力", [
+        ("CACHYOS_OOM_ACTION", "通知中提供 AI 诊断操作", "toggle", "1", []),
+        ("CACHYOS_OOM_DEDUPE_SECONDS", "重复通知间隔（秒）", "number", "300", [1, 86400]),
+        ("CACHYOS_OOM_PSI_ENABLED", "PSI 提前预警", "toggle", "1", []),
+        ("CACHYOS_OOM_PSI_FULL_AVG60", "PSI full avg60 阈值（%）", "number", "10", [1, 100]),
+        ("CACHYOS_OOM_PSI_INTERVAL_SECONDS", "PSI 采样间隔（秒）", "number", "15", [1, 3600]),
+    ]),
+]
+FIELDS = {row[0]: row for _, rows in GROUPS for row in rows}
+SERVICES = {
+    "crash": ("崩溃捕获", "cachyos-crash-watch.service", "crash-capture-off"),
+    "oom": ("OOM 捕获", "cachyos-oom-watch.service", "oom-capture-off"),
+    "theme": ("自动同步 Agent 主题", "cachyos-agent-theme.path", None),
+    "usage": ("后台用量采集", "cachyos-agent-usage.timer", None),
+}
+
+
+def run(*args, check=True):
+    result = subprocess.run(args, text=True, capture_output=True, timeout=20)
+    if check and result.returncode:
+        raise ValueError(result.stderr.strip() or result.stdout.strip() or f"命令失败：{args[0]}")
+    return result.stdout.strip()
+
+
+def atomic_write(path, text):
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w") as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(name, path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
+def read_settings():
+    result = {}
+    if SETTINGS.exists():
+        for line in SETTINGS.read_text().splitlines():
+            key, sep, value = line.partition("=")
+            if sep and key in FIELDS:
+                result[key] = value
+    return result
+
+
+def action_lines(path):
+    result = {}
+    if not path.exists():
+        return result
+    for line in path.read_text().splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        parts = line.split("\t", 1) if "\t" in line else line.split("=", 1)
+        if len(parts) == 2:
+            key, value = (part.strip() for part in parts)
+            if re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_-]*", key) and value:
+                result[key] = value
+    return result
+
+
+def state():
+    stored = read_settings()
+    groups = []
+    for title, rows in GROUPS:
+        groups.append({"title": title, "fields": [
+            dict(key=key, label=label, kind=kind, value=stored.get(key, default),
+                 default=default, options=options)
+            for key, label, kind, default, options in rows
+        ]})
+    defaults = action_lines(TEMPLATE)
+    actions = defaults | action_lines(ACTIONS)
+    services = []
+    for key, (label, unit, flag) in SERVICES.items():
+        active = run("systemctl", "--user", "is-active", unit, check=False) == "active"
+        enabled = not (TOGGLES / flag).exists() if flag else run(
+            "systemctl", "--user", "is-enabled", unit, check=False) == "enabled"
+        services.append(dict(key=key, label=label, enabled=enabled, active=active))
+    notify = CONFIG / "agent-notify"
+    mode = notify.read_text().strip() if notify.exists() else "auto"
+    mute_file = Path.home() / ".local/state/cachyos-desktop/agents/crash-muted.txt"
+    muted = mute_file.read_text(errors="replace").splitlines() if mute_file.exists() else []
+    return dict(groups=groups, services=services, mutedPrograms=muted,
+                notifyMode=mode if mode in ("auto", "always", "off") else "auto",
+                actions=[dict(id=key, prompt=value, builtin=key in defaults) for key, value in actions.items()],
+                agents=[dict(id=key, installed=shutil.which(key) is not None) for key in ("codex", "claude", "opencode", "dsh")],
+                defaultAgent=run("cachyos-default-agent"), actionsPath=str(ACTIONS))
+
+
+def set_setting(key, value):
+    if key == "notify-mode":
+        if value not in ("auto", "always", "off"):
+            raise ValueError("无效的通知模式")
+        atomic_write(CONFIG / "agent-notify", value + "\n")
+        return
+    if key not in FIELDS or any(char in value for char in "\n\r\0"):
+        raise ValueError("无效的设置项或值")
+    _, _, kind, _, options = FIELDS[key]
+    if kind == "choice" and value not in options:
+        raise ValueError("无效的选项")
+    if kind == "toggle" and value not in ("0", "1"):
+        raise ValueError("开关值必须为 0 或 1")
+    if kind == "number":
+        if not re.fullmatch(r"[0-9]+", value) or not options[0] <= int(value) <= options[1]:
+            raise ValueError(f"数值范围：{options[0]}–{options[1]}")
+        value = str(int(value))
+    if key == "CACHYOS_CRASH_IGNORE" and value:
+        # Validate with the same ERE engine as the Bash watcher, not Python's regex dialect.
+        result = subprocess.run(["grep", "-E", "--", value], input="", text=True, capture_output=True)
+        if result.returncode > 1:
+            raise ValueError("无效的程序名正则表达式")
+    stored = read_settings()
+    stored[key] = value
+    atomic_write(SETTINGS, "".join(f"{name}={item}\n" for name, item in stored.items()))
+    # try-restart never starts a disabled watcher. Failures are surfaced to the UI.
+    if key.startswith("CACHYOS_CRASH_"):
+        run("systemctl", "--user", "try-restart", "cachyos-crash-watch.service")
+    if key.startswith("CACHYOS_OOM_"):
+        run("systemctl", "--user", "try-restart", "cachyos-oom-watch.service")
+
+
+def set_service(key, value):
+    if key not in SERVICES or value not in ("on", "off"):
+        raise ValueError("无效的服务开关")
+    _, unit, flag = SERVICES[key]
+    if flag:
+        run(f"cachyos-toggle-{key}-capture", value)
+        # Existing helpers suppress systemctl errors; confirm the requested state ourselves.
+        active = run("systemctl", "--user", "is-active", unit, check=False) == "active"
+        if active != (value == "on"):
+            raise ValueError("开关已保存，但服务未达到请求状态，请检查用户服务日志")
+    else:
+        run("systemctl", "--user", "enable" if value == "on" else "disable", "--now", unit)
+
+
+def edit_prompt(command, key, value=""):
+    if not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_-]*", key):
+        raise ValueError("动作名须以字母开头，只能包含字母、数字、下划线和短横线")
+    if command == "prompt-set" and (not value.strip() or any(char in value for char in "\t\n\r\0")):
+        raise ValueError("提示词不能为空，且须为一行文字")
+    lines = ACTIONS.read_text().splitlines() if ACTIONS.exists() else []
+    kept = []
+    for line in lines:
+        parts = line.split("\t", 1) if "\t" in line else line.split("=", 1)
+        if len(parts) != 2 or parts[0].strip() != key:
+            kept.append(line)
+    if command == "prompt-set":
+        kept.append(key + "\t" + value.strip())
+    atomic_write(ACTIONS, "\n".join(kept) + "\n")
+
+
+def main():
+    args = sys.argv[1:]
+    if not args or args == ["--help"]:
+        print("Usage: cachyos-ai-settings state | set KEY VALUE | service ID on|off | prompt-set ID TEXT | prompt-reset ID")
+        return
+    command, *params = args
+    if command == "state" and not params:
+        print(json.dumps(state(), ensure_ascii=False))
+        return
+    CONFIG.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with (CONFIG / ".ai-settings.lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if command == "set" and len(params) == 2:
+            set_setting(*params)
+        elif command == "service" and len(params) == 2:
+            set_service(*params)
+        elif command in ("prompt-set", "prompt-reset") and len(params) == (2 if command == "prompt-set" else 1):
+            edit_prompt(command, *params)
+        else:
+            raise ValueError("无效的命令或参数")
+    print(json.dumps({"ok": True}, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        print(str(error), file=sys.stderr)
+        sys.exit(1)

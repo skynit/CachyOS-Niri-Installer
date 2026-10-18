@@ -18,6 +18,10 @@ CACHYOS_AGENT_WINDOW_CLASS="cachyos-agent"
 # shellcheck disable=SC2034
 CACHYOS_AGENT_LIB_PROTOCOL=2
 
+# 启动与续接共用持久设置；独立进程的环境变量仍优先。
+# shellcheck source=assets/lib/ai-settings.sh
+source "$(dirname -- "${BASH_SOURCE[0]}")/ai-settings.sh"
+
 # 支持的 agent id，每行一个。
 cachyos_agent_supported() {
     printf '%s\n' codex claude opencode dsh

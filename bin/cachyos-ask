@@ -14,6 +14,10 @@ set -Eeuo pipefail
 readonly SCRIPT_NAME="${0##*/}"
 SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SELF_DIR
+ai_settings_lib="${CACHYOS_DESKTOP_SHARE_DIR:-/usr/local/share/cachyos-desktop}/assets/lib/ai-settings.sh"
+[[ -r $ai_settings_lib ]] || ai_settings_lib="$SELF_DIR/../assets/lib/ai-settings.sh"
+# shellcheck source=assets/lib/ai-settings.sh
+source "$ai_settings_lib"
 readonly MAX_CHARS="${CACHYOS_ASK_MAX_CHARS:-12000}"
 # 用户可编辑的动作与提示词。CACHYOS_ASK_ACTIONS 优先，便于测试隔离与临时试改。
 readonly ACTIONS_FILE="${CACHYOS_ASK_ACTIONS:-${XDG_CONFIG_HOME:-$HOME/.config}/cachyos-desktop/ask-actions.conf}"

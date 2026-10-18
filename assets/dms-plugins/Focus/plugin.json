@@ -1,0 +1,14 @@
+{
+  "id": "focus",
+  "name": "专注",
+  "description": "保持当前 niri 窗口，隔离其他应用新窗口并暂停 DMS 通知弹窗",
+  "version": "1.0.1",
+  "author": "skynit",
+  "type": "widget",
+  "capabilities": ["dankbar-widget"],
+  "component": "./Focus.qml",
+  "icon": "center_focus_strong",
+  "requires_dms": ">=1.6.2",
+  "dependencies": ["niri", "dms"],
+  "permissions": ["process"]
+}

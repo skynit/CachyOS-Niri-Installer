@@ -16,6 +16,8 @@ PluginComponent {
         settings: root.pluginData
     }
 
+    IntegrationSource { id: integrationSource }
+
     horizontalBarPill: Component {
         Item {
             id: pill
@@ -25,7 +27,7 @@ PluginComponent {
             implicitHeight: root.widgetThickness
             activeFocusOnTab: true
             Accessible.role: Accessible.Button
-            Accessible.name: "AI agent 用量：" + root.label
+            Accessible.name: "AI 集成：" + root.label
             Accessible.onPressAction: root.triggerPopout()
             Keys.onReturnPressed: root.triggerPopout()
             Keys.onSpacePressed: root.triggerPopout()
@@ -59,7 +61,7 @@ PluginComponent {
             implicitHeight: Math.max(16, vcontent.implicitHeight + 10)
             activeFocusOnTab: true
             Accessible.role: Accessible.Button
-            Accessible.name: "AI agent 用量：" + root.label
+            Accessible.name: "AI 集成：" + root.label
             Accessible.onPressAction: root.triggerPopout()
             Keys.onReturnPressed: root.triggerPopout()
             Keys.onSpacePressed: root.triggerPopout()
@@ -89,9 +91,10 @@ PluginComponent {
 
     popoutWidth: Math.min(560, root.screenWidth - 48)
     popoutContent: Component {
-        UsageDetails {
+        IntegrationDetails {
             source: sampler
-            maximumHeight: Math.max(240, Math.min(640, root.screenHeight - root.barThickness - 150))
+            integration: integrationSource
+            maximumHeight: Math.max(240, Math.min(720, root.screenHeight - root.barThickness - 100))
         }
     }
     pillRightClickAction: () => PopoutService.openSettingsWithTab("plugins")
