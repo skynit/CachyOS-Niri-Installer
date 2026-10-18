@@ -87,4 +87,6 @@ type Proc struct {
 	CPU   float64 `json:"cpu"`
 	MemKB int64   `json:"memKB"`
 	Count int     `json:"count"`
+	Exe   string  `json:"exe,omitempty"`
+	Pids  []int   `json:"pids,omitempty"`
 }

@@ -19,10 +19,14 @@ Item {
     property real panelHeight: 440
     property real availableWidth: 820
     property real panelRadius: 24
+    property var menuProc: null
+    property point menuPoint: Qt.point(0, 0)
+    property string toastText: ""
 
     signal moveBy(real dx, real dy)
     signal resizeTo(real width, real height)
     signal sortRequested(string mode)
+    signal terminateRequested(string exe, var pids, bool force)
 
     readonly property var cpu: snap.cpu || ({})
     readonly property var mem: snap.mem || ({})
@@ -120,6 +124,24 @@ Item {
         if (v >= 1024)
             return Math.round(v / 1024) + "M";
         return "0M";
+    }
+    function showProcessMenu(proc, x, y) {
+        if (!proc)
+            return;
+        menuProc = proc;
+        menuPoint = Qt.point(x, y);
+    }
+    function hideProcessMenu() {
+        menuProc = null;
+    }
+    function terminateProc(force) {
+        const p = menuProc;
+        if (!p)
+            return;
+        panel.terminateRequested(p.exe || "", p.pids || [], force);
+        panel.toastText = (force ? "已强制结束 " : "已结束 ") + (p.name || "进程");
+        panel.menuProc = null;
+        toastTimer.restart();
     }
     readonly property real memFraction: mem.total > 0 ? Math.max(0, Math.min(1, (mem.used || 0) / mem.total)) : 0
     readonly property string pressureLabel: {
@@ -695,8 +717,14 @@ Item {
                                     model: Math.max(0, Math.min(panel.rowsPerColumn, panel.procs.length - procColumn.column * panel.rowsPerColumn))
 
                                     delegate: ProcessRow {
+                                        id: procRowItem
+
                                         width: procColumn.width
                                         proc: panel.procs[procColumn.column * panel.rowsPerColumn + index] || null
+                                        onContextRequested: function (x, y) {
+                                            const pt = procRowItem.mapToItem(panel, x, y);
+                                            panel.showProcessMenu(procRowItem.proc, pt.x, pt.y);
+                                        }
                                     }
                                 }
                             }
@@ -772,5 +800,165 @@ Item {
                 panel.resizeTo(resizeHandle.startW + (now.x - resizeHandle.pressScene.x), resizeHandle.startH + (now.y - resizeHandle.pressScene.y));
             }
         }
+    }
+
+    Item {
+        id: processMenu
+
+        anchors.fill: parent
+        z: 200
+        visible: panel.menuProc !== null
+
+        MouseArea {
+            anchors.fill: parent
+            acceptedButtons: Qt.LeftButton | Qt.RightButton
+            onClicked: panel.hideProcessMenu()
+        }
+
+        Rectangle {
+            id: menuBox
+
+            width: 184
+            height: 98
+            x: Math.max(8, Math.min(panel.width - width - 8, panel.menuPoint.x))
+            y: panel.menuPoint.y + 8 + height <= panel.height - 8 ? panel.menuPoint.y + 8 : Math.max(8, panel.menuPoint.y - height - 8)
+            radius: 10
+            color: Theme.withAlpha(Theme.surfaceContainerHigh, 100)
+            border.width: 1
+            border.color: Theme.withAlpha(Theme.outline, 0.35)
+
+            Column {
+                anchors.fill: parent
+                anchors.margins: 8
+                spacing: 2
+
+                StyledText {
+                    width: parent.width
+                    text: (panel.menuProc ? (panel.menuProc.name || "进程") : "") + (panel.menuProc && panel.menuProc.count > 1 ? "  ×" + panel.menuProc.count : "")
+                    color: Theme.surfaceVariantText
+                    font.pixelSize: 10
+                    elide: Text.ElideRight
+                    wrapMode: Text.NoWrap
+                    maximumLineCount: 1
+                    height: 16
+                }
+
+                Rectangle {
+                    width: parent.width
+                    height: 1
+                    color: Theme.withAlpha(Theme.outline, 0.25)
+                }
+
+                Item {
+                    width: parent.width
+                    height: 28
+
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: 6
+                        color: Theme.withAlpha(Theme.error, terminateHover.containsMouse ? 0.16 : 0)
+                    }
+
+                    Row {
+                        anchors.left: parent.left
+                        anchors.leftMargin: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 8
+
+                        DankIcon {
+                            name: "stop_circle"
+                            size: 14
+                            color: Theme.error
+                        }
+
+                        StyledText {
+                            text: "结束进程"
+                            color: Theme.surfaceText
+                            font.pixelSize: 11
+                        }
+                    }
+
+                    MouseArea {
+                        id: terminateHover
+
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: panel.terminateProc(false)
+                    }
+                }
+
+                Item {
+                    width: parent.width
+                    height: 28
+
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: 6
+                        color: Theme.withAlpha(Theme.warning, forceHover.containsMouse ? 0.16 : 0)
+                    }
+
+                    Row {
+                        anchors.left: parent.left
+                        anchors.leftMargin: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 8
+
+                        DankIcon {
+                            name: "delete_forever"
+                            size: 14
+                            color: Theme.warning
+                        }
+
+                        StyledText {
+                            text: "强制结束"
+                            color: Theme.surfaceText
+                            font.pixelSize: 11
+                        }
+                    }
+
+                    MouseArea {
+                        id: forceHover
+
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: panel.terminateProc(true)
+                    }
+                }
+            }
+        }
+    }
+
+    Rectangle {
+        id: toast
+
+        z: 210
+        visible: panel.toastText !== ""
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: 18
+        width: toastLabel.width + 24
+        height: 26
+        radius: 13
+        color: Theme.withAlpha(Theme.surfaceContainerHigh, 0.97)
+        border.width: 1
+        border.color: Theme.withAlpha(Theme.outline, 0.3)
+
+        StyledText {
+            id: toastLabel
+
+            anchors.centerIn: parent
+            text: panel.toastText
+            color: Theme.surfaceText
+            font.pixelSize: 10
+        }
+    }
+
+    Timer {
+        id: toastTimer
+
+        interval: 1800
+        onTriggered: panel.toastText = ""
     }
 }

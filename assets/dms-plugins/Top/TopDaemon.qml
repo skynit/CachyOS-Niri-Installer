@@ -119,6 +119,18 @@ PluginComponent {
         root.panelY = Math.max(0, Math.min(sh - root.panelH, root.panelY));
     }
 
+    function killProcess(exe, pids, force) {
+        if (!exe || !pids || pids.length === 0)
+            return;
+        const cmd = [root.helperPath, "-kill"];
+        if (force)
+            cmd.push("-force");
+        cmd.push(exe);
+        for (let i = 0; i < pids.length; i++)
+            cmd.push(String(pids[i]));
+        Quickshell.execDetached(cmd);
+    }
+
     function moveBy(dx, dy) {
         const screen = root.targetScreen;
         const sw = screen ? screen.width : 1920;
@@ -402,6 +414,7 @@ PluginComponent {
                     availableWidth: root.panelW
                     panelRadius: root.panelRadius
                     onSortRequested: mode => root.save("sortBy", mode === "mem" ? "mem" : "cpu")
+                onTerminateRequested: (exe, pids, force) => root.killProcess(exe, pids, force)
                     onMoveBy: (dx, dy) => root.moveBy(dx, dy)
                     onResizeTo: (w, h) => root.resizeTo(w, h)
                 }

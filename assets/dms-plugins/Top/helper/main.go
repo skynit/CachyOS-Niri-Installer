@@ -16,7 +16,14 @@ func main() {
 	topN := flag.Int("procs", 24, "number of application rows to report")
 	sortBy := flag.String("sort", "cpu", "sort application rows by cpu or mem")
 	once := flag.Bool("once", false, "print one snapshot and exit")
+	kill := flag.Bool("kill", false, "send a signal to pids whose /proc/<pid>/exe matches the first argument")
+	force := flag.Bool("force", false, "with -kill, send SIGKILL instead of SIGTERM")
 	flag.Parse()
+
+	if *kill {
+		runKill(flag.Args(), *force)
+		return
+	}
 
 	interval := time.Duration(*intervalMs) * time.Millisecond
 	if interval < 200*time.Millisecond {

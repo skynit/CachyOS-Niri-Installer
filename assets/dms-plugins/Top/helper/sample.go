@@ -285,9 +285,11 @@ func (s *sampler) readProcs(totalTicks uint64) []Proc {
 	type group struct {
 		name  string
 		icon  string
+		exe   string
 		cpu   float64
 		memKB int64
 		count int
+		pids  []int
 	}
 	groups := make(map[string]*group)
 	seen := make(map[int]uint64, len(stats))
@@ -324,8 +326,10 @@ func (s *sampler) readProcs(totalTicks uint64) []Proc {
 
 		g := groups[key]
 		if g == nil {
-			g = &group{name: name, icon: icon}
+			g = &group{name: name, icon: icon, exe: exeBase, pids: []int{p.pid}}
 			groups[key] = g
+		} else {
+			g.pids = append(g.pids, p.pid)
 		}
 		if procTicks > 0 && totalTicks > 0 {
 			g.cpu += float64(procTicks) / float64(totalTicks) * 100
@@ -345,7 +349,7 @@ func (s *sampler) readProcs(totalTicks uint64) []Proc {
 		if g.cpu < 0.05 && g.memKB < 32*1024 { // idle noise, not an app row
 			continue
 		}
-		rows = append(rows, Proc{Name: g.name, Icon: g.icon, CPU: clampPercent(g.cpu), MemKB: g.memKB, Count: g.count})
+		rows = append(rows, Proc{Name: g.name, Icon: g.icon, CPU: clampPercent(g.cpu), MemKB: g.memKB, Count: g.count, Exe: g.exe, Pids: g.pids})
 	}
 	if s.sortBy == "mem" {
 		sort.Slice(rows, func(i, j int) bool {

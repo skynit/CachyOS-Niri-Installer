@@ -10,6 +10,8 @@ Item {
     property var proc: null
     readonly property bool hovered: hoverArea.containsMouse
 
+    signal contextRequested(real x, real y)
+
     visible: proc !== null
     height: 22
 
@@ -120,5 +122,14 @@ Item {
         font.features: ({
                 "tnum": 1
             })
+    }
+
+    MouseArea {
+        anchors.fill: parent
+        acceptedButtons: Qt.RightButton
+        cursorShape: Qt.PointingHandCursor
+        onClicked: function (mouse) {
+            root.contextRequested(mouse.x, mouse.y);
+        }
     }
 }
