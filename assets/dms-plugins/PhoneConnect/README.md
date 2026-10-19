@@ -1,8 +1,8 @@
-# 手机连接
+# 连接
 
-DankMaterialShell（DMS）的安卓无线调试插件：在状态栏打开连接弹窗，扫描或手填手机地址，输入配对码，使用 scrcpy 在 Wayland 上投屏，把本机文件推送到手机，也能浏览手机目录并把手机文件下载到电脑。成功连接后自动记住一个设备的连接地址，之后一键重连。
+DankMaterialShell（DMS）的手机与电脑连接插件。弹窗顶部切换“手机 / 电脑”：电脑页使用 FreeRDP 3 打开 Windows RDP 远程桌面；手机页在状态栏打开连接弹窗，扫描或手填手机地址，输入配对码，使用 scrcpy 在 Wayland 上投屏，把本机文件推送到手机，也能浏览手机目录并把手机文件下载到电脑。成功连接后自动记住一个设备的连接地址，之后一键重连。
 
-状态栏只显示手机图标：未连接时使用主题前景色（浅色主题为黑色），ADB 确认有已授权手机连接时显示绿色。颜色每 10 秒刷新一次，连接操作完成后也会立即刷新；图标的可访问名称会读出连接状态。保存过设备但已断线时不会显示绿色。
+状态栏显示设备图标，颜色仍表示手机的 ADB 状态（不表示 RDP 登录状态）：未连接时使用主题前景色（浅色主题为黑色），ADB 确认有已授权手机连接时显示绿色。颜色每 10 秒刷新一次，连接操作完成后也会立即刷新；图标的可访问名称会读出连接状态。保存过设备但已断线时不会显示绿色。
 
 ## 安装
 
@@ -13,15 +13,30 @@ CachyOS/Arch 的 `avahi` 包提供 `avahi-browse`。可用 `systemctl is-active 
 ```bash
 plugin_dir="${XDG_CONFIG_HOME:-$HOME/.config}/DankMaterialShell/plugins/PhoneConnect"
 mkdir -p "$plugin_dir"
-cp -a plugin.json PhoneConnect.qml PhonePopout.qml PhoneOptions.qml PhoneSource.qml "$plugin_dir/"
+cp -a plugin.json PhoneConnect.qml PhonePopout.qml PhoneOptions.qml PhoneSource.qml ComputerConnect.qml ComputerSource.qml "$plugin_dir/"
 GOAMD64=v1 CGO_ENABLED=0 go build -o "$plugin_dir/phone-connect" .
 dms ipc call plugin-scan scan
 dms ipc call plugins enable phoneConnect
 ```
 
-在 DMS 设置的状态栏组件中添加“手机连接”。源码和安装目录是独立副本；更新时重复复制文件，执行 `dms ipc call plugin-scan rescan phoneConnect`。如果仍显示旧界面，稍后重启 DMS。
+在 DMS 设置的状态栏组件中添加“连接”。内部 ID `phoneConnect` 与安装目录保留，以兼容已有状态栏位置、手机设备和投屏选项。源码和安装目录是独立副本；更新时重复复制文件，执行 `dms ipc call plugin-scan rescan phoneConnect`。如果仍显示旧界面，稍后重启 DMS。
 
-## 使用
+## 电脑远程桌面
+
+电脑连接额外需要 `xfreerdp3`（CachyOS/Arch 的 `freerdp` 包），缺少时会提示安装，不影响手机功能。密码自动保存使用 `secret-tool`（`libsecret` 包）和 Secret Service 密钥环，例如已解锁的 GNOME Keyring。
+
+1. 在目标 Windows 电脑开启远程桌面，确保网络可达且账号有远程登录权限。
+2. 打开插件，切到“电脑”，填写 IP 或主机名、端口（默认 3389）、用户名、域或电脑名（选填）及密码。
+3. 显示缩放可选 100%、140%、180%，默认 180%；动态分辨率默认开启。可选择忽略服务器证书验证和记录 DEBUG 日志。
+4. 点击“连接电脑”启动独立的 FreeRDP 窗口；关闭插件弹窗不会关闭远程桌面。停止或重启 DMS 系统服务可能会同时结束远程桌面进程。界面显示的是客户端启动结果，实际认证及断线情况以远程桌面窗口和日志为准。
+
+“保存设置”和“连接电脑”都会记住地址、账号及显示选项，并将非空密码自动存入系统密钥环。打开电脑页或编辑完地址、端口、账号、域后，自动读取匹配的密码并回填；不同电脑和账号的密码独立保存。点击“忘记密码”删除当前账号的记录。切走电脑页后清空输入框，下次进入重新读取密钥环。密钥环不可用时会明确提示；密码保存失败不阻止本次 RDP 启动，也不会回退为明文保存。
+
+密码不写入插件设置，保存时通过标准输入传给 `secret-tool`。完整 RDP 参数通过 `xfreerdp3 /args-from:stdin` 的标准输入传递，不放到进程命令行；不调用 shell。字段中的换行和 NUL 会被拒绝。当前地址支持 IPv4 和主机名。
+
+仅在信任目标电脑及网络时开启“忽略服务器证书验证”，它对应 `/cert:ignore`。日志位于 `${XDG_STATE_HOME:-~/.local/state}/dms-phone-connect/rdp.log`，每次启动覆盖，权限为 0600；DEBUG 日志用于排查连接问题。远程桌面窗口可用 Ctrl+Alt+Enter 切换全屏。
+
+## 手机连接
 
 手机和电脑连接同一局域网，在安卓开发者选项中打开「无线调试」。
 
@@ -93,5 +108,5 @@ dms ipc call plugins enable phoneConnect
 
 ```bash
 CGO_ENABLED=0 go test . -count=1
-qmllint PhoneConnect.qml PhonePopout.qml PhoneOptions.qml PhoneSource.qml
+qmllint PhoneConnect.qml PhonePopout.qml PhoneOptions.qml PhoneSource.qml ComputerConnect.qml ComputerSource.qml
 ```

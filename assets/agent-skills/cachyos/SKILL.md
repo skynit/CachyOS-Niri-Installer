@@ -58,7 +58,8 @@ ls /usr/local/bin/cachyos-*
 sed -n '1,20p' /usr/local/bin/cachyos-<名字>     # 多数脚本开头就有 Usage
 
 # 2. 真源在安装器仓库里（比已安装副本更好读，注释里还写着"为什么这么做"）
-#    仓库结构：bin/（命令）、assets/（配置与技能）、verify.sh（验收）、README.md
+#    仓库结构：bin/（命令）、assets/（配置与技能）、verify.sh（验收）、
+#    README.md（入口）与 docs/（按模块拆分的文档）
 
 # 3. 本项目的验收脚本会列出它期望什么
 ./verify.sh           # 从仓库目录跑；PASS/WARN/FAIL 三态，看 FAIL 就知道缺什么
@@ -96,6 +97,7 @@ bash tests/run-all.sh # 纯函数测试，不需要桌面环境
 | Kitty 字体等 | `~/.config/kitty/cachyos-font.conf`（由 `kitty.conf` include） | 开新窗口生效 | 是 |
 | 输入法 / RIME | `~/.config/fcitx5/profile`、`~/.local/share/fcitx5/rime/default.custom.yaml` | `cachyos-input-toggle` 或重新登录 | 是 |
 | 截图标注 | `~/.config/satty/config.toml` | 下次截图生效 | 是 |
+| 听写浮层（OSD） | `~/.config/voxtype/osd/dms/`（样式包）与 `~/.config/voxtype/config.toml` 的 `[osd]` | `systemctl --user restart voxtype` | 否 |
 | Waypaper（独立壁纸路径） | `~/.config/waypaper/config.ini` | 下次打开生效 | 是 |
 | 侧边栏 / 热角 / Thunar 动作 | `niri-sidebar/config.toml`、`waycorner/config.toml`、`Thunar/uca.xml` | 重启对应组件 | 是 |
 | 崩溃监听服务 | `~/.config/systemd/user/cachyos-crash-watch.service` | `systemctl --user daemon-reload && systemctl --user restart cachyos-crash-watch.service` | 是 |
@@ -186,7 +188,7 @@ systemctl --user status cachyos-crash-watch.service        # 崩溃监听
 
 | 情形 | 该怎么做 |
 | --- | --- |
-| 用户说"我想要 X 效果" | 先在本 skill 的配置地图里找落点；找不到再读仓库 README 或命令源码 |
+| 用户说"我想要 X 效果" | 先在本 skill 的配置地图里找落点；找不到再读仓库 README、docs/ 下的模块文档或命令源码 |
 | 目标文件受管，且用户想保留自己的改动 | **先 `protect`**，再改 |
 | 需要"重置为默认"或整体覆盖 | **先问用户**（`cachyos-config migrate` 会丢改动），并建议先 `cachyos-snapshot` |
 | 需要 root | 优先用现成 `cachyos-*` 命令；必须自己提权时，有终端用 `sudo`，无终端（快捷键/通知触发）走 Kitty 重开（`cachyos-snapshot` 就是这个模式） |
