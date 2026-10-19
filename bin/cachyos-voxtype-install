@@ -110,6 +110,13 @@ else
     install -m 0644 "$SHARE_DIR/assets/voxtype/config.toml" "$HOME/.config/voxtype/config.toml"
 fi
 
+# OSD 样式包：Quickshell 前端的 DMS 风格浮层。每次安装用随包版本刷新；想保留自己的
+# 改动就把目录复制成另一个包名，再把 osd.style 指过去。
+install -d -m 0755 "$HOME/.config/voxtype/osd/dms"
+install -m 0644 "$SHARE_DIR/assets/voxtype/osd/dms/voxtype-osd.toml" \
+    "$SHARE_DIR/assets/voxtype/osd/dms/DmsOsd.qml" \
+    "$HOME/.config/voxtype/osd/dms/"
+
 # **顺序很重要**：`voxtype setup --download` 下载的是**配置里**指定的模型，
 # 先下载再改模型就会拿到默认的英文模型（原来的写法就是这个坑）。
 if [[ -n $MODEL ]]; then

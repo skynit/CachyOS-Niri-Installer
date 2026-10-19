@@ -34,3 +34,15 @@ pause_media = true
 # enabled = true
 # theme = "subtle"
 # volume = 0.7
+
+[osd]
+# 录音浮层：Quickshell 前端 + 随包的 dms 样式（颜色跟随 DMS 的 dms-colors.json，
+# 视觉与 Top 面板一致）。样式包在 ~/.config/voxtype/osd/dms/。
+# 这些键在服务启动时读取，改完要 systemctl --user restart voxtype。
+frontend = "quickshell"
+style = "dms"
+# 底部居中，贴近输入框；margin_px 是距屏幕底边的逻辑像素。
+# 想放回顶部改成 top-center，并用 top_margin（屏幕高度的比例）控制位置。
+position = "bottom-center"
+margin_px = 43
+top_margin = 0.06

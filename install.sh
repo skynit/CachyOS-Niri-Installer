@@ -52,11 +52,15 @@ readonly -a DMS_FEATURE_PACKAGES=(
     cups-pk-helper
     # 随包 DMS 插件的运行依赖：
     #   dgop         LocalStatus 的 CPU/内存/负载采样（DMS 的 DgopService 也用它）
-    #   android-tools/adb、scrcpy、avahi  PhoneConnect 的配对、投屏与局域网发现
+    #   android-tools/adb、scrcpy、avahi  连接插件的手机配对、投屏与局域网发现
+    #   freerdp、libsecret、gnome-keyring  电脑 RDP 与系统密钥环密码保存
     dgop
     android-tools
     scrcpy
     avahi
+    freerdp
+    libsecret
+    gnome-keyring
 )
 
 # 下面三个仍然保留 [INFO]/[WARN]/[ERROR] 前缀：日志、verify.sh 与 tests/ 都在认这些标记，
@@ -540,6 +544,7 @@ install_desktop_assets() {
         "$HOME/.config/waybar" \
         "$HOME/.config/waycorner" \
         "$HOME/.config/waypaper" \
+        "$HOME/.config/wireplumber/wireplumber.conf.d" \
         "$HOME/.local/share/fcitx5/rime" \
         "$HOME/Pictures/Screenshots" \
         "$HOME/Pictures/Wallpapers" \
@@ -571,6 +576,10 @@ install_desktop_assets() {
     run install -m 0644 "$SCRIPT_DIR/assets/waybar/style.css" "$HOME/.config/waybar/style.css"
     run install -m 0644 "$SCRIPT_DIR/assets/waycorner/config.toml" "$HOME/.config/waycorner/config.toml"
     run install -m 0644 "$SCRIPT_DIR/assets/waypaper/config.ini" "$HOME/.config/waypaper/config.ini"
+    # 麦克风源常开：否则 WirePlumber 挂起后需要 0.5–0.8 秒唤醒，听写开头被吞
+    # （voxtype issue #817）。只影响 alsa_input.*，不碰蓝牙。
+    run install -m 0644 "$SCRIPT_DIR/assets/wireplumber/51-keep-mic-ready.conf" \
+        "$HOME/.config/wireplumber/wireplumber.conf.d/51-keep-mic-ready.conf"
 
     # manifest 只驱动 cachyos-config 的运行时刷新，安装期不读它；$HOME 下的文件必须在这里
     # 逐个显式安装，否则 verify.sh 的 manifest 循环会因为文件不存在而 FAIL。

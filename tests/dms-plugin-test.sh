@@ -405,6 +405,13 @@ else
     fail 'install.sh：没有逐个启用 DMS_PLUGIN_IDS 里的插件'
 fi
 
+# ---- 电脑连接：新安装时同时提供 RDP 客户端与密码存储 ---------------------------
+feature_packages="$(awk '/^readonly -a DMS_FEATURE_PACKAGES=\(/{flag=1; next} flag && /^\)/{exit} flag && $1 !~ /^#/ {print $1}' "$INSTALL_SH")"
+for dependency in freerdp libsecret gnome-keyring; do
+    assert_equal "$dependency" "$(printf '%s\n' "$feature_packages" | grep -x "$dependency" || true)" \
+        "电脑连接：安装依赖 $dependency"
+done
+
 # ---- DMS 版本钉住：升级/降级都必须同步改测试，不能悄悄漂 ------------------------
 pinned_version="$(awk -F'"' '/^readonly PINNED_DMS_VERSION=/{print $2}' "$INSTALL_SH")"
 pinned_sha="$(awk -F'"' '/^readonly PINNED_DMS_SHA256_AMD64=/{print $2}' "$INSTALL_SH")"

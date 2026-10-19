@@ -7,6 +7,7 @@ import qs.Widgets
 Item {
     id: root
     required property var source
+    required property var computer
     property var settings: ({})
     property var saveSetting: null
     property var closePopout: null
@@ -176,14 +177,15 @@ Item {
 
         RowLayout {
             Layout.fillWidth: true
-            DankIcon { name: "smartphone"; size: 22; color: Theme.primary }
+            DankIcon { name: "devices"; size: 22; color: Theme.primary }
             StyledText {
-                text: root.mode === "files" ? "手机文件" : (root.mode === "settings" ? "投屏选项" : "手机连接")
+                text: root.mode === "files" ? "手机文件" : (root.mode === "settings" ? "投屏选项" : "连接")
                 font.pixelSize: 16
                 font.weight: Font.DemiBold
                 Layout.fillWidth: true
             }
             DankActionButton {
+                visible: root.mode !== "computer"
                 iconName: root.mode === "files" ? "arrow_back" : "folder_open"
                 tooltipText: root.mode === "files" ? "返回手机连接" : "浏览手机文件"
                 onClicked: {
@@ -194,11 +196,44 @@ Item {
                 }
             }
             DankActionButton {
+                visible: root.mode !== "computer"
                 iconName: root.mode === "settings" ? "arrow_back" : "tune"
                 tooltipText: root.mode === "settings" ? "返回手机连接" : "投屏选项"
                 onClicked: root.mode = root.mode === "settings" ? "connect" : "settings"
             }
             DankActionButton { iconName: "close"; tooltipText: "关闭"; onClicked: if (root.closePopout) root.closePopout() }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 8
+            DankButton {
+                Layout.fillWidth: true
+                text: "手机"
+                iconName: "smartphone"
+                buttonHeight: 36
+                backgroundColor: root.mode !== "computer" ? Theme.primary : Theme.surfaceContainerHigh
+                textColor: root.mode !== "computer" ? Theme.primaryText : Theme.surfaceText
+                onClicked: root.mode = "connect"
+            }
+            DankButton {
+                Layout.fillWidth: true
+                text: "电脑"
+                iconName: "desktop_windows"
+                buttonHeight: 36
+                backgroundColor: root.mode === "computer" ? Theme.primary : Theme.surfaceContainerHigh
+                textColor: root.mode === "computer" ? Theme.primaryText : Theme.surfaceText
+                onClicked: root.mode = "computer"
+            }
+        }
+
+        ComputerConnect {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            visible: root.mode === "computer"
+            source: root.computer
+            settings: root.settings
+            saveSetting: root.saveSetting
         }
 
         StyledText {
@@ -783,6 +818,7 @@ Item {
 
     DropArea {
         anchors.fill: parent
+        enabled: root.mode !== "computer"
         onEntered: root.dragActive = true
         onExited: root.dragActive = false
         onDropped: drop => {

@@ -1,13 +1,13 @@
 {
   "id": "phoneConnect",
-  "name": "手机连接",
-  "description": "安卓无线调试配对、scrcpy 投屏与带进度的文件推送",
-  "version": "1.0.1",
+  "name": "连接",
+  "description": "安卓配对、投屏与文件传输，以及电脑 RDP 远程桌面连接",
+  "version": "1.1.0",
   "author": "skynit",
   "type": "widget",
   "capabilities": ["dankbar-widget"],
   "component": "./PhoneConnect.qml",
-  "icon": "smartphone",
+  "icon": "devices",
   "requires_dms": ">=1.5.3",
   "dependencies": ["adb", "scrcpy", "avahi-browse"],
   "permissions": ["process", "settings_read", "settings_write"]

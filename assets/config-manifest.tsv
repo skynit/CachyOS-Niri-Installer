@@ -14,6 +14,7 @@ waybar/bottom.jsonc	.config/waybar/bottom.jsonc
 waybar/style.css	.config/waybar/style.css
 waycorner/config.toml	.config/waycorner/config.toml
 waypaper/config.ini	.config/waypaper/config.ini
+wireplumber/51-keep-mic-ready.conf	.config/wireplumber/wireplumber.conf.d/51-keep-mic-ready.conf
 systemd/user/cachyos-crash-watch.service	.config/systemd/user/cachyos-crash-watch.service
 systemd/user/cachyos-oom-watch.service	.config/systemd/user/cachyos-oom-watch.service
 systemd/user/cachyos-agent-theme.service	.config/systemd/user/cachyos-agent-theme.service
@@ -63,6 +64,8 @@ dms-plugins/PhoneConnect/PhoneConnect.qml	.config/DankMaterialShell/plugins/Phon
 dms-plugins/PhoneConnect/PhonePopout.qml	.config/DankMaterialShell/plugins/PhoneConnect/PhonePopout.qml
 dms-plugins/PhoneConnect/PhoneOptions.qml	.config/DankMaterialShell/plugins/PhoneConnect/PhoneOptions.qml
 dms-plugins/PhoneConnect/PhoneSource.qml	.config/DankMaterialShell/plugins/PhoneConnect/PhoneSource.qml
+dms-plugins/PhoneConnect/ComputerConnect.qml	.config/DankMaterialShell/plugins/PhoneConnect/ComputerConnect.qml
+dms-plugins/PhoneConnect/ComputerSource.qml	.config/DankMaterialShell/plugins/PhoneConnect/ComputerSource.qml
 dms-plugins/PhoneConnect/README.md	.config/DankMaterialShell/plugins/PhoneConnect/README.md
 dms-plugins/Focus/plugin.json	.config/DankMaterialShell/plugins/Focus/plugin.json
 dms-plugins/Focus/Focus.qml	.config/DankMaterialShell/plugins/Focus/Focus.qml

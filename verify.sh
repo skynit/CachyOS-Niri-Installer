@@ -617,7 +617,7 @@ check_dms_plugin_stack() {
     fi
 
     # 运行依赖缺失时插件只会静默降级（没有通知/发现不到手机），所以这里是 WARN 不是 FAIL。
-    for asset in adb scrcpy avahi-browse dgop; do
+    for asset in adb scrcpy avahi-browse dgop xfreerdp3 secret-tool gnome-keyring-daemon; do
         if command -v "$asset" >/dev/null 2>&1; then
             pass "DMS plugin runtime dependency available: $asset"
         else
@@ -639,6 +639,8 @@ check_voxtype_stack() {
     # 是否就位——它们决定用户执行 cachyos-voxtype-install 时能不能一次成功。
     check_file "$share_dir/assets/voxtype/config.toml"
     check_file "$share_dir/assets/niri/cachyos-voxtype.kdl"
+    check_file "$share_dir/assets/voxtype/osd/dms/voxtype-osd.toml"
+    check_file "$share_dir/assets/voxtype/osd/dms/DmsOsd.qml"
 
     # 快捷键走"可选 include"：Niri 没有条件绑定，这样没装听写的人不会白白失去这些键。
     if grep -Eq '^include optional=true "cachyos-voxtype.kdl"' "$SCRIPT_DIR/assets/niri/config.kdl"; then

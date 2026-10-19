@@ -1,0 +1,29 @@
+name = "dms"
+version = "1.0.0"
+description = "DankMaterialShell 风格的听写 HUD：跟随 dms-colors.json 的动态配色，视觉沿用 Top 面板。"
+compatibility = "voxtype quickshell style packages"
+palette = "package"
+layout = "custom"
+qml_entry = "DmsOsd.qml"
+
+# 静态兜底：dms-colors.json 不存在时使用（取自当前 dark 主题）。
+[colors]
+accent = "#80d5d3"
+background = "rgba(14, 21, 20, 0.88)"
+surface = "rgba(26, 33, 33, 0.95)"
+foreground = "#dde4e3"
+muted = "rgba(190, 201, 200, 0.72)"
+success = "#6ad572"
+warning = "#fff472"
+error = "#ffb4ab"
+recording = "#80d5d3"
+streaming = "#80d5d3"
+transcribing = "#b2c8e8"
+idle = "#bec9c8"
+
+# 面板完全由 QML 自绘，关掉宿主自带的框、光晕和描边。
+[frame]
+background = "none"
+border = "none"
+glow = false
+halo = false

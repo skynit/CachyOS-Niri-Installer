@@ -1441,6 +1441,12 @@ func main() {
 	if len(os.Args) > 1 {
 		action = os.Args[1]
 	}
+	if action == "rdp" {
+		os.Exit(rdpMain())
+	}
+	if action == "rdp-password" {
+		os.Exit(rdpPasswordMain())
+	}
 	if action == "push" {
 		os.Exit(pushMain())
 	}

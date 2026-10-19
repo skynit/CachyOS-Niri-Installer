@@ -157,6 +157,10 @@ assert_equal "$(md5sum < "$PROJECT_DIR/assets/niri/cachyos-voxtype.kdl")" \
     "$(md5sum < "$WORK_DIR/home/.config/niri/cachyos-voxtype.kdl")" '安装：快捷键文件与随包版本一致'
 assert_equal 'true' "$([[ -f "$WORK_DIR/home/.config/voxtype/config.toml" ]] && echo true || echo false)" \
     '安装：写下默认配置'
+assert_equal 'true' "$([[ -f "$WORK_DIR/home/.config/voxtype/osd/dms/DmsOsd.qml" ]] && echo true || echo false)" \
+    '安装：写下 DMS 风格的听写 OSD 样式包'
+assert_equal "$(md5sum < "$PROJECT_DIR/assets/voxtype/osd/dms/DmsOsd.qml")" \
+    "$(md5sum < "$WORK_DIR/home/.config/voxtype/osd/dms/DmsOsd.qml")" '安装：OSD 样式与随包版本一致'
 if grep -q 'voxtype setup --download' "$STUB_LOG"; then
     pass '安装：下载了模型'
 else

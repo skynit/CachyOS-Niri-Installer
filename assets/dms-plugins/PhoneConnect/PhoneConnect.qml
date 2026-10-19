@@ -9,6 +9,7 @@ PluginComponent {
     popoutWidth: Math.min(480, (parentScreen ? parentScreen.width : 960) - 48)
 
     PhoneSource { id: phone }
+    ComputerSource { id: computerSource }
     property bool dragActive: false
     function toLocalPaths(urls) {
         const list = [];
@@ -62,14 +63,14 @@ PluginComponent {
             implicitHeight: root.widgetThickness
             activeFocusOnTab: true
             Accessible.role: Accessible.Button
-            Accessible.name: root.connectionLabel + "，打开无线调试与投屏"
+            Accessible.name: "连接：" + root.connectionLabel + "，打开手机与电脑连接"
             Accessible.onPressAction: root.triggerPopout()
             Keys.onReturnPressed: root.triggerPopout()
             Keys.onSpacePressed: root.triggerPopout()
 
             DankIcon {
                 visible: !root.transferring
-                name: "smartphone"
+                name: "devices"
                 size: root.iconSize
                 color: root.connectionColor
                 anchors.centerIn: parent
@@ -105,14 +106,14 @@ PluginComponent {
             implicitHeight: root.widgetThickness
             activeFocusOnTab: true
             Accessible.role: Accessible.Button
-            Accessible.name: root.connectionLabel + "，打开无线调试与投屏"
+            Accessible.name: "连接：" + root.connectionLabel + "，打开手机与电脑连接"
             Accessible.onPressAction: root.triggerPopout()
             Keys.onReturnPressed: root.triggerPopout()
             Keys.onSpacePressed: root.triggerPopout()
 
             DankIcon {
                 visible: !root.transferring
-                name: "smartphone"
+                name: "devices"
                 size: root.iconSize
                 color: root.connectionColor
                 anchors.centerIn: parent
@@ -144,6 +145,7 @@ PluginComponent {
     popoutContent: Component {
         PhonePopout {
             source: phone
+            computer: computerSource
             settings: root.pluginData
             saveSetting: (key, value) => root.pluginService ? root.pluginService.savePluginData(root.pluginId, key, value) : false
             availableHeight: root.parentScreen ? root.parentScreen.height - root.barThickness - 80 : 560
