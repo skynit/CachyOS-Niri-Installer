@@ -168,4 +168,78 @@ grep -qF '安装计划' "$WORK_DIR/install.out" \
 grep -qF '不改动' "$WORK_DIR/install.out" \
     && pass '计划里保留了「不改动」承诺' || fail '计划里「不改动」承诺丢失'
 
+# ---- 7. 快捷键帮助：表头与中英文记录共享列宽 -------------------------------
+mkdir -p "$WORK_DIR/keybind-bin"
+cat > "$WORK_DIR/keybind-bin/kitty" <<'EOF'
+#!/usr/bin/env bash
+# 复用真实终端内命令，但不启动桌面窗口或让登录 shell 重置测试 PATH。
+exec bash -c "${!#}"
+EOF
+cat > "$WORK_DIR/keybind-bin/dms" <<'EOF'
+#!/usr/bin/env bash
+cat <<'JSON'
+{"binds":{"Alt-Tab":[{"key":"Alt+Tab","action":"next-window"},{"key":"Alt+Shift+Tab","desc":"","action":"previous-window"}],"Execute":[{"key":"Mod+F1","desc":"切换输入法 Toggle input method","action":"spawn cachyos-input-toggle"},{"key":"Mod+XF86AudioRaiseVolume","desc":"录屏 Screen record","action":"spawn cachyos-record-menu"}]}}
+JSON
+EOF
+cat > "$WORK_DIR/keybind-bin/fzf" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "$KEYBIND_ARGS"
+cat
+EOF
+chmod +x "$WORK_DIR/keybind-bin/"*
+PATH="$WORK_DIR/keybind-bin:$PATH" KEYBIND_ARGS="$WORK_DIR/keybind-args" \
+    bash "$PROJECT_DIR/bin/cachyos-keybind-help" > "$WORK_DIR/keybind-table"
+python3 - "$WORK_DIR/keybind-table" <<'PY' || fail '快捷键帮助列未对齐'
+import sys
+import unicodedata
+
+lines = open(sys.argv[1], encoding="utf-8").read().splitlines()
+fields = [
+    ("快捷键", "说明", "动作", "分组"),
+    ("Alt+Tab", "切换到下一个最近窗口", "next-window", "Alt-Tab"),
+    ("Alt+Shift+Tab", "切换到上一个最近窗口", "previous-window", "Alt-Tab"),
+    ("Mod+F1", "切换输入法 Toggle input method", "spawn cachyos-input-toggle", "Execute"),
+    ("Mod+XF86AudioRaiseVolume", "录屏 Screen record", "spawn cachyos-record-menu", "Execute"),
+]
+
+def width(text):
+    return sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in text)
+
+assert len(lines) == len(fields), lines
+starts = []
+for line, row in zip(lines, fields):
+    assert "\t" not in line, repr(line)
+    assert line.startswith(row[0]), line
+    positions = []
+    for column, field in enumerate(row[1:], start=1):
+        if field:
+            position = line.index(field)
+            positions.append((column, width(line[:position])))
+    starts.append(dict(positions))
+for column in (1, 2, 3):
+    assert len({row[column] for row in starts if column in row}) == 1, starts
+PY
+pass '快捷键帮助的表头、空说明、中英文及长快捷键列对齐，原始字段完整'
+grep -qxF -- '--header-lines=1' "$WORK_DIR/keybind-args" \
+    && pass '快捷键帮助表头不进入搜索条目' || fail '快捷键帮助缺少固定表头'
+grep -qxF -- '--no-hscroll' "$WORK_DIR/keybind-args" \
+    && pass '搜索长命令时保持列起点稳定' || fail '快捷键帮助仍允许整行自动横移'
+
+# 同一动作可绑定多个键；说明跟随动作，已有的自定义说明优先。
+cat > "$WORK_DIR/keybind-bin/dms" <<'EOF'
+#!/usr/bin/env bash
+cat <<'JSON'
+{"binds":{"Workspace":[{"key":"Mod+1","action":"focus-workspace 1"},{"key":"Mod+Ctrl+9","action":"move-column-to-workspace 9"}],"Window":[{"key":"Mod+Left","action":"focus-column-left"},{"key":"Mod+H","desc":"自定义切换说明","action":"focus-column-left"},{"key":"Mod+Comma","action":"consume-window-into-column"},{"key":"Mod+Period","action":"expel-window-from-column"}],"Execute":[{"key":"XF86AudioMute","action":"spawn dms ipc call audio mute"},{"key":"XF86MonBrightnessUp","action":"spawn dms ipc call brightness increment 5 \"\""},{"key":"Mod+F12","action":"spawn unknown-command"}]}}
+JSON
+EOF
+PATH="$WORK_DIR/keybind-bin:$PATH" KEYBIND_ARGS="$WORK_DIR/keybind-args" \
+    bash "$PROJECT_DIR/bin/cachyos-keybind-help" > "$WORK_DIR/keybind-descriptions"
+for description in '切换到工作区 1' '将当前窗口列移到工作区 9' \
+    '切换到左侧窗口列' '自定义切换说明' '将右侧窗口并入当前列' \
+    '将列中最下方窗口拆为独立列' '切换系统静音' '提高屏幕亮度 5%' '未提供说明'; do
+    grep -qF "$description" "$WORK_DIR/keybind-descriptions" \
+        || fail "快捷键说明缺失：$description"
+done
+pass '空说明按真实动作补齐，保留自定义说明，未知动作明确标记'
+
 printf '\n%s 项检查通过。\n' "$PASS_COUNT"

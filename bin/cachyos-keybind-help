@@ -5,12 +5,94 @@ set -Eeuo pipefail
 exec kitty --class cachyos-keybind-help --title "Niri keybind search" sh -lc '
     dms keybinds show niri |
         jq -r '\''
-            .binds | to_entries[] as $group |
-            $group.value[] |
-            [(.key // ""), (.desc // ""), (.action // ""), $group.key] |
+            # 仅补充帮助中的空说明，保留用户标题以及 niri 浮层的隐藏设置。
+            def description:
+                if (.desc // "") != "" then .desc
+                else (.action // "") as $action |
+                    ({
+                        "next-window": "切换到下一个最近窗口",
+                        "previous-window": "切换到上一个最近窗口",
+                        "close-window": "关闭当前窗口",
+                        "focus-column-left": "切换到左侧窗口列",
+                        "focus-column-right": "切换到右侧窗口列",
+                        "focus-window-down": "切换到列中下方窗口",
+                        "focus-window-up": "切换到列中上方窗口",
+                        "focus-column-first": "切换到最左侧窗口列",
+                        "focus-column-last": "切换到最右侧窗口列",
+                        "move-column-left": "向左移动当前窗口列",
+                        "move-column-right": "向右移动当前窗口列",
+                        "move-window-down": "在列中向下移动当前窗口",
+                        "move-window-up": "在列中向上移动当前窗口",
+                        "move-column-to-first": "将当前窗口列移到最左侧",
+                        "move-column-to-last": "将当前窗口列移到最右侧",
+                        "consume-or-expel-window-left": "将当前窗口向左合并或拆出",
+                        "consume-or-expel-window-right": "将当前窗口向右合并或拆出",
+                        "consume-window-into-column": "将右侧窗口并入当前列",
+                        "expel-window-from-column": "将列中最下方窗口拆为独立列",
+                        "toggle-column-tabbed-display": "切换当前列的标签页显示模式",
+                        "switch-preset-window-height": "按预设切换当前窗口高度",
+                        "reset-window-height": "恢复当前窗口的自动高度",
+                        "expand-column-to-available-width": "扩展当前列以填满空闲宽度",
+                        "center-column": "将当前窗口列居中显示",
+                        "center-visible-columns": "将所有完整可见的窗口列居中",
+                        "set-column-width -5%": "缩小当前窗口列宽度 5%",
+                        "set-column-width +5%": "增大当前窗口列宽度 5%",
+                        "set-window-height -5%": "减小当前窗口高度 5%",
+                        "set-window-height +5%": "增大当前窗口高度 5%",
+                        "switch-focus-between-floating-and-tiling": "在浮动窗口与平铺窗口间切换焦点",
+                        "focus-monitor-left": "切换到左侧显示器",
+                        "focus-monitor-right": "切换到右侧显示器",
+                        "focus-monitor-up": "切换到上方显示器",
+                        "focus-monitor-down": "切换到下方显示器",
+                        "move-column-to-monitor-left": "将当前窗口列移到左侧显示器",
+                        "move-column-to-monitor-right": "将当前窗口列移到右侧显示器",
+                        "move-column-to-monitor-up": "将当前窗口列移到上方显示器",
+                        "move-column-to-monitor-down": "将当前窗口列移到下方显示器",
+                        "move-workspace-to-monitor-left": "将整个工作区移到左侧显示器",
+                        "move-workspace-to-monitor-right": "将整个工作区移到右侧显示器",
+                        "move-workspace-to-monitor-up": "将整个工作区移到上方显示器",
+                        "move-workspace-to-monitor-down": "将整个工作区移到下方显示器",
+                        "focus-workspace-down": "切换到下方工作区",
+                        "focus-workspace-up": "切换到上方工作区",
+                        "move-column-to-workspace-down": "将当前窗口列移到下方工作区",
+                        "move-column-to-workspace-up": "将当前窗口列移到上方工作区",
+                        "move-workspace-down": "将当前工作区向下重新排序",
+                        "move-workspace-up": "将当前工作区向上重新排序",
+                        "screenshot": "选择区域截图",
+                        "screenshot-window": "截取当前窗口",
+                        "screenshot-screen": "截取当前显示器",
+                        "toggle-keyboard-shortcuts-inhibit": "切换应用对桌面快捷键的接管",
+                        "power-off-monitors": "关闭显示器显示",
+                        "spawn env GSK_RENDERER=gl nautilus --new-window": "新建文件管理器窗口",
+                        "spawn niri-sidebar flip": "反转侧边栏窗口排列顺序",
+                        "spawn dms ipc call audio increment 3": "提高系统音量 3%",
+                        "spawn dms ipc call audio decrement 3": "降低系统音量 3%",
+                        "spawn dms ipc call audio mute": "切换系统静音",
+                        "spawn dms ipc call audio micmute": "切换麦克风静音",
+                        "spawn dms ipc call mpris playPause": "播放或暂停媒体",
+                        "spawn dms ipc call mpris previous": "播放上一首媒体",
+                        "spawn dms ipc call mpris next": "播放下一首媒体",
+                        "spawn dms ipc call mpris increment 3": "提高媒体播放器音量 3%",
+                        "spawn dms ipc call mpris decrement 3": "降低媒体播放器音量 3%",
+                        "spawn dms ipc call brightness increment 5 \"\"": "提高屏幕亮度 5%",
+                        "spawn dms ipc call brightness decrement 5 \"\"": "降低屏幕亮度 5%"
+                    }[$action] //
+                    (if $action | test("^focus-workspace [0-9]+$") then
+                        "切换到工作区 " + ($action | split(" ")[1])
+                    elif $action | test("^move-column-to-workspace [0-9]+$") then
+                        "将当前窗口列移到工作区 " + ($action | split(" ")[1])
+                    else "未提供说明"
+                    end))
+                end;
+
+            ["快捷键", "说明", "动作", "分组"],
+            (.binds | to_entries[] as $group |
+                $group.value[] |
+                [(.key // ""), description, (.action // ""), $group.key]) |
             @tsv
         '\'' |
-        fzf --delimiter="\t" \
-            --header=$'\''快捷键\t说明\t动作\t分组（输入任意文字模糊搜索，Esc 退出）'\'' \
+        column --table --separator="$(printf "\t")" |
+        fzf --header-lines=1 --no-hscroll \
+            --header="输入任意文字模糊搜索，Esc 退出" \
             --layout=reverse --no-sort --prompt="Keybinds> " --bind="esc:abort"
 '
