@@ -43,6 +43,7 @@ SKIP_UPDATE=false
 SKIP_HARDWARE=false
 TEMP_DIR=""
 DANKINSTALL_PATH=""
+OPTIONAL_FAILURES=()
 
 readonly -a DMS_FEATURE_PACKAGES=(
     networkmanager
@@ -127,6 +128,28 @@ run() {
         return 0
     fi
     "$@"
+}
+
+record_optional_failure() {
+    local label="$1" reason="$2" status="${3:-1}"
+    # 下载失败可以继续；用户主动取消时必须保留取消语义。
+    case "$status" in
+        130|143) exit "$status" ;;
+    esac
+    OPTIONAL_FAILURES+=("$label")
+    warn "$label: $reason; skipping this optional item and continuing"
+}
+
+run_optional() {
+    local label="$1" status
+    shift
+    # 只包裹单条命令，避免把整个安装函数放进条件判断后禁用其内部的 errexit。
+    if run "$@"; then
+        tui_ok "$label"
+    else
+        status=$?
+        record_optional_failure "$label" "command failed (exit $status)" "$status"
+    fi
 }
 
 parse_args() {
@@ -355,12 +378,12 @@ install_available_packages() {
 
     if ((${#unavailable[@]} > 0)); then
         for package_name in "${unavailable[@]}"; do
-            warn "$label package is unavailable and will be skipped: $package_name"
+            record_optional_failure "$label: $package_name" "package is unavailable"
         done
     fi
 
     if ((${#available[@]} > 0)); then
-        run sudo pacman -S --needed --noconfirm -- "${available[@]}"
+        run_optional "$label" sudo pacman -S --needed --noconfirm -- "${available[@]}"
     fi
 }
 
@@ -374,9 +397,6 @@ install_hardware_stack() {
     install_available_packages required true "${CACHYOS_HARDWARE_REQUIRED_PACKAGES[@]}"
     tui_ok "已安装必需硬件包（${#CACHYOS_HARDWARE_REQUIRED_PACKAGES[@]} 个）"
     install_available_packages optional false "${CACHYOS_HARDWARE_OPTIONAL_PACKAGES[@]}"
-    if ((${#CACHYOS_HARDWARE_OPTIONAL_PACKAGES[@]} > 0)); then
-        tui_ok "已安装可选硬件包（${#CACHYOS_HARDWARE_OPTIONAL_PACKAGES[@]} 个；缺失时仅警告）"
-    fi
 
     if pacman -Q tuned-ppd >/dev/null 2>&1; then
         warn "preserving the installed tuned-ppd power-profile provider"
@@ -393,7 +413,7 @@ install_dms_features() {
     # avahi 是上面这一批里的包，所以只能在装完后判断。PhoneConnect 用它的 mDNS 发现
     # 手机当前的配对/连接端口；服务没跑时插件只能手填地址。
     if pacman -Q avahi >/dev/null 2>&1; then
-        run sudo systemctl enable --now avahi-daemon.service
+        run_optional avahi sudo systemctl enable --now avahi-daemon.service
     fi
 }
 
@@ -412,22 +432,24 @@ install_applications() {
         # shellcheck disable=SC2178
         local -n packages="$name"
         tui_progress $((index + 1)) "$total" "$label（${#packages[@]} 个包）"
-        install_available_packages "$label" true "${packages[@]}"
-        tui_ok "$label"
+        install_available_packages "$label" false "${packages[@]}"
         unset -n packages
     done
 }
 
 install_aur_packages() {
+    local package_name
     info "installing AUR desktop packages"
-    run paru -S --needed --noconfirm -- "${AUR_PACKAGES[@]}"
+    for package_name in "${AUR_PACKAGES[@]}"; do
+        run_optional "AUR: $package_name" paru -S --needed --noconfirm -- "$package_name"
+    done
 }
 
 install_niri_sidebar() {
     local binary_name="niri-sidebar-linux-x86_64"
     local base_url="https://github.com/Vigintillionn/niri-sidebar/releases/download/$PINNED_NIRI_SIDEBAR_VERSION"
     local cached_binary="$SCRIPT_DIR/assets/downloads/niri-sidebar/$PINNED_NIRI_SIDEBAR_VERSION/$binary_name"
-    local actual_sha
+    local actual_sha status
 
     ensure_temp_dir
     local destination="$TEMP_DIR/$binary_name"
@@ -436,7 +458,9 @@ install_niri_sidebar() {
         if [[ -s "$cached_binary" ]]; then
             print_command cp -- "$cached_binary" "$destination"
         else
-            print_command curl --fail --location --proto '=https' --tlsv1.2 --retry 3 "$base_url/$binary_name" -o "$destination"
+            print_command curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+                --connect-timeout 15 --speed-limit 1024 --speed-time 30 --max-time 300 \
+                "$base_url/$binary_name" -o "$destination"
         fi
         print_command sudo install -o root -g root -m 0755 "$destination" /usr/local/bin/niri-sidebar
         return 0
@@ -444,7 +468,8 @@ install_niri_sidebar() {
 
     # 真终端里让 curl 闭嘴、由我们自己的转圈负责这一行：否则 curl 的进度条会和转圈
     # 抢同一行，看起来是乱码。非终端（日志）保持 curl 原样，方便排查下载失败。
-    local -a curl_args=(--fail --location --proto '=https' --tlsv1.2 --retry 3)
+    local -a curl_args=(--fail --location --proto '=https' --tlsv1.2 --retry 3
+                       --connect-timeout 15 --speed-limit 1024 --speed-time 30 --max-time 300)
     [[ $TUI_TTY == true ]] && curl_args+=(--silent --show-error)
 
     info "installing pinned niri-sidebar $PINNED_NIRI_SIDEBAR_VERSION"
@@ -452,12 +477,20 @@ install_niri_sidebar() {
     if [[ -s "$cached_binary" ]]; then
         cp -- "$cached_binary" "$destination"
     else
-        curl "${curl_args[@]}" "$base_url/$binary_name" -o "$destination"
+        if curl "${curl_args[@]}" "$base_url/$binary_name" -o "$destination"; then
+            :
+        else
+            status=$?
+            tui_spin_stop warn "niri-sidebar 下载失败，继续配置桌面"
+            record_optional_failure niri-sidebar "download failed (exit $status)" "$status"
+            return 0
+        fi
     fi
     actual_sha="$(sha256sum "$destination" | awk '{print $1}')"
     if [[ "$actual_sha" != "$PINNED_NIRI_SIDEBAR_SHA256_AMD64" ]]; then
         tui_spin_stop warn "niri-sidebar 校验失败"
-        die "niri-sidebar checksum mismatch"
+        record_optional_failure niri-sidebar "checksum mismatch"
+        return 0
     fi
     sudo install -o root -g root -m 0755 "$destination" /usr/local/bin/niri-sidebar
     tui_spin_stop ok "niri-sidebar $PINNED_NIRI_SIDEBAR_VERSION（已校验 SHA256）"
@@ -482,15 +515,20 @@ remove_noctalia_profile() {
 }
 
 configure_application_services() {
-    run sudo systemctl enable --now libvirtd.service
-
-    if ! id -nG "$TARGET_USER" | tr ' ' '\n' | grep -qx libvirt; then
-        run sudo usermod --append --groups libvirt "$TARGET_USER"
-        warn "log out and back in before using libvirt as $USER"
+    if pacman -Q libvirt >/dev/null 2>&1; then
+        run_optional libvirt sudo systemctl enable --now libvirtd.service
+        if ! id -nG "$TARGET_USER" | tr ' ' '\n' | grep -qx libvirt; then
+            run_optional "libvirt group" sudo usermod --append --groups libvirt "$TARGET_USER"
+            warn "log out and back in before using libvirt as $TARGET_USER"
+        fi
     fi
 
-    run flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-    run sudo usermod --shell /usr/bin/fish "$TARGET_USER"
+    if command -v flatpak >/dev/null 2>&1; then
+        run_optional Flathub flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+    fi
+    if command -v fish >/dev/null 2>&1; then
+        run_optional Fish sudo usermod --shell /usr/bin/fish "$TARGET_USER"
+    fi
 
     if ! getent group i2c >/dev/null 2>&1; then
         run sudo groupadd --system i2c
@@ -507,8 +545,10 @@ configure_snapper() {
         return 0
     fi
 
+    command -v snapper >/dev/null 2>&1 || return 0
+
     if [[ ! -e /etc/snapper/configs/root ]]; then
-        run sudo snapper -c root create-config /
+        run_optional Snapper sudo snapper -c root create-config /
     fi
 }
 
@@ -1187,6 +1227,10 @@ main() {
     tui_phase_done
 
     tui_phase_start "应用与桌面"
+    # 这几个工具是后续配置和登录必需的；其余应用缺失不应阻断核心桌面。
+    install_available_packages desktop-core true git jq python kitty ly
+    remove_noctalia_profile
+    install_niri_dms
     install_dms_features
     install_applications
     install_aur_packages
@@ -1194,8 +1238,6 @@ main() {
     configure_application_services
     configure_snapper
     configure_ly
-    remove_noctalia_profile
-    install_niri_dms
     remove_blocked_brand_components
     tui_phase_done
 
@@ -1211,7 +1253,16 @@ main() {
     post_install
     tui_phase_done
 
-    tui_summary "安装完成（未自动重启系统）" \
+    local summary_title="安装完成（未自动重启系统）" item
+    if ((${#OPTIONAL_FAILURES[@]} > 0)); then
+        summary_title="桌面安装与配置完成（部分可选项目未完成）"
+        warn "以下可选项目未完成（${#OPTIONAL_FAILURES[@]} 项）："
+        for item in "${OPTIONAL_FAILURES[@]}"; do
+            warn "  $item"
+        done
+        warn "网络恢复后可重新运行安装器补装；已安装的软件包会按 --needed 跳过"
+    fi
+    tui_summary "$summary_title" \
         "1. 在方便时重启，并在 Ly 中选择 Niri 会话" \
         "2. 至少退出并重新登录一次，使 Fish、Fcitx5、libvirt 和 i2c 组权限生效" \
         "3. 首次进入 Niri 后将在后台初始化 Firefox、Code、Wine 与 AI 助手技能" \

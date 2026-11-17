@@ -147,12 +147,13 @@ sidebar_sha = hashlib.sha256(sidebar.read_bytes()).hexdigest()
 Path(f'{dms}.sha256').write_text(f'{dms_sha}  dankinstall-amd64.gz\n')
 source = (project / 'install.sh').read_text()
 functions = '\n'.join(re.search(rf'^{name}\(\) \{{\n.*?^\}}', source, re.M | re.S)[0]
-                      for name in ('install_niri_sidebar', 'download_dankinstall'))
+                      for name in ('record_optional_failure', 'install_niri_sidebar', 'download_dankinstall'))
 definitions = '''
 set -Eeuo pipefail
 SCRIPT_DIR="$1"
 TEMP_DIR="$2"
 DRY_RUN=false
+OPTIONAL_FAILURES=()
 TUI_TTY=false
 DMS_VERSION=v1.6.2
 PINNED_DMS_VERSION=v1.6.2
@@ -161,7 +162,7 @@ PINNED_DMS_SHA256_AMD64="$3"
 PINNED_NIRI_SIDEBAR_SHA256_AMD64="$4"
 ensure_temp_dir() { mkdir -p "$TEMP_DIR"; }
 info() { :; }
-warn() { :; }
+warn() { printf '%s\\n' "$*" >&2; }
 die() { printf '%s\\n' "$*" >&2; exit 1; }
 tui_spin_start() { :; }
 tui_spin_stop() { :; }
@@ -177,13 +178,18 @@ r = cached('install_niri_sidebar; download_dankinstall; test -x "$DANKINSTALL_PA
 check(r.returncode == 0, '随包 sidebar 与 DMS 安装器完成校验解压，全程不请求网络')
 sidebar.write_bytes(b'bad sidebar')
 r = cached('install_niri_sidebar')
-check(r.returncode != 0 and 'checksum mismatch' in r.stderr, '拒绝损坏的 sidebar 缓存')
+check(r.returncode == 0 and 'checksum mismatch' in r.stderr, '跳过损坏的可选 sidebar 缓存并继续')
 dms.write_bytes(b'bad DMS')
 r = cached('download_dankinstall')
 check(r.returncode != 0 and 'checksum mismatch' in r.stderr, '拒绝损坏的 DMS 缓存')
 print(f'\n{checks} 项下载检查通过。')
 PY
     exit 0
+fi
+
+OPTIONAL_FAILURE_TEST=false
+if [[ ${1:-} == --optional-failures-only ]]; then
+    OPTIONAL_FAILURE_TEST=true
 fi
 
 SANDBOX_HOME="$WORK_DIR/home"
@@ -242,7 +248,7 @@ case "\${rewritten[0]:-}" in
             mkdir -p "\$(dirname -- "\$last")"
         fi
         exec "\${rewritten[@]}" ;;
-    mkdir|chmod|chown) exec "\${rewritten[@]}" ;;
+    mkdir|chmod|chown|pacman) exec "\${rewritten[@]}" ;;
 esac
 exit 0
 EOF
@@ -251,7 +257,7 @@ EOF
 for name in claude codex opencode \
             pacman paru yay usermod groupadd modprobe udevadm snapper systemctl niri dms \
             notify-send kitty ghostty alacritty ly hyprctl mkinitcpio grub-mkconfig dbus-send \
-            gsettings xdg-settings npm mise systemd-analyze fc-cache wineboot winetricks; do
+            gsettings xdg-settings npm mise systemd-analyze fc-cache wineboot winetricks flatpak fish; do
     cat > "$STUB_BIN/$name" <<EOF
 #!/usr/bin/env bash
 printf '%s %s\n' "$name" "\$*" >> "${CACHYOS_TEST_LOG:?}"
@@ -259,6 +265,20 @@ case "$name" in
     dms) [[ "\$1" == "--version" ]] && echo "1.6.2" ;;
     niri) [[ "\$1" == "--version" ]] && echo "niri 26.04" ;;
 esac
+if [[ "$name" == pacman && "\$1" == -S ]]; then
+    if [[ \${CACHYOS_TEST_CORE_FAIL:-false} == true && " \$* " == *' git jq python kitty ly '* ]]; then
+        exit 1
+    fi
+    if [[ \${CACHYOS_TEST_OPTIONAL_FAILURES:-false} == true && " \$* " == *' gamescope '* ]]; then
+        exit 1
+    fi
+fi
+if [[ \${CACHYOS_TEST_OPTIONAL_FAILURES:-false} == true ]]; then
+    case "$name" in
+        paru) [[ "\${!#}" == upscaler || "\${!#}" == rime-ice-git ]] && exit 28 ;;
+        flatpak) exit 22 ;;
+    esac
+fi
 exit 0
 EOF
 done
@@ -275,6 +295,9 @@ while (($#)); do
     esac
 done
 if [[ -n $destination ]]; then
+    if [[ ${CACHYOS_TEST_OPTIONAL_FAILURES:-false} == true && $destination == *niri-sidebar* ]]; then
+        exit 28
+    fi
     mkdir -p "$(dirname -- "$destination")"
     if [[ $destination == *.sha256 ]]; then
         # 安装器要的是"首字段是 64 位十六进制"的校验和文件；占位内容会被判为非法。
@@ -299,26 +322,30 @@ printf 'gzip %s\n' "$*" >> "${CACHYOS_TEST_LOG:?}"
 if (($# == 0)); then
     cat >/dev/null
 fi
+cat <<'INSTALLER'
+#!/usr/bin/env bash
+printf 'dankinstall %s\n' "$*" >> "${CACHYOS_TEST_LOG:?}"
+if [[ ${CACHYOS_TEST_DMS_FAIL:-false} == true ]]; then exit 23; fi
+INSTALLER
 exit 0
 EOF
 
-# sha256sum：按文件名回显安装器 pin 的值
+# 只替换两个下载资源的校验；插件运行目录仍需要真实哈希，并消费管道输入。
+SHA256SUM_COMMAND="$(command -v sha256sum)"
 cat > "$STUB_BIN/sha256sum" <<EOF
 #!/usr/bin/env bash
-for argument in "\$@"; do
-    case "\$argument" in
-        *niri-sidebar*) echo "$SIDEBAR_SHA  \$argument" ;;
-        *) echo "$DMS_SHA  \$argument" ;;
-    esac
-done
-exit 0
+case "\${1:-}" in
+    *niri-sidebar*) echo "$SIDEBAR_SHA  \$1" ;;
+    *dankinstall-amd64.gz) echo "$DMS_SHA  \$1" ;;
+    *) exec "$SHA256SUM_COMMAND" "\$@" ;;
+esac
 EOF
 
 chmod +x "$STUB_BIN"/*
 
 # ---- 真跑安装器 -------------------------------------------------------------
-set +e
-env -i \
+launch_installer() {
+    env -i \
     HOME="$SANDBOX_HOME" \
     PATH="$FAKE_ROOT/usr/local/bin:$STUB_BIN:/usr/bin:/bin" \
     TERM=dumb \
@@ -327,8 +354,14 @@ env -i \
     CACHYOS_TEST_FAKE_ROOT="$FAKE_ROOT" \
     CACHYOS_TEST_DMS_SHA="$DMS_SHA" \
     CACHYOS_TEST_LOG="$LOG" \
+    CACHYOS_TEST_OPTIONAL_FAILURES="$OPTIONAL_FAILURE_TEST" \
+    CACHYOS_TEST_CORE_FAIL="${CACHYOS_TEST_CORE_FAIL:-false}" \
+    CACHYOS_TEST_DMS_FAIL="${CACHYOS_TEST_DMS_FAIL:-false}" \
     bash "$PROJECT_DIR/install.sh" --skip-update --skip-hardware -y --terminal kitty \
     < /dev/null > "$WORK_DIR/install.log" 2>&1
+}
+set +e
+launch_installer
 install_status=$?
 set -e
 
@@ -338,6 +371,76 @@ if ((install_status != 0)); then
     exit 1
 fi
 pass '安装器在干净 HOME 上成功退出'
+
+if [[ "$OPTIONAL_FAILURE_TEST" == true ]]; then
+    assert_file "$SANDBOX_HOME/.config/niri/config.kdl" '可选下载失败后仍写入 Niri 配置'
+    assert_file "$SANDBOX_HOME/.config/DankMaterialShell/settings.json" '可选下载失败后仍写入 DMS 配置'
+    assert_file "$SANDBOX_HOME/.config/DankMaterialShell/plugins/Focus/plugin.json" '可选下载失败后仍部署 DMS 插件'
+    if [[ ! -e "$FAKE_ROOT/usr/local/bin/niri-sidebar" ]]; then
+        pass '侧栏下载失败时不安装不完整文件'
+    else
+        fail '侧栏下载失败后仍安装了文件'
+    fi
+    for item in 游戏应用 'AUR: upscaler' 'AUR: rime-ice-git' niri-sidebar Flathub; do
+        if grep -qF "$item:" "$WORK_DIR/install.log"; then
+            pass "记录可选项目失败：$item"
+        else
+            fail "漏记可选项目失败：$item"
+        fi
+    done
+    if grep -qF '部分可选项目未完成' "$WORK_DIR/install.log" &&
+       grep -qF 'cachyos-agent-usage.timer' "$LOG"; then
+        pass '失败后仍执行服务收尾，并明确提示部分项目未完成'
+    else
+        fail '失败后没有完成收尾或遗漏失败摘要'
+    fi
+    python3 - "$PROJECT_DIR" "$LOG" <<'PY'
+from pathlib import Path
+import re
+import sys
+project, log = map(Path, sys.argv[1:])
+calls = log.read_text().splitlines()
+packages = re.search(r'AUR_PACKAGES=\((.*?)\)', (project / 'packages.sh').read_text(), re.S)[1].split()
+attempts = [line.rsplit(' ', 1)[-1] for line in calls if line.startswith('paru -S ')]
+assert attempts == packages, (attempts, packages)
+assert next(i for i, line in enumerate(calls) if line.startswith('dankinstall ')) < next(i for i, line in enumerate(calls) if line.startswith('paru -S '))
+print('ok - 社区软件失败后仍逐项尝试后续软件，且 DMS 优先安装')
+PY
+    # 同一沙箱还要验证失败边界：基础工具和 DMS 本体失败必须停止。
+    SANDBOX_HOME="$WORK_DIR/core-home"
+    LOG="$WORK_DIR/core-calls.log"
+    mkdir -p "$SANDBOX_HOME"
+    set +e
+    CACHYOS_TEST_CORE_FAIL=true launch_installer
+    core_status=$?
+    set -e
+    assert_equal 1 "$core_status" '核心工具安装失败时停止'
+    [[ ! -e "$SANDBOX_HOME/.config/niri/config.kdl" ]] || fail '核心工具失败后仍写入桌面配置'
+    LOG="$WORK_DIR/dms-calls.log"
+    set +e
+    CACHYOS_TEST_DMS_FAIL=true launch_installer
+    dms_status=$?
+    set -e
+    assert_equal 23 "$dms_status" 'DMS 本体失败时保留错误码并停止'
+    [[ ! -e "$SANDBOX_HOME/.config/niri/config.kdl" ]] || fail 'DMS 失败后仍写入桌面配置'
+    python3 - "$PROJECT_DIR" <<'PY'
+from pathlib import Path
+import re
+import subprocess
+import sys
+source = (Path(sys.argv[1]) / 'install.sh').read_text()
+functions = '\n'.join(re.search(rf'^{name}\(\) \{{\n.*?^\}}', source, re.M | re.S)[0]
+                      for name in ('run', 'record_optional_failure', 'run_optional'))
+for status in (130, 143):
+    probe = 'set -Eeuo pipefail\nDRY_RUN=false\nOPTIONAL_FAILURES=()\n' + functions
+    probe += f'\nrun_optional cancel bash -c "exit {status}"\nprintf unexpected'
+    result = subprocess.run(['bash', '-c', probe], capture_output=True, text=True, timeout=5)
+    assert result.returncode == status and 'unexpected' not in result.stdout, result
+    print(f'ok - 主动取消退出码 {status} 不会被当成可选失败吞掉')
+PY
+    printf '\n可选下载失败后的安装流程检查通过。\n'
+    exit 0
+fi
 
 # 技能必须**安装完就可用**，不能等到一次登录之后——否则装完当天用 agent 就没有技能。
 for harness in .claude/skills .codex/skills; do
