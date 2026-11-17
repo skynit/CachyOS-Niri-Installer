@@ -22,7 +22,7 @@ AI 编程助手作为**独立的一层**：启动、提问、续接、崩溃/OOM
 **一键下载并启动安装器**（使用国内下载站，以普通用户运行）：
 
 ```bash
-curl -fLo setup.sh http://47.119.120.17/dshx/niri/setup.sh && test -s setup.sh && bash setup.sh
+curl -fLo setup.sh http://47.119.120.17/cachyos/setup.sh && test -s setup.sh && bash setup.sh
 ```
 
 根目录的 [setup.sh](setup.sh) 下载并校验完整安装包后启动安装器，显示计划并等待确认；可用 `bash setup.sh --dry-run` 预览安装计划，不需要预装 Niri。需要 `curl`、`tar` 和 `sha256sum`。

@@ -14,7 +14,7 @@ done
 setup_dir="$(mktemp -d "${TMPDIR:-/tmp}/cachyos-niri-setup.XXXXXX")"
 trap 'rm -rf -- "$setup_dir"' EXIT
 
-download_base="${CACHYOS_DOWNLOAD_BASE:-http://47.119.120.17/dshx/niri}"
+download_base="${CACHYOS_DOWNLOAD_BASE:-http://47.119.120.17/cachyos}"
 download_base="${download_base%/}"
 curl_args=(--fail --location --retry 2 --connect-timeout 10 --speed-limit 1024 --speed-time 30)
 
