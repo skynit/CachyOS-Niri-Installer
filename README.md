@@ -19,6 +19,16 @@ AI 编程助手作为**独立的一层**：启动、提问、续接、崩溃/OOM
 
 前提：已安装 CachyOS、使用可 `sudo` 的普通用户、联网、`x86_64`；不要在 Live ISO 中运行。
 
+**一键下载并启动安装器**（需要 `curl` 和 `tar`，以普通用户运行）：
+
+```bash
+bash -c 'set -euo pipefail; setup_dir=$(mktemp -d); curl --fail --location --retry 3 https://github.com/skynit/CachyOS-Niri-Installer/archive/refs/heads/main.tar.gz | tar -xz --strip-components=1 -C "$setup_dir"; bash "$setup_dir/install.sh"'
+```
+
+命令将 `main` 分支的完整安装包（含插件与预编译辅助程序）下载并解压到临时目录，再启动安装器，显示计划并等待确认。
+
+已下载仓库时，可在仓库目录中运行：
+
 ```bash
 ./install.sh --dry-run     # 先看完整计划，不修改系统
 ./install.sh               # 执行安装（不会自动重启）
@@ -44,20 +54,22 @@ bash tests/run-all.sh      # 纯函数/stub 测试，不需要桌面环境
 | AI 层（启动、提问、续接、面板） | [docs/ai.md](docs/ai.md) |
 | 崩溃与 OOM 诊断 | [docs/crash-oom.md](docs/crash-oom.md) |
 | Agent 用量统计 | [docs/usage.md](docs/usage.md) |
-| 7 个随包 DMS 插件 | [docs/dms-plugins.md](docs/dms-plugins.md)（各插件另见 `assets/dms-plugins/*/README.md`） |
+| 9 个随包 DMS 插件 | [docs/dms-plugins.md](docs/dms-plugins.md)（各插件另见 `assets/dms-plugins/*/README.md`） |
 | 本地听写（可选） | [docs/voxtype.md](docs/voxtype.md) |
 | 锁屏与电源 | [docs/power.md](docs/power.md) |
 | 配置更新、卸载与系统维护 | [docs/maintenance.md](docs/maintenance.md) |
 | 安装后验收与测试 | [docs/verification.md](docs/verification.md) |
 | 设计取舍、已知限制 | [docs/design.md](docs/design.md) |
 
-插件自带的 README（随插件一起安装到用户目录）：[AI 集成](assets/dms-plugins/CachyosAgents/README.md)、
+插件自带的 README（随插件一起安装到用户目录）：[AI 模块](assets/dms-plugins/CachyosAgents/README.md)、
 [本机状态](assets/dms-plugins/LocalStatus/README.md)、
 [离线翻译](assets/dms-plugins/LocalTranslate/README.md)、
 [本地歌词](assets/dms-plugins/LocalLyrics/README.md)、
 [连接（手机与电脑）](assets/dms-plugins/PhoneConnect/README.md)、
 [专注](assets/dms-plugins/Focus/README.md)、
-[Top 系统面板](assets/dms-plugins/Top/README.md)。
+[Top 系统面板](assets/dms-plugins/Top/README.md)、
+[桌面设置](assets/dms-plugins/DesktopSettings/README.md)、
+[待办日历](assets/dms-plugins/TodoCalendar/README.md)。
 
 完整索引与文档维护约定见 [docs/README.md](docs/README.md)。仓库根目录的两份早期材料
 （`安装流程与美化应用清单.md`、`AI-AGENT-INTEGRATION-PLAN.md`）也在那里说明。
