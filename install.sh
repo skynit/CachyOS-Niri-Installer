@@ -426,13 +426,18 @@ install_aur_packages() {
 install_niri_sidebar() {
     local binary_name="niri-sidebar-linux-x86_64"
     local base_url="https://github.com/Vigintillionn/niri-sidebar/releases/download/$PINNED_NIRI_SIDEBAR_VERSION"
+    local cached_binary="$SCRIPT_DIR/assets/downloads/niri-sidebar/$PINNED_NIRI_SIDEBAR_VERSION/$binary_name"
     local actual_sha
 
     ensure_temp_dir
     local destination="$TEMP_DIR/$binary_name"
 
     if [[ "$DRY_RUN" == true ]]; then
-        print_command curl --fail --location --proto '=https' --tlsv1.2 --retry 3 "$base_url/$binary_name" -o "$destination"
+        if [[ -s "$cached_binary" ]]; then
+            print_command cp -- "$cached_binary" "$destination"
+        else
+            print_command curl --fail --location --proto '=https' --tlsv1.2 --retry 3 "$base_url/$binary_name" -o "$destination"
+        fi
         print_command sudo install -o root -g root -m 0755 "$destination" /usr/local/bin/niri-sidebar
         return 0
     fi
@@ -443,8 +448,12 @@ install_niri_sidebar() {
     [[ $TUI_TTY == true ]] && curl_args+=(--silent --show-error)
 
     info "installing pinned niri-sidebar $PINNED_NIRI_SIDEBAR_VERSION"
-    tui_spin_start "下载 niri-sidebar $PINNED_NIRI_SIDEBAR_VERSION"
-    curl "${curl_args[@]}" "$base_url/$binary_name" -o "$destination"
+    tui_spin_start "准备 niri-sidebar $PINNED_NIRI_SIDEBAR_VERSION"
+    if [[ -s "$cached_binary" ]]; then
+        cp -- "$cached_binary" "$destination"
+    else
+        curl "${curl_args[@]}" "$base_url/$binary_name" -o "$destination"
+    fi
     actual_sha="$(sha256sum "$destination" | awk '{print $1}')"
     if [[ "$actual_sha" != "$PINNED_NIRI_SIDEBAR_SHA256_AMD64" ]]; then
         tui_spin_stop warn "niri-sidebar 校验失败"
@@ -940,6 +949,7 @@ download_dankinstall() {
     local base_url="https://github.com/AvengeMedia/DankMaterialShell/releases/download/$DMS_VERSION"
     local archive="$TEMP_DIR/$asset"
     local checksum_file="$TEMP_DIR/$asset.sha256"
+    local cached_archive="$SCRIPT_DIR/assets/downloads/dms/$DMS_VERSION/$asset"
     local installer="$TEMP_DIR/dankinstall"
     local expected_sha actual_sha
     local -a curl_args=(
@@ -952,19 +962,29 @@ download_dankinstall() {
     )
 
     if [[ "$DRY_RUN" == true ]]; then
-        print_command curl "${curl_args[@]}" "$base_url/$asset" -o "$archive"
-        print_command curl "${curl_args[@]}" "$base_url/$asset.sha256" -o "$checksum_file"
+        if [[ -s "$cached_archive" && -s "$cached_archive.sha256" ]]; then
+            print_command cp -- "$cached_archive" "$archive"
+            print_command cp -- "$cached_archive.sha256" "$checksum_file"
+        else
+            print_command curl "${curl_args[@]}" "$base_url/$asset" -o "$archive"
+            print_command curl "${curl_args[@]}" "$base_url/$asset.sha256" -o "$checksum_file"
+        fi
         DANKINSTALL_PATH="$installer"
         return 0
     fi
 
-    info "downloading official DankMaterialShell installer $DMS_VERSION"
+    info "preparing official DankMaterialShell installer $DMS_VERSION"
     # 同 niri-sidebar：真终端里让 curl 闭嘴、交给转圈，避免两条进度抢同一行。
     local -a fetch_args=("${curl_args[@]}")
     [[ $TUI_TTY == true ]] && fetch_args+=(--silent --show-error)
-    tui_spin_start "下载官方 DMS 安装器 $DMS_VERSION"
-    curl "${fetch_args[@]}" "$base_url/$asset" -o "$archive"
-    curl "${fetch_args[@]}" "$base_url/$asset.sha256" -o "$checksum_file"
+    tui_spin_start "准备官方 DMS 安装器 $DMS_VERSION"
+    if [[ -s "$cached_archive" && -s "$cached_archive.sha256" ]]; then
+        cp -- "$cached_archive" "$archive"
+        cp -- "$cached_archive.sha256" "$checksum_file"
+    else
+        curl "${fetch_args[@]}" "$base_url/$asset" -o "$archive"
+        curl "${fetch_args[@]}" "$base_url/$asset.sha256" -o "$checksum_file"
+    fi
 
     expected_sha="$(awk 'NF >= 1 && $1 ~ /^[0-9a-fA-F]{64}$/ { print tolower($1); exit }' "$checksum_file")"
     if [[ -z "$expected_sha" ]]; then

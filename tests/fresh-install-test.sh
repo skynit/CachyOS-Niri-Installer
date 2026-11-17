@@ -56,6 +56,136 @@ assert_file() {
     fi
 }
 
+# 只验证下载入口和随包缓存，不执行整套安装彩排。
+if [[ ${1:-} == --downloads-only ]]; then
+    python3 - "$PROJECT_DIR" "$WORK_DIR" <<'PY'
+import gzip
+import hashlib
+import io
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tarfile
+
+project, work = map(Path, sys.argv[1:])
+site = work / 'site'
+site.mkdir()
+commands = work / 'bin'
+commands.mkdir()
+scratch = work / 'tmp'
+scratch.mkdir()
+marker = work / 'started'
+calls = work / 'calls'
+archive_name = f'source-{"a" * 40}.tar.gz'
+archive = site / archive_name
+with tarfile.open(archive, 'w:gz') as package:
+    content = b'#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "$PROBE_MARKER"\nread -r reply\nprintf "%s\\n" "$reply" >> "$PROBE_MARKER"\nexit "${PROBE_INSTALL_EXIT:-0}"\n'
+    item = tarfile.TarInfo('project/install.sh')
+    item.size = len(content)
+    package.addfile(item, io.BytesIO(content))
+original_archive = archive.read_bytes()
+manifest = f'{hashlib.sha256(original_archive).hexdigest()}  {archive_name}\n'
+(site / 'SHA256SUMS').write_text(manifest)
+curl = commands / 'curl'
+curl.write_text(f'#!{sys.executable}\n' + '''import os, pathlib, shutil, sys
+args = sys.argv[1:]
+url = next(a for a in args if a.startswith('http'))
+with open(os.environ['PROBE_CALLS'], 'a') as log:
+    log.write(url + '\\n')
+if os.environ.get('PROBE_CURL_FAIL'):
+    sys.exit(22)
+shutil.copyfile(pathlib.Path(os.environ['PROBE_SITE']) / url.rsplit('/', 1)[-1], args[args.index('--output') + 1])
+''')
+curl.chmod(0o755)
+env = dict(os.environ, PATH=f'{commands}:{os.environ["PATH"]}', TMPDIR=str(scratch),
+           CACHYOS_DOWNLOAD_BASE='http://fixture.invalid/niri/', PROBE_SITE=str(site),
+           PROBE_MARKER=str(marker), PROBE_CALLS=str(calls))
+checks = 0
+
+def check(condition, label):
+    global checks
+    assert condition, label
+    checks += 1
+    print(f'ok - {label}', flush=True)
+
+def launch(**overrides):
+    marker.unlink(missing_ok=True)
+    result = subprocess.run(['bash', str(project / 'setup.sh'), '--terminal', 'one two'],
+                            input='confirm\n', capture_output=True, text=True,
+                            env=dict(env, **overrides), timeout=10)
+    check(not list(scratch.glob('cachyos-niri-setup.*')), '入口退出后清理临时目录')
+    return result
+
+r = launch()
+check(r.returncode == 0 and '正在连接' in r.stdout and '正在启动' in r.stdout, '入口显示进度并启动安装器')
+check(marker.read_text() == '--terminal\none two\nconfirm\n', '保留参数边界和交互式标准输入')
+check(calls.read_text().splitlines() == ['http://fixture.invalid/niri/SHA256SUMS', f'http://fixture.invalid/niri/{archive_name}'], '仅访问指定下载站')
+r = launch(PROBE_INSTALL_EXIT='19')
+check(r.returncode == 19, '保留安装器失败退出码')
+r = launch(PROBE_CURL_FAIL='1')
+check(r.returncode != 0 and not marker.exists(), '下载失败时不启动安装器')
+for invalid in ('', '<html>not found</html>', f'{"0" * 64}  ../../bad.tar.gz\n'):
+    (site / 'SHA256SUMS').write_text(invalid)
+    r = launch()
+    check(r.returncode != 0 and '下载清单无效' in r.stderr and not marker.exists(), '拒绝空清单、HTML 或越界文件名')
+(site / 'SHA256SUMS').write_text(manifest)
+archive.write_bytes(original_archive + b'corrupt')
+r = launch()
+check(r.returncode != 0 and '安装包校验失败' in r.stderr and not marker.exists(), '校验失败时停止解压和启动')
+
+fixture = work / 'bundle'
+dms = fixture / 'assets/downloads/dms/v1.6.2/dankinstall-amd64.gz'
+sidebar = fixture / 'assets/downloads/niri-sidebar/v0.4.0/niri-sidebar-linux-x86_64'
+dms.parent.mkdir(parents=True)
+sidebar.parent.mkdir(parents=True)
+dms.write_bytes(gzip.compress(b'#!/usr/bin/env bash\nexit 0\n'))
+sidebar.write_bytes(b'fixture sidebar')
+dms_sha = hashlib.sha256(dms.read_bytes()).hexdigest()
+sidebar_sha = hashlib.sha256(sidebar.read_bytes()).hexdigest()
+Path(f'{dms}.sha256').write_text(f'{dms_sha}  dankinstall-amd64.gz\n')
+source = (project / 'install.sh').read_text()
+functions = '\n'.join(re.search(rf'^{name}\(\) \{{\n.*?^\}}', source, re.M | re.S)[0]
+                      for name in ('install_niri_sidebar', 'download_dankinstall'))
+definitions = '''
+set -Eeuo pipefail
+SCRIPT_DIR="$1"
+TEMP_DIR="$2"
+DRY_RUN=false
+TUI_TTY=false
+DMS_VERSION=v1.6.2
+PINNED_DMS_VERSION=v1.6.2
+PINNED_NIRI_SIDEBAR_VERSION=v0.4.0
+PINNED_DMS_SHA256_AMD64="$3"
+PINNED_NIRI_SIDEBAR_SHA256_AMD64="$4"
+ensure_temp_dir() { mkdir -p "$TEMP_DIR"; }
+info() { :; }
+warn() { :; }
+die() { printf '%s\\n' "$*" >&2; exit 1; }
+tui_spin_start() { :; }
+tui_spin_stop() { :; }
+sudo() { :; }
+curl() { printf 'unexpected network request\\n' >&2; return 99; }
+'''
+def cached(action):
+    return subprocess.run(['bash', '-c', definitions + functions + '\n' + action, '_',
+                           str(fixture), str(work / 'download'), dms_sha, sidebar_sha],
+                          capture_output=True, text=True, timeout=10)
+
+r = cached('install_niri_sidebar; download_dankinstall; test -x "$DANKINSTALL_PATH"')
+check(r.returncode == 0, '随包 sidebar 与 DMS 安装器完成校验解压，全程不请求网络')
+sidebar.write_bytes(b'bad sidebar')
+r = cached('install_niri_sidebar')
+check(r.returncode != 0 and 'checksum mismatch' in r.stderr, '拒绝损坏的 sidebar 缓存')
+dms.write_bytes(b'bad DMS')
+r = cached('download_dankinstall')
+check(r.returncode != 0 and 'checksum mismatch' in r.stderr, '拒绝损坏的 DMS 缓存')
+print(f'\n{checks} 项下载检查通过。')
+PY
+    exit 0
+fi
+
 SANDBOX_HOME="$WORK_DIR/home"
 FAKE_ROOT="$WORK_DIR/root"
 STUB_BIN="$WORK_DIR/bin"

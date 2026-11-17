@@ -19,13 +19,17 @@ AI 编程助手作为**独立的一层**：启动、提问、续接、崩溃/OOM
 
 前提：已安装 CachyOS、使用可 `sudo` 的普通用户、联网、`x86_64`；不要在 Live ISO 中运行。
 
-**一键下载并启动安装器**（需要 `curl` 和 `tar`，以普通用户运行）：
+**一键下载并启动安装器**（使用国内下载站，以普通用户运行）：
 
 ```bash
-curl -fLO https://github.com/skynit/CachyOS-Niri-Installer/raw/main/setup.sh && bash setup.sh
+curl -fLo setup.sh http://47.119.120.17/dshx/niri/setup.sh && test -s setup.sh && bash setup.sh
 ```
 
-根目录的 [setup.sh](setup.sh) 负责下载完整安装包并启动安装器，显示计划并等待确认；可用 `bash setup.sh --dry-run` 预览安装计划。
+根目录的 [setup.sh](setup.sh) 下载并校验完整安装包后启动安装器，显示计划并等待确认；可用 `bash setup.sh --dry-run` 预览安装计划，不需要预装 Niri。需要 `curl`、`tar` 和 `sha256sum`。
+
+国内安装包包含固定版本的 DMS 官方安装器与 niri-sidebar，两者仍校验原有的 SHA-256。系统软件包继续使用本机 CachyOS 软件源；AUR（社区维护的软件构建脚本库）及其上游下载仍需联网，当前入口不提供通用代理。IP 下载入口目前使用 HTTP。
+
+维护者可运行 `bash tools/build-download-bundle.sh /tmp/cachyos-download`，从当前已提交版本生成 `setup.sh`、版本化安装包和 `SHA256SUMS`，再上传至下载站；发布时先上传安装包，最后更新清单。可通过 `CACHYOS_DOWNLOAD_BASE` 指定其他下载站地址。
 
 已下载仓库时，可在仓库目录中运行：
 
