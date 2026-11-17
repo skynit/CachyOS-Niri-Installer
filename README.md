@@ -22,10 +22,10 @@ AI 编程助手作为**独立的一层**：启动、提问、续接、崩溃/OOM
 **一键下载并启动安装器**（需要 `curl` 和 `tar`，以普通用户运行）：
 
 ```bash
-bash -c 'set -euo pipefail; setup_dir=$(mktemp -d); curl --fail --location --retry 3 https://github.com/skynit/CachyOS-Niri-Installer/archive/refs/heads/main.tar.gz | tar -xz --strip-components=1 -C "$setup_dir"; bash "$setup_dir/install.sh"'
+curl -fLO https://github.com/skynit/CachyOS-Niri-Installer/raw/main/setup.sh && bash setup.sh
 ```
 
-命令将 `main` 分支的完整安装包（含插件与预编译辅助程序）下载并解压到临时目录，再启动安装器，显示计划并等待确认。
+根目录的 [setup.sh](setup.sh) 负责下载完整安装包并启动安装器，显示计划并等待确认；可用 `bash setup.sh --dry-run` 预览安装计划。
 
 已下载仓库时，可在仓库目录中运行：
 
