@@ -492,8 +492,8 @@ dms_plugin_runtime_files() {
     local source_dir="$SCRIPT_DIR/assets/dms-plugins/$1"
 
     find "$source_dir" -maxdepth 3 -type f \
-        \( -name '*.qml' -o -name '*.js' -o -name 'plugin.json' -o -name 'README.md' \
-           -o -path '*/tests/*' -o -path '*/data/*' \) \
+        \( \( ! -path '*/tests/*' \( -name '*.qml' -o -name '*.js' -o -name 'plugin.json' -o -name 'README.md' -o -name 'qmldir' \) \) \
+           -o -path '*/tests/*.cjs' -o -path '*/data/*' -o -path '*/icons/*' \) \
         -printf '%P\n' | sort
 }
 
@@ -503,12 +503,12 @@ check_dms_plugin_stack() {
     local plugin_root="$HOME/.config/DankMaterialShell/plugins"
     local settings_file="$HOME/.config/DankMaterialShell/settings.json"
     local plugin_settings="$HOME/.config/DankMaterialShell/plugin_settings.json"
-    local asset index source_name target_name plugin_id plugin_enabled dms_version
+    local asset index source_name target_name plugin_id plugin_enabled dms_version entry runtime
     local bar_configured=false
-    local -a plugin_sources=(CachyosAgents LocalStatus LocalTranslate LocalLyrics PhoneConnect Focus Top)
-    local -a plugin_targets=(CachyosAgents LocalStatus localTranslate localLyrics PhoneConnect Focus Top)
-    local -a plugin_ids=(cachyosAgents localStatus localTranslate localLyrics phoneConnect focus top)
-    local -a plugin_types=(widget widget widget widget widget widget daemon)
+    local -a plugin_sources=(CachyosAgents LocalStatus LocalTranslate LocalLyrics PhoneConnect Focus Top DesktopSettings TodoCalendar)
+    local -a plugin_targets=(CachyosAgents LocalStatus localTranslate localLyrics PhoneConnect Focus Top DesktopSettings TodoCalendar)
+    local -a plugin_ids=(cachyosAgents localStatus localTranslate localLyrics phoneConnect focus top desktopSettings todoCalendar)
+    local -a plugin_types=(widget widget widget widget widget widget daemon widget widget)
 
     check_command cachyos-ai-settings
     check_file "$share_dir/assets/lib/ai-settings.sh"
@@ -527,13 +527,30 @@ check_dms_plugin_stack() {
         else
             fail "shipped DMS plugin directory is missing: assets/dms-plugins/$source_name"
         fi
+        if [[ -f "$plugin_root/$target_name/plugin.json" ]]; then
+            while IFS= read -r entry; do
+                check_file "$plugin_root/$target_name/${entry#./}"
+            done < <(jq -r '[.component, .settings, (.components // {} | .[])] | .[] | select(type == "string")' \
+                "$plugin_root/$target_name/plugin.json")
+        fi
     done
+    if [[ -f "$plugin_root/TodoCalendar/plugin.json" ]]; then
+        entry="$(jq -r '.components.daemon // empty' "$plugin_root/TodoCalendar/plugin.json")"
+        runtime="${entry%/*}"
+        if [[ -n "$entry" && -x "$plugin_root/TodoCalendar/$runtime/todo-calendar-helper" ]]; then
+            pass "TodoCalendar runtime helper is executable"
+        else
+            fail "TodoCalendar runtime helper is missing or not executable"
+        fi
+    fi
     check_file "$share_dir/assets/dms/add-dms-bar-widgets.jq"
     check_file "$share_dir/assets/dms/enable-dms-plugin.jq"
 
     # Go helper 二进制钉在插件目录里（QML 用 Qt.resolvedUrl 找它），缺了插件点开就报错。
-    for asset in localTranslate/translate-lookup localLyrics/lyrics-helper \
-                 PhoneConnect/phone-connect Focus/focus-helper Top/top-helper; do
+    for asset in CachyosAgents/ai-settings CachyosAgents/usage-json \
+                 localTranslate/translate-lookup localLyrics/lyrics-helper \
+                 PhoneConnect/phone-connect Focus/focus-helper Top/top-helper \
+                 DesktopSettings/desktop-settings-helper TodoCalendar/todo-calendar-helper; do
         if [[ -x "$plugin_root/$asset" ]]; then
             pass "DMS plugin helper is executable: $asset"
         else

@@ -21,13 +21,17 @@ type rdpRequest struct {
 	Operation         string `json:"operation"`
 	SavePassword      bool   `json:"savePassword"`
 	Scale             string `json:"scale"`
+	Encoding          string `json:"encoding"`
+	Wallpaper         bool   `json:"wallpaper"`
+	WindowDrag        bool   `json:"windowDrag"`
+	MenuAnimations    bool   `json:"menuAnimations"`
 	DynamicResolution bool   `json:"dynamicResolution"`
 	IgnoreCertificate bool   `json:"ignoreCertificate"`
 	Debug             bool   `json:"debug"`
 }
 
 func rdpArguments(r rdpRequest) ([]string, error) {
-	for _, value := range []string{r.Host, r.Port, r.User, r.Domain, r.Password, r.Scale} {
+	for _, value := range []string{r.Host, r.Port, r.User, r.Domain, r.Password, r.Scale, r.Encoding} {
 		if strings.ContainsAny(value, "\r\n\x00") {
 			return nil, errors.New("RDP 字段不能包含换行或 NUL 字符")
 		}
@@ -45,7 +49,36 @@ func rdpArguments(r rdpRequest) ([]string, error) {
 	default:
 		return nil, errors.New("RDP 缩放比例只能是 100、140 或 180")
 	}
-	args := []string{"/v:" + target, "/u:" + r.User, "/p:" + r.Password, "/scale:" + scale}
+	var graphics string
+	switch first(r.Encoding, "avc420") {
+	case "avc420":
+		graphics = "/gfx:AVC420"
+	case "avc444":
+		graphics = "/gfx:AVC444"
+	case "auto":
+	default:
+		return nil, errors.New("画面编码只能选择流畅、清晰或自动协商")
+	}
+	// /network:auto resets the codec and visual effects; keep network detection at its default.
+	args := []string{"/v:" + target, "/u:" + r.User, "/p:" + r.Password, "/scale:" + scale,
+		"+auto-reconnect", "/auto-reconnect-max-retries:20"}
+	if graphics != "" {
+		args = append(args, graphics)
+	}
+	for _, option := range []struct {
+		name    string
+		enabled bool
+	}{
+		{"wallpaper", r.Wallpaper},
+		{"window-drag", r.WindowDrag},
+		{"menu-anims", r.MenuAnimations},
+	} {
+		prefix := "-"
+		if option.enabled {
+			prefix = "+"
+		}
+		args = append(args, prefix+option.name)
+	}
 	if r.Domain != "" {
 		args = append(args, "/d:"+r.Domain)
 	}
@@ -57,6 +90,8 @@ func rdpArguments(r rdpRequest) ([]string, error) {
 	}
 	if r.Debug {
 		args = append(args, "/log-level:DEBUG")
+	} else {
+		args = append(args, "/log-level:WARN")
 	}
 	return args, nil
 }
@@ -107,6 +142,20 @@ func rdpMain() int {
 		response["message"] = "RDP 请求格式无效"
 		json.NewEncoder(os.Stdout).Encode(response)
 		return 1
+	}
+	if r.Password == "" {
+		lookup := r
+		lookup.Operation = "load"
+		saved, err := rdpPassword(lookup)
+		if err != nil {
+			response["message"] = err.Error()
+			json.NewEncoder(os.Stdout).Encode(response)
+			return 1
+		}
+		if saved["found"] == true {
+			r.Password, _ = saved["password"].(string)
+			r.SavePassword = false
+		}
 	}
 	if r.SavePassword && r.Password != "" {
 		save := r

@@ -24,6 +24,8 @@ source "$SCRIPT_DIR/packages.sh"
 # 再决定是否设置默认 agent。放在这里是为了不在安装器里复制一份映射。
 # shellcheck source=assets/lib/agent.sh
 source "$SCRIPT_DIR/assets/lib/agent.sh"
+# shellcheck source=assets/lib/dms-plugins.sh
+source "$SCRIPT_DIR/assets/lib/dms-plugins.sh"
 
 # 终端界面：零依赖（不引入 gum/dialog），在真终端里画框、上色、显示进度；
 # 只要输出不是终端（管道、重定向到日志、CI）就自动退化成纯文本——verify.sh 与 tests/
@@ -185,7 +187,8 @@ preflight() {
         require_command "$command_name"
     done
     for helper in cachyos-ai-settings cachyos-usage-json \
-                  translate-lookup lyrics-helper phone-connect focus-helper top-helper; do
+                  translate-lookup lyrics-helper phone-connect focus-helper top-helper \
+                  desktop-settings-helper todo-calendar-helper; do
         [[ -x "$SCRIPT_DIR/assets/go-bin/$helper" ]] || die "missing Go helper $helper; run tools/build-go-helpers.sh before installing"
     done
 
@@ -715,6 +718,8 @@ readonly -a DMS_PLUGIN_IDS=(
     phoneConnect
     focus
     top
+    desktopSettings
+    todoCalendar
 )
 
 # Go helper 的二进制由 assets/go-bin/ 提供（tools/build-go-helpers.sh 构建）。它们刻意
@@ -727,7 +732,7 @@ install_dms_plugin_assets() {
     local asset
 
     run install -d -m 0755 "$target_dir"
-    for asset in "$source_dir"/*.qml "$source_dir"/*.js "$source_dir"/plugin.json "$source_dir"/README.md; do
+    for asset in "$source_dir"/*.qml "$source_dir"/*.js "$source_dir"/plugin.json "$source_dir"/README.md "$source_dir"/qmldir; do
         [[ -f "$asset" ]] || continue
         run install -m 0644 "$asset" "$target_dir/${asset##*/}"
     done
@@ -747,7 +752,7 @@ install_dms_plugin_tests() {
     done
 }
 
-# 复制插件内的子目录（目前只有 LocalTranslate 的 data/：内置 CC-CEDICT 词典）。
+# 复制插件运行时需要的子目录：词典、图标与独立组件。
 # install -D 负责建父目录，这样新增数据文件时不用改安装器。
 install_dms_plugin_subtree() {
     local source_name="$1"
@@ -809,9 +814,9 @@ enable_dms_plugin() {
 # 插件控件的栏会把用户的默认顶栏（启动器/时钟/系统托盘…）整个换掉。那种情况下控件不显示，
 # 由用户在 设置 → 状态栏 里自己加，比毁掉布局好。
 # 只有这些插件有状态栏控件；Top 是纯悬浮面板（daemon-only），不参与栏接线。
-readonly -a DMS_BAR_WIDGET_IDS=(cachyosAgents localStatus localTranslate localLyrics phoneConnect focus)
+readonly -a DMS_BAR_WIDGET_IDS=(cachyosAgents localStatus localTranslate localLyrics phoneConnect focus desktopSettings todoCalendar)
 
-DMS_BAR_WIDGETS='{"left":["localTranslate","phoneConnect","focus","localLyrics"],"right":["cachyosAgents","localStatus"]}'
+DMS_BAR_WIDGETS='{"left":["localTranslate","phoneConnect","focus","localLyrics"],"right":["cachyosAgents","localStatus","todoCalendar","desktopSettings"]}'
 
 wire_dms_plugin_bar() {
     local settings_file="$HOME/.config/DankMaterialShell/settings.json"
@@ -875,12 +880,20 @@ install_dms_plugins() {
     install_dms_plugin_assets Top Top
     install_dms_plugin_subtree Top Top components
 
+    install_dms_plugin_assets DesktopSettings DesktopSettings
+    install_dms_plugin_subtree DesktopSettings DesktopSettings icons
+
+    install_dms_plugin_assets TodoCalendar TodoCalendar
+    install_dms_plugin_tests TodoCalendar TodoCalendar
+    run refresh_calendar_runtime "$plugin_root/TodoCalendar"
+
     # helper 二进制由 install_desktop_assets → tools/install-go-helpers.sh 安装；这里只
     # 确认在位，避免"插件装了但一点就报错"。
     if [[ "$DRY_RUN" == false ]]; then
         for helper in CachyosAgents/ai-settings CachyosAgents/usage-json \
                       localTranslate/translate-lookup localLyrics/lyrics-helper \
-                      PhoneConnect/phone-connect Focus/focus-helper Top/top-helper; do
+                      PhoneConnect/phone-connect Focus/focus-helper Top/top-helper \
+                      DesktopSettings/desktop-settings-helper TodoCalendar/todo-calendar-helper; do
             [[ -x "$plugin_root/$helper" ]] || warn "DMS plugin helper is missing: $plugin_root/$helper"
         done
     fi

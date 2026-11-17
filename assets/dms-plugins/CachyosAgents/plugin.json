@@ -1,6 +1,6 @@
 {
   "id": "cachyosAgents",
-  "name": "AI 集成",
+  "name": "AI 模块",
   "description": "系统 AI 设置、提问提示词、崩溃与 OOM 诊断、Agent 用量统计",
   "version": "2.0.0",
   "author": "skynit",
@@ -10,7 +10,7 @@
   ],
   "component": "./CachyosAgents.qml",
   "settings": "./CachyosAgentsSettings.qml",
-  "icon": "smart_toy",
+  "icon": "auto_awesome",
   "requires_dms": ">=1.5.3",
   "dependencies": [
     "python3"

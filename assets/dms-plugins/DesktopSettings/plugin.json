@@ -1,0 +1,15 @@
+{
+  "id": "desktopSettings",
+  "name": "桌面设置",
+  "description": "可视化配置输入、显示器、窗口、DMS 外观、电源策略与 CachyOS 配置保护",
+  "version": "0.2.0",
+  "author": "skynit",
+  "type": "widget",
+  "capabilities": ["dankbar-widget", "daemon"],
+  "components": {"widget": "./DesktopWidget.qml", "daemon": "./DesktopSettings.qml"},
+  "settings": "./DesktopOptions.qml",
+  "icon": "tune",
+  "requires_dms": ">=1.6.2",
+  "dependencies": ["niri", "dms", "systemd-run"],
+  "permissions": ["process", "settings_read", "settings_write"]
+}

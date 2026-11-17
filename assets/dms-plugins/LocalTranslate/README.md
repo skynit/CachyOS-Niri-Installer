@@ -1,6 +1,6 @@
 # LocalTranslate 离线翻译
 
-为 **DankMaterialShell（DMS）** 提供中文、英文双向离线查词。点击状态栏中的“翻译”，输入词条或短语即可查询；自带 **125,061 条 CC-CEDICT 记录**，无需 API Key、账号、网络或模型下载。
+为 **DankMaterialShell（DMS）** 提供中文、英文双向离线查词。点击状态栏中的翻译图标，输入词条或短语即可查询；自带 **125,061 条 CC-CEDICT 记录**，无需 API Key、账号、网络或模型下载。
 
 这是词典查询工具：**只返回词库收录的词条与短语，不进行任意整句翻译**。英文释义反查可能返回多个中文候选，请结合释义选择。
 
@@ -32,8 +32,10 @@
 - **前缀建议**：没有精确匹配时，最多显示 8 个同前缀建议，点击即可查询。
 - **自动或手动查询**：默认输入停顿 300ms 后查询；可关闭自动查询，改用 Enter 或“查询”按钮。中文输入法组词时暂停自动查询。
 - **多候选释义**：最多显示 20 条结果，超出时明确提示；结果区支持滚动。
-- **明确复制/粘贴**：点击“复制”复制该项译文；“粘贴”从当前剪贴板插入输入框。“清空”同时清除输入与结果。
+- **明确复制/粘贴**：点击复制图标复制该项译文；“粘贴”从当前剪贴板插入输入框。“清空”同时清除输入与结果。
 - **键盘操作**：Tab/Shift+Tab 切换控件，Enter 查询，Enter/Space 激活按钮；结果区支持方向键与 PageUp/PageDown 滚动；实际 DMS 弹窗由 Esc 关闭。
+- **紧凑弹窗**：默认宽 420px，标题和语言方向在同一行；输入框高 36px，操作按钮高 28px。弹窗随内容收紧，空态与未收录提示不预留空白；结果较多时最高 420px 并在结果区滚动，屏幕可用高度更小时继续收紧。
+- **状态栏入口**：横向和纵向都只显示翻译图标，悬停提示“离线翻译”，保留键盘焦点与可访问名称。
 - **原生主题**：使用 DMS 的颜色、字体、按钮与状态栏组件，支持横向和纵向状态栏。
 
 ## 安装与放置
@@ -61,7 +63,7 @@ cd /path/to/dms-plugins/LocalTranslate
 plugin_dir="${XDG_CONFIG_HOME:-$HOME/.config}/DankMaterialShell/plugins/localTranslate"
 mkdir -p "$plugin_dir"
 cp -a LocalTranslate.qml TranslatePopout.qml TranslateSettings.qml Lookup.qml plugin.json data "$plugin_dir/"
-GOAMD64=v1 CGO_ENABLED=0 go build -o "$plugin_dir/translate-lookup" .
+GOAMD64=v1 GOAMD64=v1 CGO_ENABLED=0 go build -o "$plugin_dir/translate-lookup" .
 dms ipc call plugin-scan scan
 ```
 
@@ -95,7 +97,6 @@ dms ipc call plugins list
 | 项目 | 默认值 | 作用 |
 | --- | --- | --- |
 | 默认翻译方向 | 自动识别 | 弹窗的初始查询方向 |
-| 在状态栏显示“翻译”文字 | 开启 | 横向栏显示图标和文字，关闭后仅显示图标 |
 | 显示拼音 | 开启 | 结果中展示上游的数字声调拼音 |
 | 输入后自动查询 | 开启 | 输入停顿后查询；关闭后按 Enter 或点击查询 |
 
@@ -168,7 +169,7 @@ python3 -m unittest discover -s tests -v
 
 构建器会生成临时数据库，完成后替换 `dictionary.sqlite3` 并更新 `manifest.json`。运行构建器不会下载词库。更新快照时，请同步本页数量、日期、署名说明及安装目录中的数据。
 
-本机还通过临时 QA 组件在 DMS 1.6.1 中加载了真实状态栏入口、弹窗与设置页，检查了自动/手动查询、连续输入、清空、建议、未收录状态和 400px 布局。截图由真实组件生成。中文 IME 的实体键盘输入、系统剪贴板及读屏器未自动化端到端测试。
+本机通过临时验收组件在 DMS 1.6.3 中加载真实弹窗，用本机词库检查了自动/手动查询、连续输入、清空、建议、未收录与错误重试，以及 420px 与 360px 宽度和 300px 可用高度。复制与粘贴在离屏测试的独立剪贴板中验证；中文 IME 的实体键盘输入、桌面系统剪贴板及读屏器未自动化端到端测试。历史截图仅供功能参考，最新布局以紧凑弹窗说明为准。
 
 ## 词库许可
 

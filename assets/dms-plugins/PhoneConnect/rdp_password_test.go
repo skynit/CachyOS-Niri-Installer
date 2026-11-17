@@ -70,7 +70,6 @@ item="$RDP_FAKE_KEYRING/$key"
 case "$operation" in
     store) /bin/cat > "$item" ;;
     lookup) [ -f "$item" ] || exit 1; /bin/cat "$item"; printf '\n' ;;
-    clear) [ -f "$item" ] || exit 1; /bin/rm "$item" ;;
     *) exit 25 ;;
 esac
 `)
@@ -103,16 +102,7 @@ esac
 			t.Fatalf("lookup crossed profile field %s", field)
 		}
 	}
-	r.Operation = "clear"
-	response, err = rdpPasswordCLI(t, "rdp-password", r)
-	if err != nil || response["ok"] != true || response["message"] == "" {
-		t.Fatalf("clear failed: %v, %v", response, err)
-	}
-	r.Operation = "load"
-	response, err = rdpPassword(r)
-	if err != nil || response["found"] != false {
-		t.Fatal("cleared profile still returned a password")
-	}
+
 }
 
 func TestRDPPasswordErrors(t *testing.T) {
@@ -123,8 +113,6 @@ func TestRDPPasswordErrors(t *testing.T) {
 		{name: "no match", operation: "load", script: "exit 1\n", missing: true},
 		{name: "lookup failure", operation: "load", script: "echo 'fake secret in raw error' >&2\nexit 1\n", message: "无法读取"},
 		{name: "store failure", operation: "save", script: "echo 'fake secret in raw error' >&2\nexit 2\n", message: "无法保存"},
-		{name: "clear failure", operation: "clear", script: "echo 'fake secret in raw error' >&2\nexit 2\n", message: "无法清除"},
-		{name: "clear absent", operation: "clear", script: "exit 1\n", message: "未找到"},
 		{name: "missing tool", operation: "load", message: "找不到 secret-tool"},
 		{name: "timeout", operation: "load", script: "exec /bin/sleep 30\n", message: "超时"},
 	} {
@@ -153,6 +141,7 @@ func TestRDPPasswordErrors(t *testing.T) {
 	for _, r := range []rdpRequest{
 		{Host: "rdp.test", User: "alice", Password: "fake\nsecret", Operation: "save"},
 		{Host: "rdp.test", User: "alice", Operation: "invalid"},
+		{Host: "rdp.test", User: "alice", Operation: "clear"},
 		{Host: "rdp.test", User: " ", Operation: "load"},
 	} {
 		if _, err := rdpPassword(r); err == nil {
@@ -193,6 +182,41 @@ func TestRDPPasswordLaunch(t *testing.T) {
 				}
 			} else if response["passwordSaved"] != nil || response["passwordWarning"] == nil || strings.Contains(response["passwordWarning"].(string), "fake password") {
 				t.Fatalf("missing safe warning: %v", response)
+			}
+		})
+	}
+}
+
+func TestRDPPasswordAutoLoad(t *testing.T) {
+	for _, sample := range []struct {
+		name, script, expected string
+		ok                     bool
+	}{
+		{"saved password", "printf 'stored secret\\n'\n", "/p:stored secret", true},
+		{"no saved password", "exit 1\n", "/p:", true},
+		{"locked keyring", "echo locked >&2\nexit 2\n", "", false},
+	} {
+		t.Run(sample.name, func(t *testing.T) {
+			dir := fakeRDPSecretTool(t, sample.script)
+			t.Setenv("XDG_STATE_HOME", dir)
+			client := "#!/bin/sh\n/bin/cat > \"$RDP_FAKE_KEYRING/launch-args\"\n/bin/sleep 1\n"
+			if err := os.WriteFile(filepath.Join(dir, "xfreerdp3"), []byte(client), 0700); err != nil {
+				t.Fatal(err)
+			}
+			response, err := rdpPasswordCLI(t, "rdp", rdpRequest{Host: "rdp.test", User: "alice", SavePassword: true})
+			if (err == nil) != sample.ok || response["ok"] != sample.ok {
+				t.Fatalf("launch outcome = %v, %v", response, err)
+			}
+			args, readErr := os.ReadFile(filepath.Join(dir, "launch-args"))
+			if sample.ok {
+				if readErr != nil || !strings.Contains(string(args), sample.expected+"\n") {
+					t.Fatal("launch did not use the saved credential")
+				}
+			} else if !os.IsNotExist(readErr) {
+				t.Fatal("client started after failed keyring lookup")
+			}
+			if strings.Contains(response["message"].(string), "stored secret") {
+				t.Fatal("response exposed saved password")
 			}
 		})
 	}

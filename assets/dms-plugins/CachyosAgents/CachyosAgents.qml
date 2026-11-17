@@ -27,7 +27,7 @@ PluginComponent {
             implicitHeight: root.widgetThickness
             activeFocusOnTab: true
             Accessible.role: Accessible.Button
-            Accessible.name: "AI 集成：" + root.label
+            Accessible.name: "AI 模块：" + root.label
             Accessible.onPressAction: root.triggerPopout()
             Keys.onReturnPressed: root.triggerPopout()
             Keys.onSpacePressed: root.triggerPopout()
@@ -61,7 +61,7 @@ PluginComponent {
             implicitHeight: Math.max(16, vcontent.implicitHeight + 10)
             activeFocusOnTab: true
             Accessible.role: Accessible.Button
-            Accessible.name: "AI 集成：" + root.label
+            Accessible.name: "AI 模块：" + root.label
             Accessible.onPressAction: root.triggerPopout()
             Keys.onReturnPressed: root.triggerPopout()
             Keys.onSpacePressed: root.triggerPopout()
@@ -89,7 +89,7 @@ PluginComponent {
     readonly property real screenWidth: parentScreen && parentScreen.width ? parentScreen.width : 960
     readonly property real screenHeight: parentScreen && parentScreen.height ? parentScreen.height : 800
 
-    popoutWidth: Math.min(560, root.screenWidth - 48)
+    popoutWidth: Math.min(420, root.screenWidth - 48)
     popoutContent: Component {
         IntegrationDetails {
             source: sampler

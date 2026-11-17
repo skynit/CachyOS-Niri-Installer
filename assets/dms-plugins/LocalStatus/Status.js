@@ -4,10 +4,10 @@ var fields = [
     { id: "wifi", label: "无线网络", short: "Wi-Fi", icon: "wifi", baseline: "未连接" },
     { id: "cpu", label: "CPU 使用率", short: "CPU", icon: "memory", baseline: "100.0%" },
     { id: "load", label: "系统负载", short: "负载", icon: "monitoring", baseline: "888.88" },
-    { id: "ram", label: "内存", short: "RAM", icon: "developer_board", baseline: "888.8 GiB" },
-    { id: "swap", label: "Swap", short: "Swap", icon: "swap_horiz", baseline: "888.8 GiB" },
-    { id: "disk", label: "磁盘剩余空间", short: "磁盘", icon: "hard_drive", baseline: "8888.8 GiB" },
-    { id: "time", label: "时间", short: "", icon: "schedule", baseline: "88:88:88" }
+    { id: "ram", label: "内存（已用）", short: "内存", icon: "developer_board", baseline: "888.8 GiB" },
+    { id: "swap", label: "Swap（已用）", short: "Swap", icon: "swap_horiz", baseline: "888.8 GiB" },
+    { id: "disk", label: "磁盘（可用）", short: "磁盘", icon: "hard_drive", baseline: "8888.8 GiB" },
+    { id: "netspeed", label: "网速", short: "网速", icon: "speed", baseline: "↓888.8 MB/s", defaultEnabled: false }
 ];
 
 function valid(value) {
@@ -59,6 +59,42 @@ function address(iface) {
     return result ? result.local : "";
 }
 
+function selectInterfaces(interfaces, settings, wifiDetected, lanDetected) {
+    var wifi = chooseInterface(interfaces, "wifi", settings.wifiInterface, wifiDetected);
+    var lan = chooseInterface(interfaces, "lan", settings.lanInterface, lanDetected);
+    var selected = settings.ipSource === "wifi" ? wifi : settings.ipSource === "lan" ? lan : address(lan) ? lan : wifi;
+    return { wifi: wifi, lan: lan, selected: selected };
+}
+
+function parseNetDev(text, ifname) {
+    if (!ifname)
+        return null;
+    var lines = String(text || "").split(/\r?\n/);
+    for (var i = 0; i < lines.length; i++) {
+        var colon = lines[i].indexOf(":");
+        if (colon < 0 || lines[i].slice(0, colon).trim() !== ifname)
+            continue;
+        var fields = lines[i].slice(colon + 1).trim().split(/\s+/).map(Number);
+        if (fields.length < 9 || !valid(fields[0]) || !valid(fields[8]))
+            return null;
+        return { rxBytes: fields[0], txBytes: fields[8] };
+    }
+    return null;
+}
+
+function speedText(bytesPerSecond) {
+    if (!valid(bytesPerSecond))
+        return "--";
+    var units = ["B/s", "KB/s", "MB/s", "GB/s", "TB/s"];
+    var value = bytesPerSecond;
+    var unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit++;
+    }
+    return unit === 0 ? Math.round(value) + " B/s" : value.toFixed(1) + " " + units[unit];
+}
+
 function link(iface) {
     if (!iface)
         return { value: "无设备", detail: "未找到指定类型的网卡", state: "unsupported", reason: "device_not_found", tone: "muted", percent: null };
@@ -77,11 +113,12 @@ function link(iface) {
 
 function readings(data, settings) {
     var values = {};
-    var wifi = chooseInterface(data.interfaces, "wifi", settings.wifiInterface, data.wifiInterface);
-    var lan = chooseInterface(data.interfaces, "lan", settings.lanInterface, data.lanInterface);
+    var selectedInterfaces = selectInterfaces(data.interfaces, settings, data.wifiInterface, data.lanInterface);
+    var wifi = selectedInterfaces.wifi;
+    var lan = selectedInterfaces.lan;
     values.wifi = data.networkError || link(wifi);
     values.lan = data.networkError || link(lan);
-    var selected = settings.ipSource === "wifi" ? wifi : settings.ipSource === "lan" ? lan : address(lan) ? lan : wifi;
+    var selected = selectedInterfaces.selected;
     var ip = address(selected);
     values.ip = data.networkError || (ip ? fact(ip, selected.ifname + " · IPv4") : missing("degraded", "ipv4_unavailable", "当前网卡没有可用的 IPv4 地址"));
 
@@ -97,6 +134,44 @@ function readings(data, settings) {
     var size = mount ? capacity(mount.size) : null;
     var used = mount ? Number(String(mount.percent).replace("%", "")) : null;
     values.disk = waiting || (!mount ? missing("unsupported", "mount_not_found", "未找到挂载点 " + (settings.mount || "/")) : available === null || size === null || !valid(used) || used > 100 ? missing("degraded", "disk_missing", "磁盘数据不完整") : fact(gib(available / 1024), mount.mount + " · 可用 " + gib(available / 1024) + " / " + gib(size / 1024) + " · 已用 " + used + "%", used));
-    values.time = fact(data.time, data.date + " · 本机时间");
+    var speedData = data.speed || {};
+    var speedInterface = speedData.interfaceName || "";
+    values.netspeed = data.networkError || data.speedError || (valid(speedData.rxRate) && valid(speedData.txRate) ? fact("↓ " + speedText(speedData.rxRate), (speedInterface ? speedInterface + " · " : "") + "↓ " + speedText(speedData.rxRate) + " · ↑ " + speedText(speedData.txRate)) : missing("degraded", "network_speed_missing", "网速数据不完整"));
+
+    // 明细直接使用同一次采样的字段，不从展示文案反向解析容量或网速。
+    // 先复制 reading：过期时多个指标会引用同一个错误对象，不能向它写入各自明细。
+    Object.keys(values).forEach(function (id) {
+        values[id] = Object.assign({}, values[id], { details: [] });
+    });
+    if (!data.networkError) {
+        if (selected && values.ip.state === "healthy")
+            values.ip.details = [{ label: "接口", value: selected.ifname }, { label: "地址类型", value: "IPv4" }];
+        ["lan", "wifi"].forEach(function (id) {
+            var iface = id === "lan" ? lan : wifi;
+            if (iface)
+                values[id].details = [{ label: "接口", value: iface.ifname }, { label: "IPv4", value: address(iface) || "无可用地址" }];
+        });
+    }
+    if (values.cpu.state === "healthy") {
+        if (typeof stats.cpuModel === "string" && stats.cpuModel.length > 0)
+            values.cpu.details.push({ label: "处理器", value: stats.cpuModel });
+        if (valid(stats.cpuCores) && stats.cpuCores > 0)
+            values.cpu.details.push({ label: "逻辑核心", value: String(stats.cpuCores) });
+    }
+    if (values.ram.state === "healthy")
+        values.ram.details = [{ label: "总容量", value: gib(stats.memoryTotal) }, { label: "已使用", value: gib(stats.memoryUsed) }];
+    if (values.swap.state === "healthy")
+        values.swap.details = [{ label: "总容量", value: gib(stats.swapTotal) }, { label: "已使用", value: gib(stats.swapUsed) }];
+    if (values.disk.state === "healthy")
+        values.disk.details = [{ label: "挂载点", value: mount.mount }, { label: "总容量", value: gib(size / 1024) }, { label: "可用容量", value: gib(available / 1024) }];
+    if (values.load.state === "healthy")
+        values.load.details = [1, 5, 15].map(function (minutes, index) {
+            return { label: minutes + " 分钟平均负载", value: loads[index].toFixed(2) };
+        });
+    if (values.netspeed.state === "healthy") {
+        values.netspeed.summary = "↓ " + speedText(speedData.rxRate) + "  ↑ " + speedText(speedData.txRate);
+        values.netspeed.details = [{ label: "接口", value: speedInterface || "未知" },
+            { label: "下载", value: speedText(speedData.rxRate) }, { label: "上传", value: speedText(speedData.txRate) }];
+    }
     return values;
 }

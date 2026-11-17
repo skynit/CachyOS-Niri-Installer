@@ -5,7 +5,8 @@ set -Eeuo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 bin="$root/assets/go-bin"
 for helper in cachyos-ai-settings cachyos-usage-json \
-              translate-lookup lyrics-helper phone-connect focus-helper top-helper; do
+              translate-lookup lyrics-helper phone-connect focus-helper top-helper \
+              desktop-settings-helper todo-calendar-helper; do
     [[ -x "$bin/$helper" ]] || { printf 'Missing %s; run tools/build-go-helpers.sh first\n' "$bin/$helper" >&2; exit 1; }
 done
 
@@ -30,7 +31,9 @@ install -d -m 0755 \
     "$plugin_root/localLyrics" \
     "$plugin_root/PhoneConnect" \
     "$plugin_root/Focus" \
-    "$plugin_root/Top"
+    "$plugin_root/Top" \
+    "$plugin_root/DesktopSettings" \
+    "$plugin_root/TodoCalendar"
 install -m 0755 "$bin/cachyos-ai-settings" "$plugin_root/CachyosAgents/ai-settings"
 install -m 0755 "$bin/cachyos-usage-json" "$plugin_root/CachyosAgents/usage-json"
 install -m 0755 "$bin/translate-lookup" "$plugin_root/localTranslate/translate-lookup"
@@ -38,4 +41,9 @@ install -m 0755 "$bin/lyrics-helper" "$plugin_root/localLyrics/lyrics-helper"
 install -m 0755 "$bin/phone-connect" "$plugin_root/PhoneConnect/phone-connect"
 install -m 0755 "$bin/focus-helper" "$plugin_root/Focus/focus-helper"
 install -m 0755 "$bin/top-helper" "$plugin_root/Top/top-helper"
+install -m 0755 "$bin/desktop-settings-helper" "$plugin_root/DesktopSettings/desktop-settings-helper"
+install -m 0755 "$bin/todo-calendar-helper" "$plugin_root/TodoCalendar/todo-calendar-helper"
+# shellcheck source=assets/lib/dms-plugins.sh
+source "$root/assets/lib/dms-plugins.sh"
+refresh_calendar_runtime "$plugin_root/TodoCalendar"
 printf 'Go helpers installed; previous system commands saved in %s\n' "$backup"

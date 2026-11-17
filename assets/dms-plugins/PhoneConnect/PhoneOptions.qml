@@ -74,7 +74,7 @@ Column {
     RowLayout {
         width: parent.width
         spacing: 8
-        DankTextField {
+        ConnectField {
             id: recordName
             Layout.fillWidth: true
             labelText: "文件名 (.mp4/.mkv)"

@@ -9,7 +9,7 @@
 #   4. 启用插件必须**尊重用户意愿**：他关掉之后再重装，不能又给打开
 #   5. 没有 barConfigs 时什么都不做，而不是凭空造栏
 #
-# 另外逐一核对 7 个随包插件的资产与 config-manifest.tsv 映射：插件文件在包里、但清单
+# 另外逐一核对 9 个随包插件的资产与 config-manifest.tsv 映射：插件文件在包里、但清单
 # 漏登记（或登记错目录）时，`cachyos-config update` 会把用户运行副本刷坏却不报错。
 
 set -euo pipefail
@@ -43,7 +43,7 @@ assert_equal() {
 }
 
 # 安装器实际传给 jq 的参数（与 install.sh 的 DMS_BAR_WIDGETS 一致）。
-readonly INSTALLER_WIDGETS='{"left":["localTranslate","phoneConnect","focus","localLyrics"],"right":["cachyosAgents","localStatus"]}'
+readonly INSTALLER_WIDGETS='{"left":["localTranslate","phoneConnect","focus","localLyrics"],"right":["cachyosAgents","localStatus","todoCalendar","desktopSettings"]}'
 
 add_widgets() {
     local widgets="$1"
@@ -115,7 +115,7 @@ assert_equal '0' "$(jq '.barConfigs | length' "$WORK_DIR/empty-array-out.json")"
 assert_equal "$(semantic_hash "$WORK_DIR/empty-array.json")" "$(semantic_hash "$WORK_DIR/empty-array-out.json")" \
     '空的 barConfigs 数组：语义完全不变'
 
-# ---- DMS 默认栏形状：所有默认控件都要保留，6 个插件按参数顺序落位 --------------
+# ---- DMS 默认栏形状：所有默认控件都要保留，8 个插件按参数顺序落位 --------------
 # 这是全新机器最可能出现的形状。曾经的真 bug：非空分支没问题，但空分支会毁掉默认栏。
 default_bar="$WORK_DIR/default-bar.json"
 make_default_bar > "$default_bar"
@@ -131,9 +131,9 @@ assert_equal "$DEFAULT_CENTER" "$(side_ids "$WORK_DIR/default-bar-out.json" cent
 assert_equal "$DEFAULT_RIGHT" \
     "$(jq -c '.barConfigs[0].rightWidgets | map(if type == "object" then .id else . end) | .[0:7]' "$WORK_DIR/default-bar-out.json")" \
     '默认栏：右侧原有控件全在（顺序不变）'
-assert_equal '["systemTray","clipboard","cpuUsage","memUsage","notificationButton","battery","controlCenterButton","cachyosAgents","localStatus"]' \
+assert_equal '["systemTray","clipboard","cpuUsage","memUsage","notificationButton","battery","controlCenterButton","cachyosAgents","localStatus","todoCalendar","desktopSettings"]' \
     "$(jq -c '.barConfigs[0].rightWidgets | map(if type == "object" then .id else . end)' "$WORK_DIR/default-bar-out.json")" \
-    '默认栏：右侧按参数顺序追加 cachyosAgents→localStatus'
+    '默认栏：右侧按参数顺序追加 cachyosAgents→localStatus→todoCalendar→desktopSettings'
 assert_equal 'true' \
     "$(jq -e '.barConfigs[0].leftWidgets[3:] == [{"id":"localTranslate","enabled":true},{"id":"phoneConnect","enabled":true},{"id":"focus","enabled":true},{"id":"localLyrics","enabled":true}]' "$WORK_DIR/default-bar-out.json")" \
     '默认栏：新控件写成 {id, enabled:true} 对象'
@@ -142,12 +142,12 @@ assert_equal '1' "$(jq -r '.barConfigs[0].position' "$WORK_DIR/default-bar-out.j
 
 # ---- 幂等：同一输入应用两次，输出逐字节相同 -----------------------------------
 add_widgets "$INSTALLER_WIDGETS" "$WORK_DIR/default-bar-out.json" > "$WORK_DIR/default-bar-twice.json"
-assert_equal '6' \
+assert_equal '8' \
     "$(jq '[.barConfigs[0].leftWidgets[], .barConfigs[0].rightWidgets[]
            | if type == "object" then .id else . end
-           | select(. as $id | ["localTranslate","phoneConnect","focus","localLyrics","cachyosAgents","localStatus"] | index($id))] | length' \
+           | select(. as $id | ["localTranslate","phoneConnect","focus","localLyrics","cachyosAgents","localStatus","todoCalendar","desktopSettings"] | index($id))] | length' \
         "$WORK_DIR/default-bar-twice.json")" \
-    '幂等：6 个插件控件各只出现一次'
+    '幂等：8 个插件控件各只出现一次'
 assert_equal "$(md5sum < "$WORK_DIR/default-bar-out.json")" "$(md5sum < "$WORK_DIR/default-bar-twice.json")" \
     '幂等：第二次执行输出与第一次逐字节相同'
 
@@ -163,7 +163,7 @@ jq -n '{currentThemeName: "keep-me", cursorSettings: {size: 42},
                       centerWidgets: [{id: "phoneConnect", enabled: false}],
                       rightWidgets: [{id: "cachyosAgents", enabled: false}]}]}' > "$existing"
 add_widgets "$INSTALLER_WIDGETS" "$existing" > "$WORK_DIR/existing-once.json"
-for id in localTranslate phoneConnect focus localLyrics cachyosAgents localStatus; do
+for id in localTranslate phoneConnect focus localLyrics cachyosAgents localStatus todoCalendar desktopSettings; do
     assert_equal '1' "$(id_count "$WORK_DIR/existing-once.json" "$id")" "已有布局：$id 只出现一次"
 done
 assert_equal '["localTranslate",{"id":"focus","enabled":false},{"id":"localLyrics","enabled":true}]' \
@@ -172,9 +172,9 @@ assert_equal '["localTranslate",{"id":"focus","enabled":false},{"id":"localLyric
 assert_equal '[{"id":"phoneConnect","enabled":false}]' \
     "$(jq -c '.barConfigs[0].centerWidgets' "$WORK_DIR/existing-once.json")" \
     '已有布局：别的栏里的控件不被移动'
-assert_equal '[{"id":"cachyosAgents","enabled":false},{"id":"localStatus","enabled":true}]' \
+assert_equal '[{"id":"cachyosAgents","enabled":false},{"id":"localStatus","enabled":true},{"id":"todoCalendar","enabled":true},{"id":"desktopSettings","enabled":true}]' \
     "$(jq -c '.barConfigs[0].rightWidgets' "$WORK_DIR/existing-once.json")" \
-    '已有布局：右侧原有对象保持 false，只追加缺失的 localStatus'
+    '已有布局：右侧原有对象保持 false，只追加缺失的 localStatus、todoCalendar、desktopSettings'
 assert_equal 'keep-me' "$(jq -r '.currentThemeName' "$WORK_DIR/existing-once.json")" '已有布局：无关的顶层键未被动过'
 assert_equal '42' "$(jq -r '.cursorSettings.size' "$WORK_DIR/existing-once.json")" '已有布局：嵌套对象未被动过'
 assert_equal "$(jq -S 'del(.barConfigs)' "$existing" | md5sum)" \
@@ -217,7 +217,7 @@ assert_equal "$(jq -c '.barConfigs[1]' "$multi_bar")" "$(jq -c '.barConfigs[1]' 
     '只改第一栏：第二栏原样（控件与设置都不动）'
 
 # ---- 插件启用：每个插件首次安装写入 enabled=true，但不覆盖用户已有设置 -------------
-all_plugin_ids=(cachyosAgents localStatus localTranslate localLyrics phoneConnect focus top)
+all_plugin_ids=(cachyosAgents localStatus localTranslate localLyrics phoneConnect focus top desktopSettings todoCalendar)
 for plugin_id in "${all_plugin_ids[@]}"; do
     printf '%s\n' '{}' > "$WORK_DIR/ps-fresh.json"
     jq --arg plugin "$plugin_id" -f "$ENABLE_JQ" "$WORK_DIR/ps-fresh.json" > "$WORK_DIR/ps-fresh-out.json"
@@ -237,19 +237,19 @@ assert_equal '{"enabled":true,"mode":"pomodoro"}' "$(jq -c '.focus' "$WORK_DIR/p
 assert_equal 'dark' "$(jq -r '.theme' "$WORK_DIR/ps-disabled-out.json")" \
     '插件设置：无关的顶层键被保留'
 
-# ---- 随包副本的完整性：7 个插件逐一核对 ---------------------------------------
+# ---- 随包副本的完整性：9 个插件逐一核对 ---------------------------------------
 # 目录名是 DMS 的安装目录名（大小写必须与上游一致），插件 ID 来自 plugin.json。
-plugin_sources=(CachyosAgents LocalStatus LocalTranslate LocalLyrics PhoneConnect Focus Top)
-plugin_targets=(CachyosAgents LocalStatus localTranslate localLyrics PhoneConnect Focus Top)
-plugin_ids=(cachyosAgents localStatus localTranslate localLyrics phoneConnect focus top)
-plugin_types=(widget widget widget widget widget widget daemon)
+plugin_sources=(CachyosAgents LocalStatus LocalTranslate LocalLyrics PhoneConnect Focus Top DesktopSettings TodoCalendar)
+plugin_targets=(CachyosAgents LocalStatus localTranslate localLyrics PhoneConnect Focus Top DesktopSettings TodoCalendar)
+plugin_ids=(cachyosAgents localStatus localTranslate localLyrics phoneConnect focus top desktopSettings todoCalendar)
+plugin_types=(widget widget widget widget widget widget daemon widget widget)
 
 # 运行副本 = 安装器会复制进 ~/.config/DankMaterialShell/plugins/<目录>/ 的文本资产：
 # QML、JS、plugin.json、README、tests/*.cjs 与 data/*。Go 源码与构建脚本不安装。
 runtime_files() {
     find "$1" -maxdepth 3 -type f \
-        \( -name '*.qml' -o -name '*.js' -o -name 'plugin.json' -o -name 'README.md' \
-           -o -path '*/tests/*' -o -path '*/data/*' \) \
+        \( \( ! -path '*/tests/*' \( -name '*.qml' -o -name '*.js' -o -name 'plugin.json' -o -name 'README.md' -o -name 'qmldir' \) \) \
+           -o -path '*/tests/*.cjs' -o -path '*/data/*' -o -path '*/icons/*' \) \
         -printf '%P\n' | sort
 }
 
@@ -267,12 +267,10 @@ for index in "${!plugin_sources[@]}"; do
         "随包副本：$source_name 的类型是 ${plugin_types[$index]}"
 
     # plugin.json 声明的组件与设置文件必须真的存在（改名最容易漏掉这里）。
-    for key in component settings; do
-        declared="$(jq -r --arg key "$key" '.[$key] // empty' "$source_dir/plugin.json")"
-        [[ -z $declared ]] && continue
+    while IFS= read -r declared; do
         assert_equal 'true' "$([[ -f "$source_dir/${declared#./}" ]] && echo true || echo false)" \
-            "随包副本：$source_name 声明的 $key 文件存在（$declared）"
-    done
+            "随包副本：$source_name 声明的入口或设置文件存在（$declared）"
+    done < <(jq -r '[.component, .settings, (.components // {} | .[])] | .[] | select(type == "string")' "$source_dir/plugin.json")
 
     # 安装器必须真的会复制这个插件（文件在包里但没进 $HOME = 装了但看不见）。
     if grep -q "install_dms_plugin_assets $source_name $target_name" "$INSTALL_SH"; then
@@ -320,7 +318,7 @@ fi
 PLUGIN_SRC="$PLUGINS_DIR/CachyosAgents"
 manifest="$PLUGIN_SRC/plugin.json"
 
-assert_equal 'AI 集成' "$(jq -r '.name' "$manifest")" 'CachyosAgents：插件名称为 AI 集成'
+assert_equal 'AI 模块' "$(jq -r '.name' "$manifest")" 'CachyosAgents：插件名称为 AI 模块'
 assert_equal 'true' "$(jq -e '.capabilities | index("dankbar-widget") != null' "$manifest")" \
     'CachyosAgents：声明了 dankbar-widget 能力'
 
@@ -360,7 +358,7 @@ fi
 
 # ---- Go helper：随包二进制存在、可执行、且刻意不进配置清单 ---------------------
 # 二进制不进 config-manifest.tsv：cachyos-config update 固定用 0644 安装，会丢可执行位。
-for helper in translate-lookup lyrics-helper phone-connect focus-helper top-helper; do
+for helper in cachyos-ai-settings cachyos-usage-json translate-lookup lyrics-helper phone-connect focus-helper top-helper desktop-settings-helper todo-calendar-helper; do
     assert_equal 'true' "$([[ -x "$PROJECT_DIR/assets/go-bin/$helper" ]] && echo true || echo false)" \
         "Go helper：assets/go-bin/$helper 存在且可执行"
     assert_equal '' \
@@ -397,7 +395,7 @@ assert_equal "$INSTALLER_WIDGETS" "$bar_widgets" \
 
 installer_ids="$(awk '/^readonly -a DMS_PLUGIN_IDS=\(/{flag=1; next} flag && /^\)/{exit} flag {print $1}' "$INSTALL_SH" | sort)"
 assert_equal "$(printf '%s\n' "${all_plugin_ids[@]}" | sort)" "$installer_ids" \
-    'install.sh：DMS_PLUGIN_IDS 正好是 7 个插件 ID'
+    'install.sh：DMS_PLUGIN_IDS 正好是 9 个插件 ID'
 # shellcheck disable=SC2016  # 同上：匹配 install.sh 里的数组展开写法
 if grep -q 'for plugin_id in "${DMS_PLUGIN_IDS\[@\]}"; do' "$INSTALL_SH"; then
     pass 'install.sh：逐个启用 DMS_PLUGIN_IDS 里的插件'
@@ -418,5 +416,93 @@ pinned_sha="$(awk -F'"' '/^readonly PINNED_DMS_SHA256_AMD64=/{print $2}' "$INSTA
 assert_equal 'v1.6.2' "$pinned_version" 'DMS 版本：钉住 v1.6.2'
 assert_equal '933d3d87ac462432f6e0265e47dc68171c7174592e2a8caba7b9b9710bda5e56' "$pinned_sha" \
     'DMS 版本：钉住 v1.6.2 的 SHA256'
+
+# ---- 真实复制与日历更新：仅写临时 HOME，系统安装命令由替身接收 -----------------
+# 只载入这三个函数，避免执行 install.sh 的 main（系统服务与包管理不在测试范围）。
+# shellcheck disable=SC1090
+source <(sed -n '/^install_dms_plugin_assets()/,/^}/p; /^install_dms_plugin_tests()/,/^}/p; /^install_dms_plugin_subtree()/,/^}/p' "$INSTALL_SH")
+# shellcheck source=assets/lib/dms-plugins.sh
+source "$PROJECT_DIR/assets/lib/dms-plugins.sh"
+# shellcheck disable=SC2034 # 由上面载入的安装函数读取。
+SCRIPT_DIR="$PROJECT_DIR"
+run() { "$@"; }
+sandbox_home="$WORK_DIR/home"
+plugin_root="$sandbox_home/.config/DankMaterialShell/plugins"
+mkdir -p "$WORK_DIR/bin"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$WORK_DIR/bin/sudo"
+chmod 0755 "$WORK_DIR/bin/sudo"
+HOME="$sandbox_home" XDG_CONFIG_HOME="$sandbox_home/.config" XDG_STATE_HOME="$WORK_DIR/state" \
+    PATH="$WORK_DIR/bin:$PATH" bash "$PROJECT_DIR/tools/install-go-helpers.sh" > "$WORK_DIR/helpers.log"
+for index in "${!plugin_sources[@]}"; do
+    source_name="${plugin_sources[$index]}"
+    target_name="${plugin_targets[$index]}"
+    HOME="$sandbox_home" install_dms_plugin_assets "$source_name" "$target_name"
+    HOME="$sandbox_home" install_dms_plugin_tests "$source_name" "$target_name"
+done
+HOME="$sandbox_home" install_dms_plugin_subtree DesktopSettings DesktopSettings icons
+assert_equal 'true' "$([[ -s "$plugin_root/DesktopSettings/qmldir" && -s "$plugin_root/DesktopSettings/icons/LICENSE" && -s "$plugin_root/DesktopSettings/icons/settings-2.svg" ]] && echo true || echo false)" \
+    '桌面设置：qmldir、SVG 图标与图标许可实际安装到位'
+for helper in CachyosAgents/ai-settings CachyosAgents/usage-json localTranslate/translate-lookup \
+              localLyrics/lyrics-helper PhoneConnect/phone-connect Focus/focus-helper Top/top-helper \
+              DesktopSettings/desktop-settings-helper TodoCalendar/todo-calendar-helper; do
+    assert_equal 'true' "$([[ -x "$plugin_root/$helper" ]] && echo true || echo false)" "辅助程序实际安装且保持可执行：$helper"
+done
+calendar_dir="$plugin_root/TodoCalendar"
+refresh_calendar_runtime "$calendar_dir"
+entry="$(jq -r '.components.widget' "$calendar_dir/plugin.json")"
+runtime="${entry%/*}"
+assert_equal 'true' "$([[ $runtime == .runtime-* && -f "$calendar_dir/$entry" && -x "$calendar_dir/$runtime/todo-calendar-helper" ]] && echo true || echo false)" \
+    '待办日历：清单指向完整运行目录，目录内 helper 可执行'
+refresh_calendar_runtime "$calendar_dir"
+assert_equal "$entry" "$(jq -r '.components.widget' "$calendar_dir/plugin.json")" '待办日历：重复安装保持同一组件 URL'
+printf 'damaged runtime\n' > "$calendar_dir/$entry"
+chmod 0644 "$calendar_dir/$runtime/todo-calendar-helper"
+refresh_calendar_runtime "$calendar_dir"
+assert_equal 'true' "$(cmp -s "$calendar_dir/CalendarWidget.qml" "$calendar_dir/$entry" && echo true || echo false)" \
+    '待办日历：重装可修复运行目录中损坏的组件'
+assert_equal 'true' "$([[ -x "$calendar_dir/$runtime/todo-calendar-helper" ]] && echo true || echo false)" \
+    '待办日历：重装可恢复运行目录内 helper 的可执行权限'
+printf '\n// update fixture\n' >> "$calendar_dir/CalendarWidget.qml"
+refresh_calendar_runtime "$calendar_dir"
+new_entry="$(jq -r '.components.widget' "$calendar_dir/plugin.json")"
+assert_equal 'true' "$([[ $entry != "$new_entry" && -f "$calendar_dir/$entry" ]] && echo true || echo false)" \
+    '待办日历：QML 更新后切换 URL，旧运行目录保留'
+printf '\nhelper-update\n' >> "$calendar_dir/todo-calendar-helper"
+refresh_calendar_runtime "$calendar_dir"
+assert_equal 'true' "$([[ $new_entry != "$(jq -r '.components.widget' "$calendar_dir/plugin.json")" ]] && echo true || echo false)" \
+    '待办日历：单独更新 helper 也切换运行目录'
+if (cd -- "$calendar_dir" && sha256sum --check --quiet .installed-files.sha256); then
+    pass '待办日历：生成与上游安装脚本兼容的校验清单'
+else
+    fail '待办日历：运行文件校验清单无效'
+fi
+
+# cachyos-config 只更新日历清单中的条目，验证 protect 与生成清单的状态比较。
+share="$WORK_DIR/share"
+mkdir -p "$share/assets/lib" "$share/assets/dms-plugins" "$WORK_DIR/config-state"
+ln -s "$PLUGINS_DIR/TodoCalendar" "$share/assets/dms-plugins/TodoCalendar"
+cp "$PROJECT_DIR/assets/lib/dms-plugins.sh" "$share/assets/lib/"
+awk -F '\t' '$1 ~ /^dms-plugins\/TodoCalendar\//' "$MANIFEST" > "$share/config-manifest.tsv"
+config() {
+    HOME="$sandbox_home" CACHYOS_DESKTOP_SHARE_DIR="$share" CACHYOS_DESKTOP_STATE_DIR="$WORK_DIR/config-state" \
+        bash "$PROJECT_DIR/bin/cachyos-config" "$@"
+}
+config update > "$WORK_DIR/update.log"
+assert_equal 'true' "$(config status | awk '$1 != "current" {bad=1} END {print bad ? "false" : "true"}')" \
+    '配置状态：生成的日历入口不被误报为本地修改'
+entry="$(jq -r '.components.widget' "$calendar_dir/plugin.json")"
+config update > "$WORK_DIR/update-again.log"
+assert_equal "$entry" "$(jq -r '.components.widget' "$calendar_dir/plugin.json")" '配置更新：重复执行不改变运行目录'
+config protect "$calendar_dir/CalendarEditor.qml"
+printf '\n// protected fixture\n' >> "$calendar_dir/CalendarEditor.qml"
+config update > "$WORK_DIR/protected-update.log"
+runtime="$(jq -r '.components.widget | split("/")[0]' "$calendar_dir/plugin.json")"
+assert_equal 'true' "$(cmp -s "$calendar_dir/CalendarEditor.qml" "$calendar_dir/$runtime/CalendarEditor.qml" && echo true || echo false)" \
+    '配置保护：保留的 QML 修改同步进入实际运行目录'
+config protect "$calendar_dir/plugin.json"
+cp "$calendar_dir/plugin.json" "$WORK_DIR/protected-plugin.json"
+config update > "$WORK_DIR/protected-manifest-update.log"
+assert_equal 'true' "$(cmp -s "$calendar_dir/plugin.json" "$WORK_DIR/protected-plugin.json" && echo true || echo false)" \
+    '配置保护：保护插件清单时不切换组件入口'
 
 printf '\n%s 项检查通过。\n' "$PASS_COUNT"

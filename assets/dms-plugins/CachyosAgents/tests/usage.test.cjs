@@ -370,3 +370,48 @@ test('parseAgentState：异常输入退化成安全空值', () => {
         assert.equal(Object.keys(state.installed).length, 0);
     }
 });
+
+test('弹窗按真实今天与跨月七天统计，不把昨天费用当作今天', () => {
+    const row = usage.summarise([record({ stats: { recentDays: days([
+        ['2026-09-24', 100, 100], ['2026-09-30', 10, 0.1],
+        ['2026-09-26', 20, 0.2], ['2026-10-01', 0, 0], ['2026-10-02', 90, 90]
+    ]) } })], {})[0];
+    const week = usage.weekFor(row, '2026-10-01');
+    assert.deepEqual(arr(week.days.map(day => day.date)), ['2026-09-26', '2026-09-30', '2026-10-01']);
+    assert.equal(week.tokens, 30);
+    assert.ok(Math.abs(week.cost - 0.3) < 1e-10);
+    assert.equal(week.todayCost, 0);
+    assert.equal(usage.weekFor(row, '2026-10-03').todayCost, null);
+});
+
+test('费用字段缺失时保留缺失，不能生成零费用或完整周合计', () => {
+    const row = usage.summarise([record({ stats: { recentDays: [
+        { date: '2026-10-01', totalTokens: 10, costUsd: 0.5 },
+        { date: '2026-10-02', totalTokens: 20 }
+    ] } })], {})[0];
+    assert.equal(row.days[1].cost, null);
+    const week = usage.weekFor(row, '2026-10-02');
+    assert.equal(week.days.length, 2);
+    assert.equal(week.todayCost, null);
+    assert.equal(week.cost, null);
+    assert.equal(week.tokens, 30);
+});
+
+test('只有限额、无本地统计时，弹窗不展示采集器的空壳零值', () => {
+    const row = usage.summarise([record({ hasLocalStats: false, limits: [{ label: '周额度', percent: 5 }] })], {})[0];
+    assert.equal(row.state, 'ready');
+    const week = usage.weekFor(row, '2026-10-02');
+    assert.equal(week.days.length, 0);
+    assert.equal(week.todayCost, null);
+    assert.equal(week.cost, null);
+});
+
+test('本周记录支持 QML 数组样对象，且不补齐未采集日期', () => {
+    const week = usage.weekFor({ hasLocalStats: true, days: { length: 1, 0: { date: '2026-10-02', cost: 0, tokens: 0 } } }, '2026-10-02');
+    assert.equal(week.days.length, 1);
+    assert.equal(week.todayCost, 0);
+    assert.equal(week.cost, 0);
+    assert.equal(week.tokens, 0);
+    assert.equal(usage.weekFor(null, '2026-10-02').days.length, 0);
+    assert.equal(usage.weekFor({ hasLocalStats: true, days: [] }, 'invalid').days.length, 0);
+});

@@ -1,0 +1,26 @@
+{
+  "id": "todoCalendar",
+  "name": "待办日历",
+  "description": "独立的本地日历、Markdown 待办和日志，支持会话采集、AI 工作总结及旧记录导入",
+  "version": "1.1.1",
+  "author": "skynit",
+  "type": "widget",
+  "capabilities": [
+    "dankbar-widget",
+    "daemon"
+  ],
+  "components": {
+    "widget": "./CalendarWidget.qml",
+    "daemon": "./TodoCalendar.qml"
+  },
+  "icon": "calendar_month",
+  "requires_dms": ">=1.6.2",
+  "dependencies": [
+    "dms"
+  ],
+  "permissions": [
+    "process",
+    "settings_read",
+    "settings_write"
+  ]
+}

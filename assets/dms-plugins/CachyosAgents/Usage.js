@@ -7,7 +7,7 @@
 // 一条原则：**数据缺失就显示缺失**，绝不把"没采到"渲染成 0。
 
 var agents = [
-    { id: "claude", label: "Claude Code", short: "Claude", icon: "smart_toy" },
+    { id: "claude", label: "Claude Code", short: "Claude", icon: "auto_awesome" },
     { id: "codex", label: "Codex", short: "Codex", icon: "terminal" },
     { id: "opencode", label: "OpenCode", short: "OpenCode", icon: "code" },
     { id: "dsh", label: "DSH", short: "DSH", icon: "memory" }
@@ -115,8 +115,8 @@ function daysOf(record) {
     return days.map(function (day) {
         return {
             date: day && typeof day.date === "string" ? day.date : "",
-            tokens: num(day && day.totalTokens) || 0,
-            cost: num(day && day.costUsd) || 0
+            tokens: num(day && day.totalTokens),
+            cost: num(day && day.costUsd)
         };
     });
 }
@@ -173,6 +173,7 @@ function summarise(records, settings) {
                 return Object.assign(base, {
                     state: "waiting",
                     hasRecord: false,
+                    hasLocalStats: false,
                     detail: "还没有采集过",
                     todayTokens: null,
                     todayCost: null,
@@ -196,6 +197,7 @@ function summarise(records, settings) {
             return Object.assign(base, {
                 state: hasLocal || limits.length > 0 ? "ready" : "missing",
                 hasRecord: true,
+                hasLocalStats: hasLocal,
                 detail: typeof record.usageStatusText === "string" ? record.usageStatusText : "",
                 todayTokens: today ? today.tokens : null,
                 todayCost: today ? today.cost : null,
@@ -210,6 +212,41 @@ function summarise(records, settings) {
                 semantics: semanticsLabel(record.inputTokenSemantics)
             });
         });
+}
+
+// 弹窗按真实日期展示今天和近七天；状态栏仍沿用自己的历史回落规则。
+// 不补齐缺失日期，也不把未采集或未计价的费用变成 $0。
+function weekFor(row, today) {
+    var result = { days: [], todayCost: null, cost: null, tokens: null };
+    if (!row || !row.hasLocalStats || !/^\d{4}-\d{2}-\d{2}$/.test(today))
+        return result;
+    var start = new Date(today + "T12:00:00Z");
+    if (!isFinite(start.getTime()))
+        return result;
+    start.setUTCDate(start.getUTCDate() - 6);
+    var first = start.toISOString().slice(0, 10);
+    result.days = asArray(row.days).filter(function (day) {
+        return day && /^\d{4}-\d{2}-\d{2}$/.test(day.date)
+            && day.date >= first && day.date <= today;
+    }).sort(function (a, b) { return a.date.localeCompare(b.date); });
+    if (result.days.length === 0)
+        return result;
+
+    function sum(field) {
+        var total = 0;
+        for (var i = 0; i < result.days.length; i++) {
+            var value = num(result.days[i][field]);
+            if (value === null || value < 0)
+                return null;
+            total += value;
+        }
+        return total;
+    }
+    result.cost = sum("cost");
+    result.tokens = sum("tokens");
+    var current = result.days.find(function (day) { return day.date === today; });
+    result.todayCost = current ? num(current.cost) : null;
+    return result;
 }
 
 function sumModelTokens(record) {

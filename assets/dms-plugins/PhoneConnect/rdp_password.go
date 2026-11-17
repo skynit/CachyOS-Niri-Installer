@@ -28,11 +28,8 @@ func rdpPassword(r rdpRequest) (map[string]any, error) {
 		}
 		args = []string{"store", "--label=DMS RDP 密码"}
 		failure = "无法保存 RDP 密码，请检查系统钥匙串是否已解锁并允许访问"
-	case "clear":
-		args = []string{"clear"}
-		failure = "无法清除 RDP 密码，请检查系统钥匙串是否已解锁并允许访问"
 	default:
-		return nil, errors.New("RDP 密码操作无效，请使用 load、save 或 clear")
+		return nil, errors.New("RDP 密码操作无效，请使用 load 或 save")
 	}
 	target, err := address(strings.ToLower(r.Host), first(r.Port, "3389"))
 	if err != nil {
@@ -66,9 +63,6 @@ func rdpPassword(r rdpRequest) (map[string]any, error) {
 			if r.Operation == "load" {
 				return map[string]any{"ok": true, "found": false}, nil
 			}
-			if r.Operation == "clear" {
-				return nil, errors.New("未找到此 RDP 账户保存的密码，无需清除")
-			}
 		}
 		return nil, errors.New(failure)
 	}
@@ -82,9 +76,6 @@ func rdpPassword(r rdpRequest) (map[string]any, error) {
 		return map[string]any{"ok": true, "found": true, "password": password}, nil
 	}
 	message := "已将 RDP 密码保存到系统钥匙串"
-	if r.Operation == "clear" {
-		message = "已清除系统钥匙串中此 RDP 账户的密码"
-	}
 	return map[string]any{"ok": true, "message": message}, nil
 }
 

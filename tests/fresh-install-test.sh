@@ -289,12 +289,12 @@ else
     fail '起始配置里没有内置 prompt'
 fi
 
-# 4) 面板插件与启用状态：7 个插件都要装进运行目录并被启用
+# 4) 面板插件与启用状态：9 个插件都要装进运行目录并被启用
 # 目录名是 DMS 的安装目录名，插件 ID 来自各自 plugin.json。
 plugin_root="$SANDBOX_HOME/.config/DankMaterialShell/plugins"
 plugin_settings="$SANDBOX_HOME/.config/DankMaterialShell/plugin_settings.json"
-plugin_dirs=(CachyosAgents LocalStatus localTranslate localLyrics PhoneConnect Focus Top)
-plugin_ids=(cachyosAgents localStatus localTranslate localLyrics phoneConnect focus top)
+plugin_dirs=(CachyosAgents LocalStatus localTranslate localLyrics PhoneConnect Focus Top DesktopSettings TodoCalendar)
+plugin_ids=(cachyosAgents localStatus localTranslate localLyrics phoneConnect focus top desktopSettings todoCalendar)
 
 for index in "${!plugin_dirs[@]}"; do
     plugin_dir="$plugin_root/${plugin_dirs[$index]}"
@@ -304,12 +304,11 @@ for index in "${!plugin_dirs[@]}"; do
         "面板插件 ${plugin_dirs[$index]} 的 id 是 $plugin_id"
 
     # plugin.json 声明的主 QML 必须真的装进运行目录，否则 DMS 加载插件时是空壳。
-    main_qml="$(jq -r '.component | ltrimstr("./")' "$plugin_dir/plugin.json" 2>/dev/null || true)"
-    if [[ -n $main_qml ]]; then
-        assert_file "$plugin_dir/$main_qml" "面板插件 ${plugin_dirs[$index]} 的主 QML 已安装"
-    else
-        fail "面板插件 ${plugin_dirs[$index]} 的 plugin.json 没有声明 component"
-    fi
+    entries="$(jq -r '[.component, (.components // {} | .[])] | .[] | select(type == "string") | ltrimstr("./")' "$plugin_dir/plugin.json")"
+    [[ -n $entries ]] || fail "面板插件 ${plugin_dirs[$index]} 没有声明入口"
+    while IFS= read -r main_qml; do
+        assert_file "$plugin_dir/$main_qml" "面板插件 ${plugin_dirs[$index]} 的入口 $main_qml 已安装"
+    done <<< "$entries"
 
     assert_equal 'true' "$(jq -r --arg id "$plugin_id" '.[$id].enabled // false' "$plugin_settings" 2>/dev/null || echo false)" \
         "面板插件 $plugin_id 被启用"
@@ -318,12 +317,12 @@ done
 # LocalTranslate 的词典是运行时数据：装了插件但漏了 data/，翻译面板点开就是空的。
 assert_file "$plugin_root/localTranslate/data/dictionary.sqlite3" 'LocalTranslate 装了词典数据'
 
-# plugin_settings.json 里 7 个插件都必须是 enabled:true（安装器逐个启用，漏一个就静默少功能）。
-assert_equal '7' \
+# plugin_settings.json 里 9 个插件都必须是 enabled:true（安装器逐个启用，漏一个就静默少功能）。
+assert_equal '9' \
     "$(jq '[to_entries[] | select(.value.enabled == true) | .key
-           | select(. as $id | ["cachyosAgents","localStatus","localTranslate","localLyrics","phoneConnect","focus","top"] | index($id))] | length' \
+           | select(. as $id | ["cachyosAgents","localStatus","localTranslate","localLyrics","phoneConnect","focus","top","desktopSettings","todoCalendar"] | index($id))] | length' \
         "$plugin_settings" 2>/dev/null || echo 0)" \
-    'plugin_settings.json 里 7 个插件都被启用'
+    'plugin_settings.json 里 9 个插件都被启用'
 
 # 全新 HOME 的 settings.json 没有 barConfigs：安装器绝不能凭空造栏。
 # （DMS 的默认状态栏只在"键不存在"时生效；造一个只含插件控件的栏会毁掉默认顶栏。）
@@ -334,7 +333,8 @@ assert_equal 'false' "$(jq 'has("barConfigs")' "$dms_settings" 2>/dev/null || ec
 
 # helper 二进制由 tools/install-go-helpers.sh 装进插件目录（QML 用 Qt.resolvedUrl 找它）。
 for helper in localTranslate/translate-lookup localLyrics/lyrics-helper \
-              PhoneConnect/phone-connect Focus/focus-helper Top/top-helper; do
+              PhoneConnect/phone-connect Focus/focus-helper Top/top-helper \
+              DesktopSettings/desktop-settings-helper TodoCalendar/todo-calendar-helper; do
     if [[ -x "$plugin_root/$helper" ]]; then
         pass "插件 helper 可执行：$helper"
     else

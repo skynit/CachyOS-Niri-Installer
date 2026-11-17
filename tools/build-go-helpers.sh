@@ -25,3 +25,7 @@ GOOS=linux GOARCH=amd64 GOAMD64=v1 CGO_ENABLED=0 go -C "$root/assets/dms-plugins
     -o "$root/assets/go-bin/focus-helper" .
 GOOS=linux GOARCH=amd64 GOAMD64=v1 CGO_ENABLED=0 go -C "$root/assets/dms-plugins/Top/helper" build -trimpath -buildvcs=false \
     -o "$root/assets/go-bin/top-helper" .
+GOOS=linux GOARCH=amd64 GOAMD64=v1 CGO_ENABLED=0 go -C "$root/assets/dms-plugins/DesktopSettings" build -trimpath -buildvcs=false \
+    -o "$root/assets/go-bin/desktop-settings-helper" .
+GOOS=linux GOARCH=amd64 GOAMD64=v1 CGO_ENABLED=0 go -C "$root/assets/dms-plugins/TodoCalendar" build -trimpath -buildvcs=false \
+    -o "$root/assets/go-bin/todo-calendar-helper" .

@@ -34,11 +34,12 @@ Column {
         id: heading
         width: root.innerWidth
         height: 36
-        DankIcon { name: "smart_toy"; size: 22; color: Theme.primary }
-        StyledText { text: root.showingSettings ? "AI 集成设置" : "AI 集成"; font.pixelSize: 16; font.weight: Font.DemiBold; Layout.fillWidth: true }
+        DankIcon { name: "auto_awesome"; size: 20; color: Theme.primary }
+        StyledText { text: root.showingSettings ? "AI 模块设置" : "AI 模块"; font.pixelSize: 16; font.weight: Font.DemiBold; Layout.fillWidth: true }
         DankActionButton {
             iconName: "refresh"
             tooltipText: root.showingSettings ? "刷新设置" : "重新采集用量"
+            Accessible.name: tooltipText
             enabled: !root.integration.busy
             onClicked: {
                 if (root.showingSettings)
@@ -50,12 +51,14 @@ Column {
         DankActionButton {
             objectName: "ai-settings-toggle"
             iconName: root.showingSettings ? "arrow_back" : "tune"
-            tooltipText: root.showingSettings ? "返回用量" : "AI 集成设置"
+            tooltipText: root.showingSettings ? "返回用量" : "AI 模块设置"
+            Accessible.name: tooltipText
             onClicked: if (root.showingSettings) root.showUsage(); else root.showSettings()
         }
         DankActionButton {
             iconName: "close"
             tooltipText: "关闭"
+            Accessible.name: tooltipText
             onClicked: if (root.closePopout) root.closePopout()
         }
     }

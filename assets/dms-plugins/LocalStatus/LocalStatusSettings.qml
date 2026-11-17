@@ -20,7 +20,7 @@ PluginSettings {
             required property var modelData
             settingKey: "show_" + modelData.id
             label: modelData.label
-            defaultValue: true
+            defaultValue: modelData.defaultEnabled !== false
             Connections {
                 target: root.pluginService
                 function onPluginDataChanged(changedPluginId) {
@@ -29,16 +29,6 @@ PluginSettings {
                 }
             }
         }
-    }
-    ToggleSetting {
-        settingKey: "showDate"
-        label: "显示日期"
-        defaultValue: false
-    }
-    ToggleSetting {
-        settingKey: "showSeconds"
-        label: "显示秒数"
-        defaultValue: true
     }
     StringSetting {
         settingKey: "mount"
@@ -110,8 +100,9 @@ PluginSettings {
     }
     SliderSetting {
         settingKey: "maxWidth"
-        label: "状态条宽度上限"
-        defaultValue: 1200
+        label: "状态条宽度"
+        description: "直接调整状态条的实际宽度，内容按可用空间排列；不改变文字大小。"
+        defaultValue: 360
         minimum: 160
         maximum: 1600
         unit: "px"

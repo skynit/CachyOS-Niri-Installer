@@ -30,7 +30,10 @@ sed 's|@PLUGIN_DIR@|Plugin|' \
 if ! env -u WAYLAND_DISPLAY -u NIRI_SOCKET \
     HOME="$WORK_DIR/home" XDG_CONFIG_HOME="$WORK_DIR/config" XDG_CACHE_HOME="$WORK_DIR/cache" \
     DBUS_SESSION_BUS_ADDRESS="unix:path=$WORK_DIR/no-session-bus" \
-    QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
+    DMS_SOCKET="$WORK_DIR/no-dms.sock" \
+    QT_QPA_PLATFORMTHEME=generic QT_QPA_PLATFORMTHEME_QT6=generic \
+    QT_LOGGING_RULES='*.debug=false;qml.debug=true' QSG_USE_SIMPLE_ANIMATION_DRIVER=0 \
+    QT_QPA_PLATFORM="${CACHYOS_TEST_QPA_PLATFORM:-offscreen}" QT_QUICK_BACKEND=software \
     timeout 20 qs -p "$WORK_DIR/probe.qml" > "$WORK_DIR/output.log" 2>&1; then
     tail -60 "$WORK_DIR/output.log"
     exit 1

@@ -12,7 +12,8 @@ Item {
     })
     property var parentPopout: null
     property var closePopout: null
-    property real availableHeight: 560
+    property real availableHeight: 420
+    readonly property real maximumHeight: Math.max(0, Math.min(420, availableHeight))
     property string direction: settings.direction ?? "auto"
     property alias query: input.text
     readonly property alias lookup: lookup
@@ -57,7 +58,7 @@ Item {
             scroll.contentY = top + item.height - scroll.height;
     }
 
-    implicitHeight: Math.min(560, Math.max(360, availableHeight))
+    implicitHeight: Math.min(maximumHeight, layout.implicitHeight + 24)
     onDirectionChanged: edited()
     onAutoSearchChanged: edited()
     Component.onCompleted: focusTimer.start()
@@ -103,78 +104,120 @@ Item {
         visible: false
     }
 
+    component ActionButton: Basic.Button {
+        id: button
+        property string iconName: ""
+        property bool primary: false
+        readonly property color textColor: primary && enabled ? Theme.primaryText : Theme.surfaceText
+        implicitWidth: Math.max(44, contentItem.implicitWidth + 16)
+        implicitHeight: 28
+        leftPadding: 8
+        rightPadding: 8
+        topPadding: 4
+        bottomPadding: 4
+        hoverEnabled: true
+        focusPolicy: Qt.StrongFocus
+        Accessible.role: Accessible.Button
+        Accessible.name: text
+        Keys.onReturnPressed: if (enabled) clicked()
+        Keys.onEnterPressed: if (enabled) clicked()
+        HoverHandler { cursorShape: button.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor }
+        contentItem: RowLayout {
+            spacing: 4
+            opacity: button.enabled ? 1 : 0.6
+            DankIcon {
+                visible: button.iconName.length > 0
+                name: button.iconName
+                size: 16
+                color: button.textColor
+            }
+            StyledText {
+                text: button.text
+                font.pixelSize: 12
+                color: button.textColor
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.NoWrap
+                Layout.fillWidth: true
+            }
+        }
+        background: Rectangle {
+            radius: 4
+            color: button.primary && button.enabled ? Theme.primary
+                : (button.highlighted || button.hovered || button.down ? Theme.surfaceContainerHigh : "transparent")
+            border.width: button.activeFocus ? 2 : 0
+            border.color: Theme.primary
+        }
+    }
+
     ColumnLayout {
-        anchors.fill: parent
-        anchors.margins: 16
-        spacing: 12
+        id: layout
+        x: 12
+        y: 12
+        width: root.width - 24
+        spacing: 8
 
         RowLayout {
+            id: heading
+            objectName: "translate-heading"
             Layout.fillWidth: true
+            Layout.preferredHeight: 32
             spacing: 8
-
             DankIcon {
                 name: "translate"
-                size: 24
+                size: 18
                 color: Theme.primary
             }
-
             StyledText {
                 text: "离线翻译"
-                font.pixelSize: 20
+                font.pixelSize: 14
                 font.weight: Font.DemiBold
+                wrapMode: Text.NoWrap
+                elide: Text.ElideRight
                 Layout.fillWidth: true
+                Layout.minimumWidth: 0
             }
-
-            DankButton {
+            Rectangle {
+                implicitWidth: directions.implicitWidth + 8
+                implicitHeight: 28
+                radius: 4
+                color: Theme.surfaceContainerLow
+                border.width: 1
+                border.color: Theme.withAlpha(Theme.outline, 0.18)
+                Row {
+                    id: directions
+                    anchors.centerIn: parent
+                    Repeater {
+                        model: [
+                            {label: "自动", value: "auto"},
+                            {label: "中 → 英", value: "zh"},
+                            {label: "英 → 中", value: "en"}
+                        ]
+                        delegate: ActionButton {
+                            required property var modelData
+                            objectName: "translate-direction-" + modelData.value
+                            text: modelData.label
+                            width: modelData.value === "auto" ? 48 : 64
+                            height: 24
+                            highlighted: root.direction === modelData.value
+                            Accessible.role: Accessible.RadioButton
+                            Accessible.checked: highlighted
+                            onClicked: root.direction = modelData.value
+                        }
+                    }
+                }
+            }
+            DankActionButton {
+                objectName: "translate-close"
                 visible: root.closePopout !== null
-                text: "关闭"
-                buttonHeight: 32
-                horizontalPadding: 12
-                backgroundColor: "transparent"
-                textColor: Theme.surfaceVariantText
+                iconName: "close"
+                iconSize: 16
+                buttonSize: 28
+                radius: 4
+                tooltipText: "关闭离线翻译"
                 Accessible.role: Accessible.Button
-                Accessible.name: "关闭离线翻译"
+                Accessible.name: tooltipText
                 onClicked: root.closePopout()
             }
-
-        }
-
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 8
-
-            Repeater {
-                model: [{
-                    "label": "自动",
-                    "value": "auto"
-                }, {
-                    "label": "中 → 英",
-                    "value": "zh"
-                }, {
-                    "label": "英 → 中",
-                    "value": "en"
-                }]
-
-                delegate: DankButton {
-                    required property var modelData
-
-                    text: modelData.label
-                    buttonHeight: 32
-                    horizontalPadding: 12
-                    backgroundColor: root.direction === modelData.value ? Theme.primary : Theme.surfaceContainerHigh
-                    textColor: root.direction === modelData.value ? Theme.primaryText : Theme.surfaceText
-                    Accessible.role: Accessible.RadioButton
-                    Accessible.name: modelData.label
-                    Accessible.checked: root.direction === modelData.value
-                    onClicked: root.direction = modelData.value
-                }
-
-            }
-
-            Item {
-                Layout.fillWidth: true
-            }
-
         }
 
         Basic.TextField {
@@ -182,11 +225,11 @@ Item {
 
             objectName: "queryInput"
             Layout.fillWidth: true
-            Layout.preferredHeight: 44
+            Layout.preferredHeight: 36
             placeholderText: "输入中文或英文词条、短语"
             maximumLength: 200
             font.family: Theme.fontFamily
-            font.pixelSize: 15
+            font.pixelSize: 14
             color: Theme.surfaceText
             placeholderTextColor: Theme.surfaceVariantText
             selectionColor: Theme.primary
@@ -200,74 +243,60 @@ Item {
             onAccepted: root.submit()
 
             background: Rectangle {
-                radius: 8
+                radius: 4
                 color: Theme.surfaceContainerHigh
                 border.width: input.activeFocus ? 2 : 1
-                border.color: input.activeFocus ? Theme.primary : Theme.outlineMedium
+                border.color: input.activeFocus ? Theme.primary : Theme.withAlpha(Theme.outline, 0.4)
             }
 
         }
 
         RowLayout {
+            id: actions
             Layout.fillWidth: true
+            Layout.preferredHeight: 28
             spacing: 8
-
-            DankButton {
+            ActionButton {
+                objectName: "translate-query"
                 text: root.status === "error" ? "重试" : "查询"
                 iconName: "search"
-                buttonHeight: 32
-                horizontalPadding: 12
+                primary: true
                 enabled: input.text.trim().length > 0 && !input.inputMethodComposing
-                Accessible.role: Accessible.Button
-                Accessible.name: text
                 onClicked: root.submit()
             }
-
-            DankButton {
+            ActionButton {
+                objectName: "translate-paste"
                 text: "粘贴"
-                buttonHeight: 32
-                horizontalPadding: 12
-                backgroundColor: Theme.surfaceContainerHigh
-                textColor: Theme.surfaceText
-                Accessible.role: Accessible.Button
+                iconName: "content_paste"
                 Accessible.name: "从剪贴板粘贴"
                 onClicked: {
                     input.forceActiveFocus();
                     input.paste();
                 }
             }
-
-            DankButton {
+            ActionButton {
+                objectName: "translate-clear"
                 text: "清空"
-                buttonHeight: 32
-                horizontalPadding: 12
                 enabled: input.text.length > 0
-                backgroundColor: "transparent"
-                textColor: Theme.surfaceVariantText
-                Accessible.role: Accessible.Button
                 Accessible.name: "清空输入和结果"
                 onClicked: {
                     input.clear();
                     input.forceActiveFocus();
                 }
             }
-
-            Item {
-                Layout.fillWidth: true
-            }
-
+            Item { Layout.fillWidth: true }
             StyledText {
                 text: input.text.length + " / 200"
                 font.pixelSize: 12
                 color: Theme.surfaceVariantText
             }
-
         }
 
         Rectangle {
+            id: separator
             Layout.fillWidth: true
-            height: 1
-            color: Theme.outlineMedium
+            implicitHeight: 1
+            color: Theme.withAlpha(Theme.outline, 0.18)
         }
 
         DankFlickable {
@@ -275,7 +304,9 @@ Item {
 
             objectName: "resultScroll"
             Layout.fillWidth: true
-            Layout.fillHeight: true
+            Layout.preferredHeight: Math.max(0, Math.min(contentHeight, root.maximumHeight
+                - 24 - heading.height - input.height - actions.height - separator.height - layout.spacing * 4
+                - (copiedLabel.visible ? copiedLabel.implicitHeight + layout.spacing : 0)))
             contentWidth: width
             contentHeight: resultsColumn.implicitHeight
             clip: true
@@ -301,8 +332,11 @@ Item {
             Column {
                 id: resultsColumn
 
-                width: scroll.width - 12
-                spacing: 12
+                x: 2
+                width: scroll.width - 4
+                topPadding: 4
+                bottomPadding: 4
+                spacing: 8
 
                 StyledText {
                     width: parent.width
@@ -333,7 +367,7 @@ Item {
                         required property int index
 
                         width: resultsColumn.width
-                        spacing: 6
+                        spacing: 4
 
                         RowLayout {
                             width: parent.width
@@ -343,23 +377,21 @@ Item {
                                 Layout.fillWidth: true
                                 text: modelData.simplified
                                 wrapMode: Text.Wrap
-                                font.pixelSize: 18
+                                font.pixelSize: 16
                                 font.weight: Font.DemiBold
                             }
 
-                            DankButton {
-                                text: "复制"
-                                buttonHeight: 28
-                                horizontalPadding: 8
-                                backgroundColor: "transparent"
-                                textColor: Theme.primary
+                            DankActionButton {
+                                objectName: "translate-copy-" + index
+                                iconName: "content_copy"
+                                iconSize: 16
+                                buttonSize: 28
+                                radius: 4
+                                iconColor: Theme.primary
+                                tooltipText: "复制译文"
                                 Accessible.role: Accessible.Button
                                 Accessible.name: "复制“" + modelData.simplified + "”的译文"
-                                onActiveFocusChanged: {
-                                    if (activeFocus)
-                                        root.reveal(this);
-
-                                }
+                                onActiveFocusChanged: if (activeFocus) root.reveal(this)
                                 onClicked: root.copyEntry(modelData.translation)
                             }
 
@@ -427,7 +459,7 @@ Item {
                         }
 
                         background: Rectangle {
-                            radius: 6
+                            radius: 4
                             color: parent.hovered ? Theme.surfaceContainerHigh : "transparent"
                             border.width: parent.activeFocus ? 2 : 0
                             border.color: Theme.primary
@@ -451,6 +483,7 @@ Item {
         }
 
         StyledText {
+            id: copiedLabel
             Layout.fillWidth: true
             visible: root.copied.length > 0
             text: root.copied

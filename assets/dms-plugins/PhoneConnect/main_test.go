@@ -489,6 +489,91 @@ func TestPairRefusedReportsEndpoint(t *testing.T) {
 	}
 }
 
+func TestPairUsesConnectedWirelessServiceAmongMultiplePorts(t *testing.T) {
+	setup(t)
+	const activeSerial = "adb-phone (2)._adb-tls-connect._tcp"
+	services := []device{
+		{Host: "192.168.1.5", Port: "32200", Serial: "adb-phone._adb-tls-connect._tcp"},
+		{Host: "192.168.1.5", Port: "32300", Serial: activeSerial},
+	}
+	browse = func(service string) ([]device, error) {
+		if service == "_adb-tls-pairing._tcp" {
+			return []device{{Host: "192.168.1.5", Port: "32100"}}, nil
+		}
+		return services, nil
+	}
+	execute = func(_ time.Duration, _ string, args ...string) result {
+		if args[1] == "pair" {
+			return result{Text: "Successfully paired to 192.168.1.5:32100"}
+		}
+		if !reflect.DeepEqual(args, []string{"adb", "devices"}) {
+			t.Errorf("connected phone triggered another ADB command: %v", args)
+			return result{Code: 1}
+		}
+		return result{Text: "List of devices attached\n" + activeSerial + "\tdevice\n"}
+	}
+	start = func(serial string, _ options) (string, error) {
+		if serial != activeSerial {
+			t.Errorf("started wrong phone: %q", serial)
+		}
+		return "", nil
+	}
+
+	value, err := pair(request{Host: "192.168.1.5", Port: "32100", Code: "123456"})
+	if err != nil || value["paired"] != true || value["connected"] != true || value["port"] != "32300" {
+		t.Fatalf("pair did not reuse the connected phone: value=%v, error=%v", value, err)
+	}
+}
+
+func TestPairTriesMultipleConnectPorts(t *testing.T) {
+	setup(t)
+	services := []device{
+		{Host: "192.168.1.5", Port: "32200"},
+		{Host: "192.168.1.5", Port: "32300"},
+	}
+	connected := false
+	browse = func(service string) ([]device, error) {
+		if service == "_adb-tls-pairing._tcp" {
+			return []device{{Host: "192.168.1.5", Port: "32100"}}, nil
+		}
+		return services, nil
+	}
+	execute = func(_ time.Duration, _ string, args ...string) result {
+		switch args[1] {
+		case "pair":
+			return result{Text: "Successfully paired to 192.168.1.5:32100"}
+		case "devices":
+			if connected {
+				return result{Text: "192.168.1.5:32300\tdevice\n"}
+			}
+			return result{Text: "List of devices attached\n"}
+		case "connect":
+			if args[2] == "192.168.1.5:32200" {
+				return result{Code: 1, Err: "Connection refused"}
+			}
+			if args[2] != "192.168.1.5:32300" {
+				t.Errorf("tried unexpected endpoint: %v", args)
+			}
+			connected = true
+			return result{Text: "connected to 192.168.1.5:32300"}
+		default:
+			t.Errorf("unexpected ADB command: %v", args)
+			return result{Code: 1}
+		}
+	}
+	start = func(serial string, _ options) (string, error) {
+		if serial != "192.168.1.5:32300" {
+			t.Errorf("started wrong endpoint: %q", serial)
+		}
+		return "", nil
+	}
+
+	value, err := pair(request{Host: "192.168.1.5", Port: "32100", Code: "123456"})
+	if err != nil || value["paired"] != true || value["connected"] != true || value["port"] != "32300" {
+		t.Fatalf("pair did not try the live endpoint: value=%v, error=%v", value, err)
+	}
+}
+
 func TestReconnectUsesNewPortAndOptions(t *testing.T) {
 	setup(t)
 	if err := save(device{Host: "192.168.1.5", Port: "41234"}); err != nil {

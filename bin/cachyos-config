@@ -7,6 +7,9 @@ readonly ASSET_DIR="$SHARE_DIR/assets"
 readonly MANIFEST="$SHARE_DIR/config-manifest.tsv"
 readonly STATE_DIR="${CACHYOS_DESKTOP_STATE_DIR:-$HOME/.local/state/cachyos-desktop}"
 readonly PROTECTED_FILE="$STATE_DIR/protected-configs.txt"
+# shellcheck source=assets/lib/dms-plugins.sh
+source "$ASSET_DIR/lib/dms-plugins.sh"
+readonly CALENDAR_MANIFEST=".config/DankMaterialShell/plugins/TodoCalendar/plugin.json"
 
 usage() {
     printf 'Usage: %s status|update|migrate|protect PATH|unprotect PATH\n' "${0##*/}"
@@ -25,15 +28,24 @@ is_protected() {
 
 update_configs() {
     local source_path target_path
+    local calendar_source=""
     while IFS=$'\t' read -r source_path target_path; do
         [[ -n "$source_path" && -n "$target_path" ]] || continue
         if is_protected "$target_path"; then
             printf 'protected  %s\n' "$target_path"
             continue
         fi
-        install -D -m 0644 "$ASSET_DIR/$source_path" "$HOME/$target_path"
+        if [[ "$target_path" == "$CALENDAR_MANIFEST" && -x "${HOME}/${target_path%/*}/todo-calendar-helper" ]]; then
+            # 入口最后切换，防止运行中的 DMS 读到一半新、一半旧的组件。
+            calendar_source="$ASSET_DIR/$source_path"
+        else
+            install -D -m 0644 "$ASSET_DIR/$source_path" "$HOME/$target_path"
+        fi
         printf 'updated    %s\n' "$target_path"
     done < "$MANIFEST"
+    if [[ -n "$calendar_source" ]]; then
+        refresh_calendar_runtime "$HOME/${CALENDAR_MANIFEST%/*}" "$calendar_source"
+    fi
 }
 
 show_status() {
@@ -45,6 +57,9 @@ show_status() {
         elif [[ ! -e "$HOME/$target_path" ]]; then
             state=missing
         elif cmp -s "$ASSET_DIR/$source_path" "$HOME/$target_path"; then
+            state=current
+        elif [[ "$target_path" == "$CALENDAR_MANIFEST" ]] &&
+             cmp -s <(calendar_manifest "$ASSET_DIR/$source_path") <(calendar_manifest "$HOME/$target_path"); then
             state=current
         else
             state=modified

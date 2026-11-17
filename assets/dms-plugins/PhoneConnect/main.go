@@ -1205,6 +1205,24 @@ func connect(r request) (map[string]any, error) {
 	return show(device{Host: host, Port: port, Serial: serial}, r.Options)
 }
 
+func activeAtHost(host string, serials []string, services []device) []device {
+	var found []device
+	for _, serial := range serials {
+		if currentHost, port, err := net.SplitHostPort(serial); err == nil && currentHost == host {
+			found = append(found, device{Host: host, Port: port, Serial: serial})
+			continue
+		}
+		for _, item := range services {
+			if item.Host == host && item.Serial == serial {
+				item.Serial = serial
+				found = append(found, item)
+				break
+			}
+		}
+	}
+	return found
+}
+
 func show(value device, opt options) (map[string]any, error) {
 	path, launchErr := start(value.Serial, opt)
 	// 先启动已有连接的投屏，再用扫描结果补充地址，避免扫描失败阻断投屏。
@@ -1298,13 +1316,9 @@ func pair(r request) (map[string]any, error) {
 	for attempt := range 3 {
 		// 仅复用刚配对手机的地址，不因另一台手机在线就跳过目标发现。
 		serials, _ := devices()
-		var active []device
-		for _, serial := range serials {
-			if currentHost, port, err := net.SplitHostPort(serial); err == nil && currentHost == host {
-				active = append(active, device{Host: host, Port: port, Serial: serial})
-			}
-		}
-		if len(active) == 1 {
+		services, err := browse("_adb-tls-connect._tcp")
+		active := activeAtHost(host, serials, services)
+		if len(active) > 0 {
 			value, err := show(active[0], r.Options)
 			if value == nil {
 				value = map[string]any{"host": host, "port": active[0].Port}
@@ -1312,9 +1326,12 @@ func pair(r request) (map[string]any, error) {
 			value["paired"] = true
 			return value, err
 		}
-		services, err := browse("_adb-tls-connect._tcp")
 		connectErr = err
 		if err != nil {
+			if attempt < 2 {
+				pause(time.Second)
+				continue
+			}
 			break
 		}
 		var found []device
@@ -1323,21 +1340,20 @@ func pair(r request) (map[string]any, error) {
 				found = append(found, item)
 			}
 		}
-		if len(found) == 1 {
-			r.Host, r.Port = host, found[0].Port
+		for _, item := range found {
+			r.Host, r.Port = host, item.Port
 			value, err := connect(r)
 			if value == nil {
 				value = map[string]any{"host": host, "port": r.Port}
 			}
 			value["paired"] = true
-			if err != nil {
-				return value, fmt.Errorf("配对成功，%w", err)
+			if err == nil || value["connected"] == true {
+				return value, err
 			}
-			return value, nil
+			connectErr = err
 		}
-		if len(found) > 1 {
-			connectErr = errors.New("发现多个连接端口，请选择手机无线调试主页的当前连接地址")
-			break
+		if len(found) == 0 {
+			connectErr = errors.New("未发现连接端口")
 		}
 		if attempt < 2 {
 			pause(time.Second)

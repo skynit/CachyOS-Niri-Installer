@@ -25,7 +25,10 @@ Item {
     property string confirmPath: ""
     property string confirmName: ""
     property int confirmSize: -1
-    implicitHeight: Math.max(270, Math.min(570, availableHeight))
+    implicitHeight: Math.min(Math.min(720, availableHeight), Math.max(200,
+        mode === "connect" ? heading.implicitHeight + phoneStatus.implicitHeight + body.implicitHeight
+            + (phoneFeedback.visible ? phoneFeedback.implicitHeight + 8 : 0) + 56
+        : mode === "computer" ? heading.implicitHeight + computerPanel.implicitHeight + 40 : 570))
     function launchOptions() {
         return {
             screenOff: options.screenOff === true,
@@ -150,6 +153,15 @@ Item {
                 root.port = root.source.saved.port;
             }
         }
+        function onPushingChanged() {
+            if (root.source.pushing) {
+                pushSection.expanded = true;
+                Qt.callLater(function () {
+                    phoneScroller.contentY = Math.min(pushSection.y, Math.max(0, phoneScroller.contentHeight - phoneScroller.height));
+                });
+            }
+        }
+        function onPushFailedChanged() { if (root.source.pushFailed) pushSection.expanded = true; }
         function onResult(action, data) {
             if (action === "state" && data.saved) {
                 root.host = data.saved.host;
@@ -159,6 +171,7 @@ Item {
                 root.host = data.host;
                 root.port = data.port;
                 if (action === "pair" && data.paired) {
+                    if (!data.connected) directSection.expanded = true;
                     pairingCode.text = "";
                     root.pairPort = "";
                 }
@@ -173,17 +186,83 @@ Item {
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 16
-        spacing: 12
+        spacing: 8
 
         RowLayout {
+            id: heading
             Layout.fillWidth: true
-            DankIcon { name: "devices"; size: 22; color: Theme.primary }
+            spacing: 4
+            DankIcon { name: "devices"; size: 20; color: Theme.primary }
             StyledText {
                 text: root.mode === "files" ? "手机文件" : (root.mode === "settings" ? "投屏选项" : "连接")
                 font.pixelSize: 16
                 font.weight: Font.DemiBold
-                Layout.fillWidth: true
+                Layout.maximumWidth: root.width < 400 ? 48 : 80
+                elide: Text.ElideRight
             }
+            Rectangle {
+                Layout.preferredWidth: 128
+                Layout.preferredHeight: 28
+                radius: 4
+                color: Theme.surfaceContainerHigh
+                border.width: 1
+                border.color: Theme.outlineMedium
+                Row {
+                    anchors.fill: parent
+                    anchors.margins: 2
+                    Repeater {
+                        id: deviceTabs
+                        model: ["手机", "电脑"]
+                        delegate: Rectangle {
+                            id: deviceTab
+                            required property int index
+                            required property string modelData
+                            readonly property bool selected: (root.mode === "computer") === (index === 1)
+                            width: 62
+                            height: 24
+                            radius: 4
+                            color: selected ? Qt.alpha(Theme.primary, 0.14) : "transparent"
+                            border.width: activeFocus ? 2 : 0
+                            border.color: Theme.primary
+                            activeFocusOnTab: true
+                            Accessible.role: Accessible.Button
+                            Accessible.name: modelData + "连接"
+                            Accessible.checkable: true
+                            Accessible.checked: selected
+                            Accessible.onPressAction: activate()
+                            function activate() { root.mode = index === 1 ? "computer" : "connect"; }
+                            Keys.onSpacePressed: activate()
+                            Keys.onReturnPressed: activate()
+                            Keys.onEnterPressed: activate()
+                            Keys.onLeftPressed: { root.mode = "connect"; deviceTabs.itemAt(0).forceActiveFocus(); }
+                            Keys.onRightPressed: { root.mode = "computer"; deviceTabs.itemAt(1).forceActiveFocus(); }
+                            Row {
+                                anchors.centerIn: parent
+                                spacing: 4
+                                DankIcon {
+                                    name: deviceTab.index === 1 ? "desktop_windows" : "smartphone"
+                                    size: 14
+                                    color: deviceTab.selected ? Theme.primary : Theme.surfaceVariantText
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                                StyledText {
+                                    text: deviceTab.modelData
+                                    font.pixelSize: 12
+                                    font.weight: deviceTab.selected ? Font.DemiBold : Font.Medium
+                                    color: deviceTab.selected ? Theme.primary : Theme.surfaceVariantText
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: deviceTab.activate()
+                            }
+                        }
+                    }
+                }
+            }
+            Item { Layout.fillWidth: true }
             DankActionButton {
                 visible: root.mode !== "computer"
                 iconName: root.mode === "files" ? "arrow_back" : "folder_open"
@@ -204,30 +283,9 @@ Item {
             DankActionButton { iconName: "close"; tooltipText: "关闭"; onClicked: if (root.closePopout) root.closePopout() }
         }
 
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 8
-            DankButton {
-                Layout.fillWidth: true
-                text: "手机"
-                iconName: "smartphone"
-                buttonHeight: 36
-                backgroundColor: root.mode !== "computer" ? Theme.primary : Theme.surfaceContainerHigh
-                textColor: root.mode !== "computer" ? Theme.primaryText : Theme.surfaceText
-                onClicked: root.mode = "connect"
-            }
-            DankButton {
-                Layout.fillWidth: true
-                text: "电脑"
-                iconName: "desktop_windows"
-                buttonHeight: 36
-                backgroundColor: root.mode === "computer" ? Theme.primary : Theme.surfaceContainerHigh
-                textColor: root.mode === "computer" ? Theme.primaryText : Theme.surfaceText
-                onClicked: root.mode = "computer"
-            }
-        }
-
         ComputerConnect {
+            id: computerPanel
+            objectName: "computer-panel"
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: root.mode === "computer"
@@ -236,308 +294,356 @@ Item {
             saveSetting: root.saveSetting
         }
 
-        StyledText {
-            Layout.fillWidth: true
+        RowLayout {
+            id: phoneStatus
             visible: root.mode === "connect"
-            text: (root.source.statusKnown ? (root.source.connected ? "ADB 已连接，可启动投屏。" : "ADB 未连接。") : "ADB 连接状态未知。")
-                + "\n" + (root.source.busy || root.source.message ? root.source.message : "无线连接需让手机与电脑处于同一局域网，并在手机开发者选项中开启无线调试。")
+            Layout.fillWidth: true
+            spacing: 8
+            DankIcon { name: "smartphone"; size: 18; color: root.source.statusKnown && root.source.connected ? Theme.success : Theme.surfaceVariantText; Layout.leftMargin: 12 }
+            Column {
+                Layout.fillWidth: true
+                spacing: 4
+                StyledText { text: "手机连接"; font.pixelSize: 13; font.weight: Font.DemiBold }
+                StyledText {
+                    text: !root.source.statusKnown ? "调试连接状态未知" : (root.source.connected ? "调试连接已就绪" : "尚未连接手机")
+                    font.pixelSize: 12
+                    color: Theme.surfaceVariantText
+                }
+            }
+            ConnectButton {
+                objectName: "phone-project"
+                text: root.source.connected ? "投屏" : "连接"
+                iconName: "cast"
+                enabled: (!!root.source.saved || root.source.connected) && !root.source.busy
+                onClicked: root.source.request("reconnect", {options: root.launchOptions()})
+            }
+        }
+        StyledText {
+            id: phoneFeedback
+            Layout.fillWidth: true
+            visible: root.mode === "connect" && text.length > 0
+            text: root.source.message
             color: root.source.failed ? Theme.warning : Theme.surfaceVariantText
             font.pixelSize: 12
-            wrapMode: Text.WordWrap
+            wrapMode: Text.Wrap
             Accessible.name: text
         }
 
         DankFlickable {
+            id: phoneScroller
+            objectName: "phone-scroller"
             visible: root.mode === "connect"
             Layout.fillWidth: true
             Layout.fillHeight: true
+            Layout.minimumHeight: 0
             contentWidth: width
             contentHeight: body.implicitHeight + 8
             clip: true
             boundsBehavior: Flickable.StopAtBounds
+            onContentHeightChanged: contentY = Math.min(contentY, Math.max(0, contentHeight - height))
 
             Column {
                 id: body
                 width: parent.width - 8
-                spacing: 12
+                spacing: 0
 
-                StyledText { width: parent.width; text: "已记住的设备"; font.pixelSize: 14; font.weight: Font.DemiBold }
-                RowLayout {
+                ConnectSection {
+                    id: savedSection
+                    objectName: "savedSection"
                     width: parent.width
-                    spacing: 8
-                    StyledText {
-                        Layout.fillWidth: true
-                        text: root.source.saved ? (root.source.saved.host ? root.source.saved.host + ":" + root.source.saved.port : root.source.saved.name || root.source.saved.serial) : "尚未记住设备"
-                        color: Theme.surfaceVariantText
-                        elide: Text.ElideRight
-                    }
-                    DankButton {
-                        Layout.preferredWidth: 80
-                        text: root.source.connected ? "投屏" : "连接"
-                        iconName: "wifi"
-                        buttonHeight: 32
-                        horizontalPadding: 8
-                        backgroundColor: Theme.surfaceContainerHigh
-                        textColor: Theme.surfaceText
-                        Accessible.role: Accessible.Button
-                        Accessible.name: root.source.connected ? "使用已连接的手机投屏" : "连接已记住的手机并投屏"
-                        enabled: (!!root.source.saved || root.source.connected) && !root.source.busy
-                        onClicked: root.source.request("reconnect", {options: root.launchOptions()})
-                    }
-                    DankActionButton {
-                        iconName: "delete"
-                        tooltipText: "忘记设备"
-                        enabled: !!root.source.saved && !root.source.busy
-                        onClicked: root.source.request("forget", {})
+                    text: "已记住的设备"
+                    iconName: "smartphone"
+                    summary: root.source.saved ? "展开查看" : "暂无记录"
+                    RowLayout {
+                        width: parent.width
+                        spacing: 8
+                        StyledText {
+                            Layout.fillWidth: true
+                            text: root.source.saved ? (root.source.saved.host ? root.source.saved.host + ":" + root.source.saved.port : root.source.saved.name || root.source.saved.serial) : "尚未记住设备"
+                            color: Theme.surfaceVariantText
+                            elide: Text.ElideRight
+                        }
+
+                        DankActionButton {
+                            iconName: "delete"
+                            tooltipText: "忘记设备"
+                            Accessible.name: tooltipText
+                            enabled: !!root.source.saved && !root.source.busy
+                            onClicked: root.source.request("forget", {})
+                        }
                     }
                 }
-
-                Rectangle { width: parent.width; height: 1; color: Theme.outlineMedium }
-                RowLayout {
+                ConnectSection {
+                    id: pairSection
+                    objectName: "pairSection"
                     width: parent.width
-                    StyledText { text: "配对新设备"; font.pixelSize: 14; font.weight: Font.DemiBold; Layout.fillWidth: true }
-                    DankActionButton {
+                    text: "配对新设备"
+                    iconName: "add"
+                    summary: "首次连接"
+                    ConnectButton {
+                        objectName: "scan-pairing"
+                        text: "扫描设备"
                         iconName: "refresh"
-                        tooltipText: "扫描无线调试服务"
                         enabled: !root.source.busy
                         onClicked: root.source.request("scan", {})
                     }
-                }
-                StyledText {
-                    width: parent.width
-                    text: "打开并保持手机「无线调试 → 使用配对码配对设备」页面。扫描只有一个结果时，只需输入当前配对码；提交时会重新查找配对端口。扫描失败时可手填该页面的 IP 和端口。"
-                    font.pixelSize: 12
-                    color: Theme.surfaceVariantText
-                    wrapMode: Text.WordWrap
-                }
-                Repeater {
-                    model: root.source.pairing
-                    delegate: DankButton {
-                        required property var modelData
-                        width: body.width
-                        text: modelData.name + "  " + modelData.host + ":" + modelData.port
-                        buttonHeight: 32
-                        backgroundColor: Theme.surfaceContainerHigh
-                        textColor: Theme.surfaceText
-                        enabled: !root.source.busy
-                        Accessible.name: "选择配对设备 " + text
-                        onClicked: {
-                            root.pairHost = modelData.host;
-                            root.pairPort = modelData.port;
-                        }
-                    }
-                }
-                StyledText {
-                    width: parent.width
-                    visible: !!root.pairHost
-                    text: "已选配对地址：" + root.pairHost + ":" + root.pairPort
-                    font.pixelSize: 12
-                    color: Theme.primary
-                    wrapMode: Text.WordWrap
-                }
-                RowLayout {
-                    width: parent.width
-                    spacing: 8
-                    DankTextField {
-                        id: pairingHost
-                        Layout.fillWidth: true
-                        labelText: "配对 IP（扫描不到时填写）"
-                        text: root.pairHost
-                        Accessible.name: "配对 IP 地址"
-                        onTextEdited: root.pairHost = text
-                    }
-                    DankTextField {
-                        id: pairingPort
-                        Layout.preferredWidth: 124
-                        labelText: "端口（选填）"
-                        text: root.pairPort
-                        Accessible.name: "配对端口"
-                        onTextEdited: root.pairPort = text
-                    }
-                }
-                RowLayout {
-                    width: parent.width
-                    spacing: 8
-                    DankTextField {
-                        id: pairingCode
-                        Layout.fillWidth: true
-                        labelText: "6 位配对码"
-                        maximumLength: 6
-                        Accessible.name: "手机显示的六位配对码"
-                        onAccepted: pairButton.clicked()
-                    }
-                    DankButton {
-                        id: pairButton
-                        text: "配对并连接"
-                        iconName: "link"
-                        buttonHeight: 36
-                        enabled: !root.source.busy && /^\d{6}$/.test(pairingCode.text.trim())
-                        onClicked: root.source.request("pair", {
-                            code: pairingCode.text.trim(), host: root.pairHost, port: root.pairPort,
-                            options: root.launchOptions()
-                        })
-                    }
-                }
 
-                Rectangle { width: parent.width; height: 1; color: Theme.outlineMedium }
-                StyledText { width: parent.width; text: "直接连接"; font.pixelSize: 14; font.weight: Font.DemiBold }
-                StyledText {
-                    width: parent.width
-                    text: "已配对过的手机可填写连接 IP；连接端口选填，未发现时需填写无线调试主页的端口（与配对端口不同）。"
-                    font.pixelSize: 12
-                    color: Theme.surfaceVariantText
-                    wrapMode: Text.WordWrap
-                }
-                Repeater {
-                    model: root.source.connections
-                    delegate: DankButton {
-                        required property var modelData
-                        width: body.width
-                        text: modelData.name + "  " + modelData.host + ":" + modelData.port
-                        buttonHeight: 32
-                        backgroundColor: Theme.surfaceContainerHigh
-                        textColor: Theme.surfaceText
-                        enabled: !root.source.busy
-                        Accessible.name: "选择连接设备 " + text
-                        onClicked: {
-                            root.host = modelData.host;
-                            root.port = modelData.port;
-                        }
-                    }
-                }
-                RowLayout {
-                    width: parent.width
-                    spacing: 8
-                    DankTextField {
-                        Layout.fillWidth: true
-                        labelText: "手机 IP"
-                        text: root.host
-                        Accessible.name: "手机连接 IP 地址"
-                        onTextEdited: root.host = text
-                    }
-                    DankTextField {
-                        Layout.preferredWidth: 124
-                        labelText: "端口（选填）"
-                        text: root.port
-                        Accessible.name: "手机连接端口"
-                        onTextEdited: root.port = text
-                    }
-                }
-                RowLayout {
-                    width: parent.width
-                    spacing: 8
                     StyledText {
-                        Layout.fillWidth: true
-                        text: "连接成功后自动记住设备"
-                        color: Theme.surfaceVariantText
+                        width: parent.width
+                        text: "在手机打开「无线调试 → 使用配对码配对设备」，保持页面显示后扫描；扫描不到时填写配对 IP 和端口。"
                         font.pixelSize: 12
+                        color: Theme.surfaceVariantText
                         wrapMode: Text.WordWrap
                     }
-                    DankButton {
-                        text: "连接并投屏"
-                        iconName: "smartphone"
-                        buttonHeight: 36
-                        enabled: !root.source.busy && !!root.host
-                        onClicked: root.source.request("connect", {host: root.host, port: root.port, options: root.launchOptions()})
+                    Repeater {
+                        model: root.source.pairing
+                        delegate: ConnectButton {
+                            required property var modelData
+                            width: parent.width
+                            text: modelData.name + "  " + modelData.host + ":" + modelData.port
+                            buttonHeight: 32
+                            backgroundColor: Theme.surfaceContainerHigh
+                            textColor: Theme.surfaceText
+                            enabled: !root.source.busy
+                            Accessible.name: "选择配对设备 " + text
+                            onClicked: {
+                                root.pairHost = modelData.host;
+                                root.pairPort = modelData.port;
+                            }
+                        }
+                    }
+                    StyledText {
+                        width: parent.width
+                        visible: !!root.pairHost
+                        text: "已选配对地址：" + root.pairHost + ":" + root.pairPort
+                        font.pixelSize: 12
+                        color: Theme.primary
+                        wrapMode: Text.WordWrap
+                    }
+                    RowLayout {
+                        width: parent.width
+                        spacing: 8
+                        ConnectField {
+                            id: pairingHost
+                            objectName: "pair-host"
+                            Layout.fillWidth: true
+                            labelText: "配对 IP（扫描不到时填写）"
+                            text: root.pairHost
+                            Accessible.name: "配对 IP 地址"
+                            onTextEdited: root.pairHost = text
+                        }
+                        ConnectField {
+                            id: pairingPort
+                            Layout.preferredWidth: 124
+                            labelText: "端口（选填）"
+                            text: root.pairPort
+                            Accessible.name: "配对端口"
+                            onTextEdited: root.pairPort = text
+                        }
+                    }
+                    RowLayout {
+                        width: parent.width
+                        spacing: 8
+                        ConnectField {
+                            id: pairingCode
+                            objectName: "pair-code"
+                            Layout.fillWidth: true
+                            labelText: "6 位配对码"
+                            maximumLength: 6
+                            Accessible.name: "手机显示的六位配对码"
+                            onAccepted: pairButton.clicked()
+                        }
+                        ConnectButton {
+                            Layout.alignment: Qt.AlignBottom
+                            id: pairButton
+                            text: "配对并连接"
+                            iconName: "link"
+                            buttonHeight: 32
+                            enabled: !root.source.busy && /^\d{6}$/.test(pairingCode.text.trim())
+                            onClicked: root.source.request("pair", {
+                                code: pairingCode.text.trim(), host: root.pairHost, port: root.pairPort,
+                                options: root.launchOptions()
+                            })
+                        }
+                    }
+                }
+                ConnectSection {
+                    id: directSection
+                    objectName: "directSection"
+                    width: parent.width
+                    text: "直接连接"
+                    iconName: "link"
+                    summary: "已配对设备"
+                    StyledText {
+                        width: parent.width
+                        text: "填写手机无线调试主页的 IP。连接端口可选填，与配对端口不同。"
+                        font.pixelSize: 12
+                        color: Theme.surfaceVariantText
+                        wrapMode: Text.WordWrap
+                    }
+                    Repeater {
+                        model: root.source.connections
+                        delegate: ConnectButton {
+                            required property var modelData
+                            width: parent.width
+                            text: modelData.name + "  " + modelData.host + ":" + modelData.port
+                            buttonHeight: 32
+                            backgroundColor: Theme.surfaceContainerHigh
+                            textColor: Theme.surfaceText
+                            enabled: !root.source.busy
+                            Accessible.name: "选择连接设备 " + text
+                            onClicked: {
+                                root.host = modelData.host;
+                                root.port = modelData.port;
+                            }
+                        }
+                    }
+                    RowLayout {
+                        width: parent.width
+                        spacing: 8
+                        ConnectField {
+                            Layout.fillWidth: true
+                            objectName: "phone-host"
+                            labelText: "手机 IP"
+                            text: root.host
+                            Accessible.name: "手机连接 IP 地址"
+                            onTextEdited: root.host = text
+                        }
+                        ConnectField {
+                            Layout.preferredWidth: 124
+                            labelText: "端口（选填）"
+                            text: root.port
+                            Accessible.name: "手机连接端口"
+                            onTextEdited: root.port = text
+                        }
+                    }
+                    RowLayout {
+                        width: parent.width
+                        spacing: 8
+                        StyledText {
+                            Layout.fillWidth: true
+                            text: "连接成功后自动记住设备"
+                            color: Theme.surfaceVariantText
+                            font.pixelSize: 12
+                            wrapMode: Text.WordWrap
+                        }
+                        ConnectButton {
+                            text: "连接并投屏"
+                            iconName: "smartphone"
+                            buttonHeight: 32
+                            enabled: !root.source.busy && !!root.host
+                            onClicked: root.source.request("connect", {host: root.host, port: root.port, options: root.launchOptions()})
+                        }
+                    }
+                }
+                ConnectSection {
+                    id: pushSection
+                    objectName: "pushSection"
+                    width: parent.width
+                    text: "文件推送"
+                    iconName: "upload"
+                    summary: root.source.pushing ? (root.source.pushPercent >= 0 ? root.source.pushPercent + "%" : "正在传输…") : (root.source.pushFailed ? "推送未完成" : (root.pendingPaths.length > 0 ? "已选 " + root.pendingPaths.length + " 个文件" : "选择或拖入文件"))
+                    keepOpen: root.source.pushing
+                    StyledText {
+                        width: parent.width
+                        text: "拖入文件或多选，推送到 /sdcard/Download/；同名文件会覆盖。"
+                        font.pixelSize: 12
+                        color: Theme.surfaceVariantText
+                        wrapMode: Text.WordWrap
+                    }
+                    RowLayout {
+                        width: parent.width
+                        spacing: 8
+                        ConnectField {
+                            id: manualPath
+                            objectName: "push-path"
+                            Layout.fillWidth: true
+                            labelText: "本机文件路径"
+                            Accessible.name: "要推送到手机的本机文件路径"
+                            onAccepted: root.addManualPath()
+                        }
+                        ConnectButton {
+                            Layout.alignment: Qt.AlignBottom
+                            text: "选择"
+                            iconName: "folder_open"
+                            buttonHeight: 32
+                            horizontalPadding: 10
+                            enabled: !root.source.pushing
+                            onClicked: filePicker.open()
+                        }
+                    }
+                    StyledText {
+                        width: parent.width
+                        visible: root.pendingPaths.length > 0
+                        text: root.pendingSummary()
+                        color: root.pendingPaths.length > 0 ? Theme.surfaceText : Theme.surfaceVariantText
+                        font.pixelSize: 12
+                        elide: Text.ElideMiddle
+                    }
+                    Rectangle {
+                        id: progressTrack
+                        width: parent.width
+                        height: 6
+                        radius: 3
+                        visible: root.source.pushing || root.source.pushPercent >= 0
+                        color: Theme.surfaceContainerHigh
+                        clip: true
+                        Rectangle {
+                            visible: root.source.pushPercent >= 0
+                            height: parent.height
+                            radius: 3
+                            color: Theme.primary
+                            width: parent.width * Math.max(0, Math.min(100, root.source.pushPercent)) / 100
+                        }
+                        Rectangle {
+                            visible: root.source.pushing && root.source.pushPercent < 0
+                            width: progressTrack.width * 0.35
+                            height: parent.height
+                            radius: 3
+                            color: Theme.primary
+                            NumberAnimation on x {
+                                running: parent.visible
+                                loops: Animation.Infinite
+                                duration: 1100
+                                from: -parent.width
+                                to: progressTrack.width
+                            }
+                        }
+                    }
+                    RowLayout {
+                        width: parent.width
+                        spacing: 8
+                        StyledText {
+                            Layout.fillWidth: true
+                            text: {
+                                if (root.source.pushing) {
+                                    const prefix = root.source.pushCount > 1 ? ("第 " + root.source.pushIndex + "/" + root.source.pushCount + " 个 · ") : "";
+                                    return prefix + (root.source.pushPercent < 0 ? "正在传输…" : "已传输 " + root.source.pushPercent + "%");
+                                }
+                                if (root.source.pushFailed)
+                                    return "推送未完成";
+                                return root.source.pushPercent === 100 ? "推送完成" : "";
+                            }
+                            color: root.source.pushFailed ? Theme.warning : Theme.surfaceVariantText
+                            font.pixelSize: 12
+                            elide: Text.ElideRight
+                        }
+                        ConnectButton {
+                            objectName: "push-action"
+                            text: root.source.pushing ? "取消推送" : "推送到手机"
+                            iconName: root.source.pushing ? "close" : "upload"
+                            buttonHeight: 32
+                            enabled: root.source.pushing || (root.pendingPaths.length > 0 && !root.source.busy)
+                            onClicked: {
+                                if (root.source.pushing)
+                                    root.source.cancelPush();
+                                else
+                                    root.source.push(root.pendingPaths);
+                            }
+                        }
                     }
                 }
 
-                Rectangle { width: parent.width; height: 1; color: Theme.outlineMedium }
-                StyledText { width: parent.width; text: "文件推送"; font.pixelSize: 14; font.weight: Font.DemiBold }
-                StyledText {
-                    width: parent.width
-                    text: "把文件拖到本页面即可推送，也可用“选择”按钮多选。文件推送到 /sdcard/Download/，同名文件会被覆盖；传输时状态栏显示百分比。"
-                    font.pixelSize: 12
-                    color: Theme.surfaceVariantText
-                    wrapMode: Text.WordWrap
-                }
-                RowLayout {
-                    width: parent.width
-                    spacing: 8
-                    DankTextField {
-                        id: manualPath
-                        Layout.fillWidth: true
-                        labelText: "本机文件路径（也可直接拖入本页面）"
-                        Accessible.name: "要推送到手机的本机文件路径"
-                        onAccepted: root.addManualPath()
-                    }
-                    DankButton {
-                        text: "选择"
-                        iconName: "folder_open"
-                        buttonHeight: 36
-                        horizontalPadding: 10
-                        enabled: !root.source.pushing
-                        onClicked: filePicker.open()
-                    }
-                }
-                StyledText {
-                    width: parent.width
-                    text: root.pendingSummary()
-                    color: root.pendingPaths.length > 0 ? Theme.surfaceText : Theme.surfaceVariantText
-                    font.pixelSize: 12
-                    elide: Text.ElideMiddle
-                }
-                Rectangle {
-                    id: progressTrack
-                    width: parent.width
-                    height: 6
-                    radius: 3
-                    visible: root.source.pushing || root.source.pushPercent >= 0
-                    color: Theme.surfaceContainerHigh
-                    clip: true
-                    Rectangle {
-                        visible: root.source.pushPercent >= 0
-                        height: parent.height
-                        radius: 3
-                        color: Theme.primary
-                        width: parent.width * Math.max(0, Math.min(100, root.source.pushPercent)) / 100
-                    }
-                    Rectangle {
-                        visible: root.source.pushing && root.source.pushPercent < 0
-                        width: progressTrack.width * 0.35
-                        height: parent.height
-                        radius: 3
-                        color: Theme.primary
-                        NumberAnimation on x {
-                            running: parent.visible
-                            loops: Animation.Infinite
-                            duration: 1100
-                            from: -parent.width
-                            to: progressTrack.width
-                        }
-                    }
-                }
-                RowLayout {
-                    width: parent.width
-                    spacing: 8
-                    StyledText {
-                        Layout.fillWidth: true
-                        text: {
-                            if (root.source.pushing) {
-                                const prefix = root.source.pushCount > 1 ? ("第 " + root.source.pushIndex + "/" + root.source.pushCount + " 个 · ") : "";
-                                return prefix + (root.source.pushPercent < 0 ? "正在传输…" : "已传输 " + root.source.pushPercent + "%");
-                            }
-                            if (root.source.pushFailed)
-                                return "推送未完成";
-                            return root.source.pushPercent === 100 ? "推送完成" : "尚未推送";
-                        }
-                        color: root.source.pushFailed ? Theme.warning : Theme.surfaceVariantText
-                        font.pixelSize: 12
-                        elide: Text.ElideRight
-                    }
-                    DankButton {
-                        text: root.source.pushing ? "取消推送" : "推送到手机"
-                        iconName: root.source.pushing ? "close" : "upload"
-                        buttonHeight: 36
-                        enabled: root.source.pushing || (root.pendingPaths.length > 0 && !root.source.busy)
-                        onClicked: {
-                            if (root.source.pushing)
-                                root.source.cancelPush();
-                            else
-                                root.source.push(root.pendingPaths);
-                        }
-                    }
-                }
             }
         }
 
@@ -545,6 +651,7 @@ Item {
             visible: root.mode === "settings"
             Layout.fillWidth: true
             Layout.fillHeight: true
+            Layout.minimumHeight: 0
             contentWidth: width
             contentHeight: optionFields.implicitHeight + 8
             clip: true
@@ -563,6 +670,7 @@ Item {
             visible: root.mode === "files"
             Layout.fillWidth: true
             Layout.fillHeight: true
+            Layout.minimumHeight: 0
             contentWidth: width
             contentHeight: filesColumn.implicitHeight + 8
             clip: true
@@ -576,7 +684,7 @@ Item {
                 RowLayout {
                     width: parent.width
                     spacing: 8
-                    DankButton {
+                    ConnectButton {
                         text: "上级"
                         iconName: "arrow_upward"
                         buttonHeight: 32
@@ -647,7 +755,7 @@ Item {
                         font.pixelSize: 12
                         wrapMode: Text.WordWrap
                     }
-                    DankButton {
+                    ConnectButton {
                         visible: root.source.pulling
                         text: "取消"
                         iconName: "close"
@@ -680,7 +788,7 @@ Item {
                         property bool selected: !modelData.dir && root.selectedPath === modelData.path
                         width: filesColumn.width
                         height: 42
-                        radius: 6
+                        radius: 4
                         color: (entryMouse.containsMouse || selected) ? Theme.surfaceContainerHigh : "transparent"
                         border.width: selected ? 1 : 0
                         border.color: Theme.primary
@@ -762,7 +870,7 @@ Item {
             width: Math.min(parent.width - 48, 380)
             height: confirmColumn.implicitHeight + 32
             anchors.centerIn: parent
-            radius: 12
+            radius: 8
             color: Theme.surfaceContainerHigh
             border.width: 1
             border.color: Theme.outlineMedium
@@ -798,13 +906,13 @@ Item {
                     width: parent.width
                     spacing: 8
                     Item { Layout.fillWidth: true }
-                    DankButton {
+                    ConnectButton {
                         text: "取消"
                         buttonHeight: 32
                         horizontalPadding: 12
                         onClicked: root.cancelDownload()
                     }
-                    DankButton {
+                    ConnectButton {
                         text: "下载"
                         iconName: "download"
                         buttonHeight: 32

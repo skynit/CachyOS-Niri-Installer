@@ -29,12 +29,6 @@ PluginSettings {
     }
 
     ToggleSetting {
-        settingKey: "showLabel"
-        label: "在状态栏显示“翻译”文字"
-        defaultValue: true
-    }
-
-    ToggleSetting {
         settingKey: "showPinyin"
         label: "显示拼音"
         defaultValue: true
